@@ -61,7 +61,7 @@ class AboutPopup extends Container {
         const logoMarkup = decodeURIComponent(logoSvg.substring('data:image/svg+xml,'.length));
         logoContainer.dom.appendChild(new DOMParser().parseFromString(logoMarkup, 'image/svg+xml').documentElement);
         logoContainer.dom.addEventListener('click', () => {
-            window.open('https://github.com/playcanvas/supersplat', '_blank')?.focus();
+            window.open('https://github.com/clarencedad-cloud/d4r-Splatmania', '_blank')?.focus();
         });
 
         // App name and version
@@ -69,12 +69,12 @@ class AboutPopup extends Container {
             id: 'about-app-info'
         });
         appInfo.dom.addEventListener('click', () => {
-            window.open('https://github.com/playcanvas/supersplat', '_blank')?.focus();
+            window.open('https://github.com/clarencedad-cloud/d4r-Splatmania', '_blank')?.focus();
         });
 
         const appName = new Label({
             id: 'about-app-name',
-            text: 'SuperSplat'
+            text: 'Splatmania'
         });
 
         const appVersionLabel = new Label({
@@ -126,6 +126,17 @@ class AboutPopup extends Container {
         stRow.append(stName);
         stRow.append(stVer);
 
+        // credit: Splatmania is built on SuperSplat (MIT)
+        const baseRow = new Container({
+            class: 'about-dep-row'
+        });
+        baseRow.dom.addEventListener('click', () => {
+            window.open('https://github.com/playcanvas/supersplat', '_blank')?.focus();
+        });
+        baseRow.append(new Label({ class: 'about-dep-name', text: 'based on SuperSplat' }));
+        baseRow.append(new Label({ class: 'about-dep-version', text: 'PlayCanvas, MIT' }));
+
+        depsContainer.append(baseRow);
         depsContainer.append(engineRow);
         depsContainer.append(stRow);
         depsContainer.append(pcuiRow);

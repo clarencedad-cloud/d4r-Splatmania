@@ -43,7 +43,7 @@ class BrushSelection {
 
             if (dragId !== undefined) {
                 context.beginPath();
-                context.strokeStyle = '#f60';
+                context.strokeStyle = '#8b5cf6';
                 context.lineCap = 'round';
                 context.lineWidth = radius * 2;
                 context.moveTo(prev.x, prev.y);
@@ -88,7 +88,7 @@ class BrushSelection {
                 // update() draws for it leaves no mark in safari, so paint the
                 // starting dot explicitly
                 context.beginPath();
-                context.fillStyle = '#f60';
+                context.fillStyle = '#8b5cf6';
                 context.arc(prev.x, prev.y, radius, 0, Math.PI * 2);
                 context.fill();
 

@@ -37,7 +37,7 @@ const registerTrackManagerEvents = (events: Events) => {
     // what a key goes to, for the timeline label and row highlight
     events.function('track.target', () => {
         if (target === 'section') {
-            return { kind: 'section', name: 'Schnitt', color: [255, 102, 0] };
+            return { kind: 'section', name: 'Schnitt', color: [139, 92, 246] };
         }
         const splat = (events.functions.has('selection') ? events.invoke('selection') : null);
         if (target === 'layer' && splat) {

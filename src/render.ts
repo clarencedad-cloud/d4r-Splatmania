@@ -46,7 +46,7 @@ const isInvalidFilenameChar = (char: string) => {
 
 const sanitizeFilename = (filename: string) => {
     const sanitized = Array.from(filename, char => (isInvalidFilenameChar(char) ? '_' : char)).join('').trim();
-    return sanitized.length > 0 ? sanitized : 'supersplat';
+    return sanitized.length > 0 ? sanitized : 'splatmania';
 };
 
 // extract a plain filename from url-style names (e.g. splats imported via ?load=)
@@ -85,7 +85,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
     const baseFilename = () => {
         const docName = events.invoke('doc.name');
         const splats = (scene.getElementsByType(ElementType.splat) as Splat[]).filter(splat => splat.visible);
-        const source = docName || (splats[0]?.name ?? 'supersplat');
+        const source = docName || (splats[0]?.name ?? 'splatmania');
         return sanitizeFilename(removeExtension(getImportedFilename(source)));
     };
 

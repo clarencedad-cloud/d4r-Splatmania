@@ -1,7 +1,7 @@
 {
-    "name": "SuperSplat",
-    "short_name": "SuperSplat",
-    "description": "SuperSplat is an advanced browser-based editor for manipulating and optimizing 3D Gaussian Splats. It is open source and engine agnostic.",
+    "name": "Splatmania",
+    "short_name": "Splatmania",
+    "description": "Splatmania – Gaussian-Splat-Editor von design4real: säubern, ausrichten, animieren und als Film ausgeben.",
     "display": "fullscreen",
     "start_url": "./",
     "scope": "./",
@@ -17,20 +17,6 @@
             "src": "./static/icons/logo-512.png",
             "sizes": "512x512",
             "type": "image/png"
-        }
-    ],
-    "screenshots": [
-        {
-            "src": "./static/images/screenshot-narrow.jpg",
-            "type": "image/jpeg",
-            "sizes": "2160x3840",
-            "form_factor": "narrow"
-        },
-        {
-            "src": "./static/images/screenshot-wide.jpg",
-            "type": "image/jpeg",
-            "sizes": "3840x2160",
-            "form_factor": "wide"
         }
     ],
     "file_handlers": [

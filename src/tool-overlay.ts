@@ -40,7 +40,7 @@ const LINE_OUTLINE_WIDTH = 5;
 const GHOST_OPACITY = 0.25;
 
 // the plane fill color
-const FILL_COLOR = [1, 0.4, 0, 0.6];
+const FILL_COLOR = [0.545, 0.361, 0.965, 0.6];
 
 // depth strata, front to back: dots (no bias), line core and line outline.
 // The translucent fill is drawn first with stochastic depth writes, so it

@@ -124,14 +124,14 @@ class Menu extends Container {
         arrow.dom.setAttribute('id', 'menu-arrow');
         arrow.dom.addEventListener('click', toggleCollapsed);
 
-        // SuperSplat home: leftmost, before File. Mark + wordmark; the
+        // Splatmania home: leftmost, before File. Mark + wordmark; the
         // wordmark hides when the menubar is collapsed.
         const logo = createSvg(logoSvg);
         logo.dom.setAttribute('id', 'menu-logo');
 
         const wordmark = new Label({
             id: 'menu-wordmark',
-            text: 'SuperSplat'
+            text: 'Splatmania'
         });
 
         const home = new Container({
@@ -139,8 +139,8 @@ class Menu extends Container {
         });
         home.dom.setAttribute('role', 'link');
         home.dom.setAttribute('tabindex', '0');
-        home.dom.setAttribute('aria-label', 'SuperSplat');
-        home.dom.setAttribute('title', 'SuperSplat');
+        home.dom.setAttribute('aria-label', 'Splatmania');
+        home.dom.setAttribute('title', 'Splatmania');
         home.dom.addEventListener('click', requestNavigateHome);
         home.dom.addEventListener('keydown', (event: KeyboardEvent) => {
             if (event.key === 'Enter' || event.key === ' ') {

@@ -55,14 +55,14 @@ const hostOrigin = () => {
 
 // The menubar logo. Embedded (superspl.at/editor), the host decides how to
 // leave — it owns navigation, the unsaved-changes guard and any transition.
-// Standalone, go to the SuperSplat site directly.
+// Standalone, go to the Splatmania repository.
 const requestNavigateHome = () => {
     if (isEmbedded()) {
         const request: NavigateHomeRequest = { type: NAVIGATE_HOME };
         window.parent.postMessage(request, hostOrigin());
         return;
     }
-    window.location.assign('https://superspl.at/');
+    window.location.assign('https://github.com/clarencedad-cloud/d4r-Splatmania');
 };
 
 export { registerIframeApi, requestNavigateHome };

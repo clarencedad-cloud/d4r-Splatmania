@@ -15,7 +15,7 @@ const SPHERICAL_XML =
     '<rdf:SphericalVideo xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GSpherical="http://ns.google.com/videos/1.0/spherical/">' +
     '<GSpherical:Spherical>true</GSpherical:Spherical>' +
     '<GSpherical:Stitched>true</GSpherical:Stitched>' +
-    '<GSpherical:StitchingSoftware>SuperSplat</GSpherical:StitchingSoftware>' +
+    '<GSpherical:StitchingSoftware>Splatmania</GSpherical:StitchingSoftware>' +
     '<GSpherical:ProjectionType>equirectangular</GSpherical:ProjectionType>' +
     '</rdf:SphericalVideo>';
 

@@ -80,7 +80,7 @@ class EditorUI {
         // app label
         const appLabel = new Label({
             id: 'app-label',
-            text: 'SUPERSPLAT '
+            text: 'SPLATMANIA '
         });
         const versionSpan = document.createElement('span');
         versionSpan.textContent = `v${version}`;

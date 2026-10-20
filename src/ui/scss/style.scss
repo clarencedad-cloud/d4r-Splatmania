@@ -1,4 +1,4 @@
-@use 'pcui-theme-grey.scss';
+@use 'pcui-theme-splatmania.scss';
 @use 'colors.scss' as *;
 @use 'tooltips.scss';
 @use 'panel.scss';
@@ -87,7 +87,7 @@ body {
 
 #coord-space-toggle.active {
     background-color: $bcg-dark !important;
-    color: #f60;
+    color: #8b5cf6;
 }
 
 #file-selector {
