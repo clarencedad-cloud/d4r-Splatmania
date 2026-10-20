@@ -1,25 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
   <defs>
     <radialGradient id="sm-a" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#c4b5fd"/>
-      <stop offset="0.55" stop-color="#8b5cf6" stop-opacity="0.95"/>
-      <stop offset="1" stop-color="#6d28d9" stop-opacity="0"/>
+      <stop offset="0" stop-color="#f49ac8"/>
+      <stop offset="0.55" stop-color="#c20e7e" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#7b0a52" stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="sm-b" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#e9d5ff"/>
-      <stop offset="0.5" stop-color="#a78bfa" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#7c3aed" stop-opacity="0"/>
+      <stop offset="0" stop-color="#fbd3e9"/>
+      <stop offset="0.5" stop-color="#e6128a" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#a00c68" stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="sm-c" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#ddd6fe"/>
-      <stop offset="0.6" stop-color="#7c3aed" stop-opacity="0.85"/>
-      <stop offset="1" stop-color="#4c1d95" stop-opacity="0"/>
+      <stop offset="0" stop-color="#f7c1de"/>
+      <stop offset="0.6" stop-color="#a00c68" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#5a0740" stop-opacity="0"/>
     </radialGradient>
   </defs>
   <!-- three overlapping gaussian splats -->
   <ellipse cx="25" cy="36" rx="20" ry="13" transform="rotate(-28 25 36)" fill="url(#sm-a)"/>
   <ellipse cx="40" cy="25" rx="16" ry="10" transform="rotate(35 40 25)" fill="url(#sm-b)"/>
   <ellipse cx="42" cy="44" rx="11" ry="7" transform="rotate(-10 42 44)" fill="url(#sm-c)"/>
-  <circle cx="22" cy="18" r="3" fill="#c4b5fd"/>
-  <circle cx="52" cy="13" r="2" fill="#a78bfa"/>
+  <circle cx="22" cy="18" r="3" fill="#f49ac8"/>
+  <circle cx="52" cy="13" r="2" fill="#e6128a"/>
 </svg>

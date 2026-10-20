@@ -44,10 +44,10 @@
                 line-height: 24px;
 
                 &:hover {
-                    color: #a78bfa;
+                    color: #e6128a;
                     cursor: pointer;
                     box-shadow: none;
-                    border-color: #a78bfa88;
+                    border-color: #e6128a88;
                 }
             }
         }
@@ -97,10 +97,10 @@
                     line-height: 24px;
 
                     &:hover {
-                        color: #a78bfa;
+                        color: #e6128a;
                         cursor: pointer;
                         box-shadow: none;
-                        border-color: #a78bfa88;
+                        border-color: #e6128a88;
                     }
 
                     &.active {
@@ -379,5 +379,5 @@
 
 #timeline-panel > #timeline-tracks > .track-row.key-target {
     box-shadow: inset 3px 0 0 $clr-hilight;
-    background-color: rgba(139, 92, 246, 0.12);
+    background-color: rgba(194, 14, 126, 0.12);
 }

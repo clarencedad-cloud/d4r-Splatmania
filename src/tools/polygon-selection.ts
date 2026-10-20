@@ -35,7 +35,7 @@ class PolygonSelection {
 
         const paint = () => {
             polyline.setAttribute('points', [...points, currentPoint].filter(v => v).reduce((prev, current) => `${prev}${current.x}, ${current.y} `, ''));
-            polyline.setAttribute('stroke', isClosed() ? '#c4b5fd' : '#8b5cf6');
+            polyline.setAttribute('stroke', isClosed() ? '#f49ac8' : '#c20e7e');
         };
 
         const commitSelection = async (e: MouseEvent | KeyboardEvent) => {
@@ -49,7 +49,7 @@ class PolygonSelection {
             context.clearRect(0, 0, canvas.width, canvas.height);
 
             context.beginPath();
-            context.fillStyle = '#8b5cf6';
+            context.fillStyle = '#c20e7e';
             context.beginPath();
             points.forEach((p, idx) => {
                 if (idx === 0) {

@@ -20,7 +20,7 @@ const STATS_FRAMES = 60;
 const SCALES = [1, 2, 4, 8, 16.7, 33.3, 66.7, 133.3, 266.7];
 
 const GRAPH_BG = 'rgba(0, 0, 0, 0.35)';
-const GRAPH_BAR = '#8b5cf6';
+const GRAPH_BAR = '#c20e7e';
 const GRAPH_MEDIAN = 'rgba(255, 255, 255, 0.5)';
 
 const fmt = (ms: number) => (ms >= 10 ? ms.toFixed(1) : ms.toFixed(2));

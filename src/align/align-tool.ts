@@ -20,7 +20,7 @@ import { Transform } from '../transform';
 // undo step. Anchors live in layer-local coordinates, so they move with the
 // layer and line up after the align.
 
-const COLORS = ['#8b5cf6', '#00dcff', '#78ff5a', '#ff50c8', '#fff050', '#94a3b8'];
+const COLORS = ['#c20e7e', '#00dcff', '#78ff5a', '#5aa9e6', '#fff050', '#94a3b8'];
 
 const CLICK_TOLERANCE = 4;
 

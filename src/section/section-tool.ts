@@ -127,7 +127,7 @@ class SectionTrack implements AnimTrack {
 }
 
 const UP = new Vec3(0, 1, 0);
-const planeColor = new Color(0.545, 0.361, 0.965, 0.8);
+const planeColor = new Color(0.761, 0.055, 0.494, 0.8);
 
 class SectionTool {
     activate: () => void;

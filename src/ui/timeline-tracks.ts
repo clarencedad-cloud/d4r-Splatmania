@@ -228,7 +228,7 @@ class TimelineTracks extends Container {
                     const marker = document.createElement('div');
                     marker.classList.add('track-key');
                     marker.style.left = `${offsetFromFrame(key.frame)}px`;
-                    marker.style.backgroundColor = `rgba(139, 92, 246, ${0.35 + 0.65 * key.value})`;
+                    marker.style.backgroundColor = `rgba(194, 14, 126, ${0.35 + 0.65 * key.value})`;
                     marker.title = `Frame ${key.frame}: Schnitt ${Math.round(key.value * 100)} %`;
                     sectionRow.appendChild(marker);
                 }

@@ -1,5 +1,5 @@
 // Copy of @playcanvas/pcui pcui-theme-grey.scss with the orange accent
-// replaced by the Splatmania violet. Its variables are not !default, so
+// and greys replaced by the design4real palette (www.design4real.de). Its variables are not !default, so
 // the stock theme cannot be recoloured through `@use ... with`.
 @use "sass:color";
 $field-padding: 3px;
@@ -8,20 +8,20 @@ $element-margin: 6px;
 $element-opacity-disabled: 0.4;
 $element-opacity-readonly: 0.7;
 
-$bcg-darkest: #202020;
-$bcg-darker: #202020;
-$bcg-dark: #282828;
-$bcg-primary: #333;
+$bcg-darkest: #1a1626;
+$bcg-darker: #1a1626;
+$bcg-dark: #221d30;
+$bcg-primary: #2a2238;
 $text-darkest: rgb(170 170 170 / 50%);
 $text-dark: rgb(170 170 170 / 50%);
-$text-secondary: #aaa;
+$text-secondary: #b4adc2;
 $text-primary: #fff;
-$text-active: #8b5cf6;
+$text-active: #c20e7e;
 $error: #fb222f;
 $error-secondary: #d34141;
 $border-primary: #aaa;
-$element-shadow-hover: 0 0 2px 1px rgb(139 92 246 / 30%);
-$element-shadow-active: 0 0 0 1px rgb(139 92 246 / 30%);
+$element-shadow-hover: 0 0 2px 1px rgb(194 14 126 / 30%);
+$element-shadow-active: 0 0 0 1px rgb(194 14 126 / 30%);
 $element-shadow-error: 0 0 0 1px $error-secondary;
 $element-color-placeholder: #829193;
 
@@ -793,7 +793,7 @@ $playicons-regular: url('data:application/font-woff;charset=utf-7;base64,d09GRgA
     overflow: auto;
 
     .pcui-code-inner {
-        color: #8b5cf6;
+        color: #c20e7e;
         font-family: inconsolatamedium, Monaco, Menlo, 'Ubuntu Mono', Consolas, source-code-pro, monospace;
         font-weight: normal;
         font-size: 10px;

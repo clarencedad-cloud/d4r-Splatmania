@@ -11,8 +11,8 @@
 
     &#brush-select-svg {
         >circle {
-            fill: rgba(139, 92, 246, 0.2);
-            stroke: #8b5cf6;
+            fill: rgba(194, 14, 126, 0.2);
+            stroke: #c20e7e;
             stroke-width: 1;
             stroke-dasharray: 5, 5;
         }
@@ -23,7 +23,7 @@
     &#sphere-brush-select-svg {
         >circle {
             fill: url(#sphere-brush-gradient);
-            stroke: #8b5cf6;
+            stroke: #c20e7e;
             stroke-width: 1;
             stroke-dasharray: 5, 5;
         }
@@ -32,7 +32,7 @@
     &#rect-select-svg {
         >rect {
             fill: none;
-            stroke: #8b5cf6;
+            stroke: #c20e7e;
             stroke-width: 1;
             stroke-dasharray: 5, 5;
         }

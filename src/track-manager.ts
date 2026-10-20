@@ -37,11 +37,11 @@ const registerTrackManagerEvents = (events: Events) => {
     // what a key goes to, for the timeline label and row highlight
     events.function('track.target', () => {
         if (target === 'section') {
-            return { kind: 'section', name: 'Schnitt', color: [139, 92, 246] };
+            return { kind: 'section', name: 'Schnitt', color: [194, 14, 126] };
         }
         const splat = (events.functions.has('selection') ? events.invoke('selection') : null);
         if (target === 'layer' && splat) {
-            return { kind: 'layer', name: splat.name, color: [255, 160, 60], splat };
+            return { kind: 'layer', name: splat.name, color: [230, 18, 138], splat };
         }
         const camera = events.invoke('shotCameras.selected');
         return { kind: 'camera', name: camera?.name ?? 'Kamera', color: camera?.color ?? [0, 220, 255], camera };

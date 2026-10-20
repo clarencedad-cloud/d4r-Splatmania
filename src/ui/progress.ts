@@ -78,7 +78,7 @@ class Progress extends Container {
         };
 
         this.setProgress = (progress: number) => {
-            bar.dom.style.backgroundImage = `linear-gradient(90deg, #8b5cf6 0%, #8b5cf6 ${progress}%, #00000000 ${progress}%, #00000000 100%)`;
+            bar.dom.style.backgroundImage = `linear-gradient(90deg, #c20e7e 0%, #c20e7e ${progress}%, #00000000 ${progress}%, #00000000 100%)`;
         };
 
         this.showCancelButton = (show: boolean) => {
