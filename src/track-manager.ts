@@ -1,5 +1,5 @@
 import { AnimTrack } from './anim-track';
-import { AnimTrackEditOp } from './edit-ops';
+import { AnimTrackEditOp, MultiOp } from './edit-ops';
 import { Events } from './events';
 
 /**
@@ -121,16 +121,63 @@ const registerTrackManagerEvents = (events: Events) => {
         events.fire('edit.add', new AnimTrackEditOp(name, track, before, after), true);
     };
 
+    // pending edits: tracks whose value the user changed at the current
+    // frame without keying it. The key button keys them together with the
+    // key target, in one undo step. Moving to another frame drops them (the
+    // keyed tracks re-evaluate there and the edit is gone anyway)
+    const pending = new Set<AnimTrack>();
+    let pendingFrame = 0;
+    const markPending = (track: AnimTrack | null) => {
+        if (!track) return;
+        pending.add(track);
+        events.fire('track.pending', pending.size);
+    };
+    const clearPending = () => {
+        if (pending.size === 0) return;
+        pending.clear();
+        events.fire('track.pending', 0);
+    };
+    const frameMoved = (frame: number) => {
+        if (frame !== pendingFrame) {
+            pendingFrame = frame;
+            clearPending();
+        }
+    };
+    events.on('timeline.frame', frameMoved);
+    events.on('timeline.time', frameMoved);
+    events.function('track.pending', () => Array.from(pending));
+
+    const trackOf = (splat: unknown) => (splat ? events.invoke('layerAnim.state', splat)?.track ?? null : null);
+    events.on('pivot.ended', () => markPending(layerTrack()));
+    events.on('layerAnim.setOpacity', (splat: unknown) => markPending(trackOf(splat)));
+    events.on('layerAnim.setMix', (splat: unknown) => markPending(trackOf(splat)));
+    events.on('section.set', (value: { value?: number }) => {
+        if (value.value !== undefined && events.functions.has('section.track')) markPending(events.invoke('section.track'));
+    });
+    events.on('dof.set', (value: { focus?: number, aperture?: number }) => {
+        if ((value.focus !== undefined || value.aperture !== undefined) && events.functions.has('dof.track')) markPending(events.invoke('dof.track'));
+    });
+
     // Get keys from active track
     events.function('track.keys', () => {
         const track = getActiveTrack();
         return track ? track.keys : [];
     });
 
-    // Add key to active track
+    // Add key to active track, plus every track with a pending edit
     events.on('track.addKey', (frame?: number) => {
         const keyFrame = frame ?? events.invoke('timeline.frame');
-        trackEdit('addKey', track => track.addKey(keyFrame));
+        const tracks = new Set<AnimTrack>(pending);
+        const active = getActiveTrack();
+        if (active) tracks.add(active);
+        const ops: AnimTrackEditOp[] = [];
+        tracks.forEach((track) => {
+            const before = track.snapshot();
+            if (track.addKey(keyFrame)) ops.push(new AnimTrackEditOp('addKey', track, before, track.snapshot()));
+        });
+        clearPending();
+        if (ops.length === 1) events.fire('edit.add', ops[0], true);
+        else if (ops.length > 1) events.fire('edit.add', new MultiOp(ops), true);
     });
 
     // Remove key from active track

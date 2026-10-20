@@ -190,9 +190,7 @@ const registerDofEvents = (events: Events, scene: Scene, canvasContainer: Contai
         events.fire('dof.picking', false);
         const hit = await scene.camera.intersect(down.x / canvasContainer.dom.clientWidth, down.y / canvasContainer.dom.clientHeight);
         if (hit) {
-            state.focus = Math.max(0.01, hit.depth);
-            if (!state.enabled) state.enabled = true;
-            changed();
+            events.fire('dof.set', { focus: hit.depth, enabled: true });
         }
     });
 

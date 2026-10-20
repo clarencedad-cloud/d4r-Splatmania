@@ -418,6 +418,20 @@ Eine Dünnlinsen-Unschärfe pro Splat im Projector (`src/shaders/projected-splat
 - MP4-Export `test-data/out/dof_pull.mp4`: Frame 0 unscharf, Frame 30 und 60 scharf (Kontaktabzug `dof_sheet.png`).
 - Nebenbei behoben: Transitions- und Layer-Animations-Bedienelemente waren ohne gewählten Layer sichtbar. Eigene `display`-Regeln hatten `.pcui-hidden` überstimmt (`layer-anim-panel.scss`).
 
+## Key-Button keyt alle geänderten Werte
+
+Früher hat der ◆-Button der Timeline (und `track.addKey`) nur das **Key-Ziel** gekeyt, also die zuletzt gewählte Kamera, den Splat, den Schnitt oder den Fokus. Wer erst einen Layer verschoben und dann den Fokus geändert hatte, bekam nur einen Key für den Fokus.
+
+Jetzt gilt:
+- Jede Nutzer-Änderung am aktuellen Frame merkt sich die Spur als „geändert“. Gemerkt werden Layer-Transform (`pivot.ended`), Deckkraft und Punkt-Mix (`layerAnim.setOpacity` / `setMix`), Schnitt-Wert (`section.set` mit `value`) sowie Fokus und Blende (`dof.set`, auch die Pipette).
+- Der ◆-Button keyt das Key-Ziel **und** alle geänderten Spuren in **einem** Undo-Schritt (`MultiOp`).
+- Der Wechsel auf einen anderen Frame verwirft die Merkliste. Gekeyte Spuren werten dort ohnehin neu aus, die Änderung wäre also weg.
+- Das Label neben den Buttons zeigt z. B. „Key → Splat: haus + 2 geändert“, der Tooltip nennt die Spuren.
+- Die Kamera wird nur gekeyt, wenn sie das Key-Ziel ist. Bloßes Umsehen im Viewport soll keine Kamera-Keys erzeugen.
+- Die ◆-Key-Knöpfe in den einzelnen Panels (Fokus, Schnitt, Layer) keyen weiterhin nur ihre eigene Spur.
+- Umsetzung: `track-manager.ts` (Merkliste, `track.pending`), Label in `ui/timeline-panel.ts`.
+- Verifiziert: Splat-Deckkraft, Fokus und Schnitt geändert, dann ein Klick auf ◆ ergibt Keys auf allen drei Spuren bei Frame 10. Undo nimmt alle drei zurück, Redo stellt sie wieder her. Ein Frame-Wechsel leert die Liste.
+
 ## Nachbesserungen nach dem Klicktest der Hauptsession
 
 1. **Keine Startfehler „function not found 'selection'“ mehr**: Track-Manager, Layer-Animator, Layer-Animator-Panel und Zeitleisten-Zeilen fragen die Auswahl erst ab, wenn sie registriert ist (`events.functions.has('selection')`). Geprüft: Nach frischem Laden kamen keine neuen Meldungen hinzu.

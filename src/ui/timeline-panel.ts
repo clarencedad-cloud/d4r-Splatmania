@@ -361,8 +361,25 @@ class TimelinePanel extends Container {
             if (!t) return;
             keyTarget.text = t.kind === 'layer' ? `Key → Splat: ${t.name}` : t.kind === 'section' ? 'Key → Schnitt' : t.kind === 'dof' ? 'Key → Fokus' : `Key → ${t.name}`;
             keyTarget.dom.style.color = `rgb(${t.color[0]}, ${t.color[1]}, ${t.color[2]})`;
+
+            // changed but unkeyed values elsewhere get keyed along
+            const trackName = (track: any) => {
+                if (track.splat) return track.splat.name;
+                if (events.functions.has('section.track') && track === events.invoke('section.track')) return 'Schnitt';
+                if (events.functions.has('dof.track') && track === events.invoke('dof.track')) return 'Fokus';
+                return 'Kamera';
+            };
+            const targetName = t.kind === 'layer' ? t.name : t.kind === 'section' ? 'Schnitt' : t.kind === 'dof' ? 'Fokus' : null;
+            const extra = (events.functions.has('track.pending') ? events.invoke('track.pending') as any[] : [])
+            .map(trackName)
+            .filter((name: string) => name !== targetName);
+            if (extra.length > 0) keyTarget.text += ` + ${extra.length} geändert`;
+            keyTarget.dom.title = extra.length > 0 ?
+                `Der Key-Button keyt das Ziel und alle geänderten, noch nicht gekeyten Werte: ${extra.join(', ')}` :
+                'Der Key-Button keyt das Ziel und alle geänderten, noch nicht gekeyten Werte';
         };
         events.on('track.target', syncKeyTarget);
+        events.on('track.pending', syncKeyTarget);
         // the target functions are registered before the ui; sync once ready
         setTimeout(syncKeyTarget);
 
