@@ -241,6 +241,37 @@ class TimelineTracks extends Container {
                 this.dom.appendChild(sectionRow);
             }
 
+            // depth of field focus track (src/dof/dof.ts): shown once depth
+            // of field is on or has keys; click selects it as the key target
+            const dofTrack = events.functions.has('dof.track') ? events.invoke('dof.track') : null;
+            const dofState = events.functions.has('dof.state') ? events.invoke('dof.state') : null;
+            if (dofTrack && (dofState?.enabled || dofTrack.keys.length > 0)) {
+                const dofRow = document.createElement('div');
+                dofRow.classList.add('track-row', 'dof-track');
+                if (keyTarget?.kind === 'dof') dofRow.classList.add('key-target');
+                dofRow.title = 'Fokus-Spur: Klick = Key-Ziel, Keys im Lineal verschieben bzw. löschen';
+                const dofLabel = document.createElement('div');
+                dofLabel.classList.add('track-label');
+                dofLabel.textContent = 'Fokus';
+                dofRow.appendChild(dofLabel);
+                for (const key of dofTrack.keyData) {
+                    if (key.frame >= frames) continue;
+                    const marker = document.createElement('div');
+                    marker.classList.add('track-key');
+                    marker.style.left = `${offsetFromFrame(key.frame)}px`;
+                    marker.style.backgroundColor = '#5aa9e6';
+                    marker.title = `Frame ${key.frame}: Fokus ${key.focus.toFixed(2)}, Blende ${key.aperture.toFixed(3)}`;
+                    dofRow.appendChild(marker);
+                }
+                dofRow.addEventListener('pointerdown', (event) => {
+                    if (!event.isPrimary || event.button !== 0) return;
+                    events.fire('dof.selectTrack');
+                    events.fire('timeline.setFrame', frameFromOffset(event.offsetX));
+                });
+                addCursor(dofRow);
+                this.dom.appendChild(dofRow);
+            }
+
             // layer rows (src/layer-anim.ts): double-click adds a key with
             // every channel, drag moves a key, right-click deletes it
 
@@ -466,7 +497,7 @@ class TimelineTracks extends Container {
             'shotCameras.changed', 'cut.changed', 'timeline.frames',
             'track.keyAdded', 'track.keyRemoved', 'track.keyMoved', 'track.keyUpdated',
             'track.keysLoaded', 'track.keysCleared',
-            'layerAnim.trackChanged', 'layerAnim.transitionSelected', 'track.target', 'section.trackChanged', 'scene.elementAdded', 'scene.elementRemoved', 'selection.changed', 'splat.name'
+            'layerAnim.trackChanged', 'layerAnim.transitionSelected', 'track.target', 'section.trackChanged', 'dof.trackChanged', 'dof.enabled', 'scene.elementAdded', 'scene.elementRemoved', 'selection.changed', 'splat.name'
         ].forEach(name => events.on(name, requestRebuild));
 
         events.on('timeline.frame', moveCursors);

@@ -221,3 +221,17 @@
         white-space: normal;
     }
 }
+
+// containers in these panels set their own display (flex), which outranks
+// pcui's .pcui-hidden; make hiding win again
+#layer-anim-panel,
+#cleanup-panel,
+#camera-list,
+#quality-panel,
+#section-panel,
+#align-panel,
+#depth-filter-panel {
+    .pcui-hidden {
+        display: none !important;
+    }
+}

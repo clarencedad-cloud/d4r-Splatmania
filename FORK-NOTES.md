@@ -396,6 +396,28 @@ Die Rechenkerne kommen aus der Hauptsession: `src/align/icp.ts` (`refineAlignmen
 - Speichern und Laden der Spur und der Einstellungen per `docSerialize`/`docDeserialize`.
 - **Nicht per Klick getestet**: Boden-Pipette, Achse „Layer“, „Aktiven Layer“ und harte Kante.
 
+## Neu: Tiefenschärfe (Depth of Field)
+
+Eine Dünnlinsen-Unschärfe pro Splat im Projector (`src/shaders/projected-splat-projector-shader.ts`): Die projizierte 2D-Kovarianz wird um den Zerstreuungskreis (`Blende · Brennweite_px · |1/Fokus − 1/Tiefe|`, gedeckelt auf „Max. px“) verbreitert. Die Deckkraft sinkt dabei mit `sqrt(det_scharf / det_unscharf)`, damit die Energie gleich bleibt. Weil das im Projector passiert, sieht der Viewport genauso aus wie jeder Bild- und Video-Export. Pick- und Selektionspässe (`forPick`) bleiben scharf.
+
+### Bedienung (Szenen-Manager → KAMERAS)
+- **Tiefenschärfe**: Schalter. **Pipette**: Der nächste Klick in den Viewport stellt auf die Fläche darunter scharf und schaltet die Tiefenschärfe ein.
+- **Fokus**: Abstand der Schärfeebene (View-Tiefe, Welteinheiten). **Blende**: Linsenradius, größer bedeutet weniger Schärfentiefe. **Max. px**: Obergrenze der Unschärfe.
+- **◆ Key**: keyt Fokus und Blende am aktuellen Frame. Die Spur **Fokus** erscheint dann in der Timeline (blau, unter „Schnitt“), Klick darauf macht sie zum Key-Ziel („Key → Fokus“). Keys lassen sich im Lineal verschieben und löschen, Undo/Redo funktioniert. Interpolation: smoothstep.
+- Wie bei den anderen animierten Werten überschreibt die Spur beim Scrubben den Wert. Nach Pipette oder Slider also neu keyen.
+
+### Umsetzung
+- `src/dof/dof.ts`: Zustand, `DofTrack` (AnimTrack), Pipette (`scene.camera.intersect(...).depth`), Events `dof.set` / `dof.addKey` / `dof.pickFocus` / `dof.selectTrack`, Funktion `dof.params` für den Renderer, Projekt-Serialisierung (`document.dof`).
+- `src/projected-splat-renderer.ts`: Uniform `dofParams` (an, 1/Fokus, Blende, Max-Blur).
+- `track-manager.ts`: Key-Ziel `dof`. `ui/timeline-tracks.ts`: Fokus-Zeile. `ui/camera-list.ts`: UI.
+
+### Verifiziert (`test-data/house.ply`)
+- Fokus weit hinter dem Haus: starke Unschärfe, die nahe Ecke am stärksten, die Farben bleiben satt.
+- Pipette auf Bildmitte setzt den Fokus auf 3,79 (Treffertiefe).
+- Keys bei Frame 0 (Fokus 2,5) und 60 (Fokus 12): Frame 30 ergibt 7,25. Undo entfernt den Key, Redo stellt ihn wieder her.
+- MP4-Export `test-data/out/dof_pull.mp4`: Frame 0 unscharf, Frame 30 und 60 scharf (Kontaktabzug `dof_sheet.png`).
+- Nebenbei behoben: Transitions- und Layer-Animations-Bedienelemente waren ohne gewählten Layer sichtbar. Eigene `display`-Regeln hatten `.pcui-hidden` überstimmt (`layer-anim-panel.scss`).
+
 ## Nachbesserungen nach dem Klicktest der Hauptsession
 
 1. **Keine Startfehler „function not found 'selection'“ mehr**: Track-Manager, Layer-Animator, Layer-Animator-Panel und Zeitleisten-Zeilen fragen die Auswahl erst ab, wenn sie registriert ist (`events.functions.has('selection')`). Geprüft: Nach frischem Laden kamen keine neuen Meldungen hinzu.

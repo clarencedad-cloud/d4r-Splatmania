@@ -359,7 +359,7 @@ class TimelinePanel extends Container {
         const syncKeyTarget = () => {
             const t = events.invoke('track.target');
             if (!t) return;
-            keyTarget.text = t.kind === 'layer' ? `Key → Splat: ${t.name}` : t.kind === 'section' ? 'Key → Schnitt' : `Key → ${t.name}`;
+            keyTarget.text = t.kind === 'layer' ? `Key → Splat: ${t.name}` : t.kind === 'section' ? 'Key → Schnitt' : t.kind === 'dof' ? 'Key → Fokus' : `Key → ${t.name}`;
             keyTarget.dom.style.color = `rgb(${t.color[0]}, ${t.color[1]}, ${t.color[2]})`;
         };
         events.on('track.target', syncKeyTarget);

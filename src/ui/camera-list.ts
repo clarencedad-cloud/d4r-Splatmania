@@ -1,4 +1,4 @@
-import { BooleanInput, Container, Label } from '@playcanvas/pcui';
+import { BooleanInput, Container, Label, SliderInput } from '@playcanvas/pcui';
 
 import type { CameraViewMode, ShotCamera } from '../camera-poses';
 import { Events } from '../events';
@@ -158,6 +158,63 @@ class CameraList extends Container {
         options.append(viewRow);
         options.append(gizmoRow);
         this.append(options);
+
+        // depth of field (src/dof/dof.ts), registered after the ui: the
+        // controls start at defaults and sync on dof.changed
+
+        const dof = new Container({ class: 'camera-list-options' });
+        let syncing = false;
+        const dofHead = new Container({ class: 'camera-list-option' });
+        const dofEnabled = new BooleanInput({ value: false });
+        dofEnabled.on('change', (value: boolean) => {
+            if (!syncing) events.fire('dof.set', { enabled: value });
+        });
+        const dofPick = document.createElement('span');
+        dofPick.classList.add('camera-list-mode');
+        dofPick.textContent = 'Pipette';
+        dofPick.title = 'Klick in den Viewport stellt auf die Fläche darunter scharf';
+        dofPick.addEventListener('click', () => events.fire('dof.pickFocus'));
+        const dofKey = document.createElement('span');
+        dofKey.classList.add('camera-list-mode');
+        dofKey.textContent = '◆ Key';
+        dofKey.title = 'Fokus und Blende am aktuellen Frame keyen (Fokus-Spur in der Timeline)';
+        dofKey.addEventListener('click', () => {
+            events.fire('dof.addKey');
+            events.fire('dof.selectTrack');
+        });
+        dofHead.append(new Label({ text: 'Tiefenschärfe', class: 'camera-list-label' }));
+        dofHead.append(dofEnabled);
+        dofHead.dom.appendChild(dofPick);
+        dofHead.dom.appendChild(dofKey);
+
+        const slider = (text: string, tip: string, min: number, max: number, precision: number, key: 'focus' | 'aperture' | 'maxBlur') => {
+            const row = new Container({ class: 'camera-list-option' });
+            const label = new Label({ text, class: 'camera-list-label' });
+            label.dom.title = tip;
+            const input = new SliderInput({ min, max, precision, value: min, flexGrow: '1' });
+            input.on('change', (value: number) => {
+                if (!syncing) events.fire('dof.set', { [key]: value });
+            });
+            row.append(label);
+            row.append(input);
+            dof.append(row);
+            return input;
+        };
+        dof.append(dofHead);
+        const focusInput = slider('Fokus', 'Entfernung der Schärfeebene zur Kamera', 0.1, 50, 2, 'focus');
+        const apertureInput = slider('Blende', 'Linsenradius: größer = geringere Tiefenschärfe', 0, 0.5, 3, 'aperture');
+        const maxBlurInput = slider('Max. px', 'Obergrenze der Unschärfe in Pixeln', 2, 64, 0, 'maxBlur');
+        this.append(dof);
+
+        events.on('dof.changed', (state: { enabled: boolean, focus: number, aperture: number, maxBlur: number }) => {
+            syncing = true;
+            dofEnabled.value = state.enabled;
+            focusInput.value = state.focus;
+            apertureInput.value = state.aperture;
+            maxBlurInput.value = state.maxBlur;
+            syncing = false;
+        });
+        events.on('dof.picking', (value: boolean) => dofPick.classList.toggle('active', value));
 
         events.on('shotCameras.changed', rebuild);
         events.on('track.keyAdded', rebuild);

@@ -178,7 +178,10 @@ struct ProjectorUniforms {
     // section cut (src/section/section-tool.ts): xyz world up axis, w cut
     // height along it; sectionEdge x enabled, y soft edge width (0 = hard)
     sectionPlane: vec4f,
-    sectionEdge: vec4f
+    sectionEdge: vec4f,
+    // depth of field (src/dof/dof.ts): x enabled, y 1 / focus distance,
+    // z aperture (lens radius, world units), w max blur diameter (px)
+    dofParams: vec4f
 }
 
 // compaction output: surviving splats are appended to a dense list, so the sort
@@ -582,6 +585,20 @@ fn main(
         cov11 = u11 * jy1 + u12 * jy2;
     }
 
+    // depth of field: widen the projected gaussian by the circle of
+    // confusion of a thin lens focused at dofParams.y; alpha shrinks by the
+    // area ratio so each splat keeps its energy (blur, not brighten)
+    var dofAlpha = 1.0;
+    if (uniforms.dofParams.x > 0.5) {
+        let coc = min(uniforms.dofParams.z * focal.y * abs(uniforms.dofParams.y - 1.0 / max(depth, 0.001)), uniforms.dofParams.w);
+        let blurVariance = 0.25 * coc * coc;
+        let detSharp = (cov00 + 0.3) * (cov11 + 0.3) - cov01 * cov01;
+        cov00 += blurVariance;
+        cov11 += blurVariance;
+        let detBlurred = (cov00 + 0.3) * (cov11 + 0.3) - cov01 * cov01;
+        dofAlpha = sqrt(max(detSharp, 1e-12) / max(detBlurred, 1e-12));
+    }
+
     cov00 += 0.3;
     cov11 += 0.3;
     let determinant = cov00 * cov11 - cov01 * cov01;
@@ -721,7 +738,7 @@ fn main(
         gradedAlpha *= uniforms.colorAlpha;
     }
     // points take the point cloud opacity; the layer opacity (fades) scales both
-    gradedAlpha = mix(gradedAlpha, uniforms.pointParams.z, pointMix) * uniforms.layerParams.x * built.alpha * sectionFade;
+    gradedAlpha = mix(gradedAlpha, uniforms.pointParams.z, pointMix) * uniforms.layerParams.x * built.alpha * sectionFade * dofAlpha;
     gradedAlpha = clamp(gradedAlpha, 0.0, 1.0);
     // stochastic frames also cull by contribution - the gaussian's alpha mass in
     // pixels, alpha * 2 pi * sqrt(det) of the dilated covariance, the engine's

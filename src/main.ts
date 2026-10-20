@@ -7,6 +7,7 @@ import { registerCleanupEvents } from './cleanup';
 import { CommandQueue } from './command-queue';
 import { registerDepthFilterEvents } from './depth-filter';
 import { registerDocEvents } from './doc';
+import { registerDofEvents } from './dof/dof';
 import { EditHistory } from './edit-history';
 import { registerEditorEvents } from './editor';
 import { Events } from './events';
@@ -276,6 +277,7 @@ const main = async () => {
     toolManager.register('align', new AlignTool(events, scene, editorUI.canvasContainer));
     toolManager.register('quality', new QualityTool(events, scene, editorUI.canvasContainer));
     toolManager.register('section', new SectionTool(events, scene, editorUI.canvasContainer));
+    registerDofEvents(events, scene, editorUI.canvasContainer);
     toolManager.register('orient', new OrientTool(events, scene, editorUI.toolsContainer.dom, editorUI.canvasContainer, editorUI.annotationContainer.dom));
 
     const boundDimensionsOverlay = new BoundDimensionsOverlay(events, scene, editorUI.canvasContainer, editorUI.annotationContainer.dom);

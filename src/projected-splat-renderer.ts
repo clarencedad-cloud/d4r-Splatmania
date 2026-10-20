@@ -524,7 +524,8 @@ class ProjectedSplatRenderer {
             new UniformFormat('transH', UNIFORMTYPE_VEC4),
             new UniformFormat('quality', UNIFORMTYPE_VEC4),
             new UniformFormat('sectionPlane', UNIFORMTYPE_VEC4),
-            new UniformFormat('sectionEdge', UNIFORMTYPE_VEC4)
+            new UniformFormat('sectionEdge', UNIFORMTYPE_VEC4),
+            new UniformFormat('dofParams', UNIFORMTYPE_VEC4)
         ]);
         const bindGroupFormat = new BindGroupFormat(this.device, [
             new BindStorageBufferFormat('sortKeys', SHADERSTAGE_COMPUTE),
@@ -1066,6 +1067,9 @@ class ProjectedSplatRenderer {
             const section = events.functions.has('section.params') ? events.invoke('section.params', splat) : null;
             compute.setParameter('sectionPlane', section ? [section.axis[0], section.axis[1], section.axis[2], section.height] : [0, 1, 0, 0]);
             compute.setParameter('sectionEdge', section ? [1, forPick ? 0 : section.edge, 0, 0] : [0, 0, 0, 0]);
+            // depth of field (src/dof/dof.ts); selection passes stay sharp
+            const dof = forPick || !events.functions.has('dof.params') ? null : events.invoke('dof.params');
+            compute.setParameter('dofParams', dof ? [1, 1 / Math.max(1e-4, dof.focus), dof.aperture, dof.maxBlur] : [0, 0, 0, 0]);
 
             const workgroups = Math.ceil(placement.entryCapacity / WORKGROUP_SIZE);
             Compute.calcDispatchSize(workgroups, this.dispatchSize);

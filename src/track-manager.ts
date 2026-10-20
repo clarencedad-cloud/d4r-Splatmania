@@ -12,7 +12,7 @@ import { Events } from './events';
  * in the camera list (or its row) targets that camera's track.
  */
 const registerTrackManagerEvents = (events: Events) => {
-    let target: 'camera' | 'layer' | 'section' = 'camera';
+    let target: 'camera' | 'layer' | 'section' | 'dof' = 'camera';
     let autoKey = false;
 
     // the selection is registered after the ui (which already asks for the
@@ -27,6 +27,9 @@ const registerTrackManagerEvents = (events: Events) => {
         if (target === 'section' && events.functions.has('section.track')) {
             return events.invoke('section.track');
         }
+        if (target === 'dof' && events.functions.has('dof.track')) {
+            return events.invoke('dof.track');
+        }
         if (target === 'layer') {
             const track = layerTrack();
             if (track) return track;
@@ -39,6 +42,9 @@ const registerTrackManagerEvents = (events: Events) => {
         if (target === 'section') {
             return { kind: 'section', name: 'Schnitt', color: [194, 14, 126] };
         }
+        if (target === 'dof') {
+            return { kind: 'dof', name: 'Fokus', color: [90, 169, 230] };
+        }
         const splat = (events.functions.has('selection') ? events.invoke('selection') : null);
         if (target === 'layer' && splat) {
             return { kind: 'layer', name: splat.name, color: [230, 18, 138], splat };
@@ -47,7 +53,7 @@ const registerTrackManagerEvents = (events: Events) => {
         return { kind: 'camera', name: camera?.name ?? 'Kamera', color: camera?.color ?? [0, 220, 255], camera };
     });
 
-    const setTarget = (value: 'camera' | 'layer' | 'section') => {
+    const setTarget = (value: 'camera' | 'layer' | 'section' | 'dof') => {
         target = value;
         events.fire('track.target', events.invoke('track.target'));
         // the ruler and the key buttons show the active track's keys
@@ -68,6 +74,11 @@ const registerTrackManagerEvents = (events: Events) => {
     events.on('section.selectTrack', () => setTarget('section'));
     events.on('section.trackChanged', () => {
         if (target === 'section') events.fire('track.keysLoaded');
+    });
+    // depth of field focus track (src/dof/dof.ts)
+    events.on('dof.selectTrack', () => setTarget('dof'));
+    events.on('dof.trackChanged', () => {
+        if (target === 'dof') events.fire('track.keysLoaded');
     });
     events.on('shotCameras.changed', () => events.fire('track.target', events.invoke('track.target')));
     events.on('splat.name', () => events.fire('track.target', events.invoke('track.target')));
