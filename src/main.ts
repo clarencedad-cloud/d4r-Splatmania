@@ -1,19 +1,25 @@
 import { WebPCodec, WorkerQueue } from '@playcanvas/splat-transform';
 import { Color, createGraphicsDevice } from 'playcanvas';
 
+import { AlignTool } from './align/align-tool';
 import { registerCameraPosesEvents } from './camera-poses';
+import { registerCleanupEvents } from './cleanup';
 import { CommandQueue } from './command-queue';
+import { registerDepthFilterEvents } from './depth-filter';
 import { registerDocEvents } from './doc';
 import { EditHistory } from './edit-history';
 import { registerEditorEvents } from './editor';
 import { Events } from './events';
 import { initFileHandler } from './file-handler';
 import { registerIframeApi } from './iframe-api';
+import { registerLayerAnimEvents } from './layer-anim';
 import { registerPreferences } from './preferences';
 import { registerPublishEvents } from './publish';
+import { QualityTool } from './quality/quality-tool';
 import { registerRenderEvents } from './render';
 import { Scene } from './scene';
 import { getSceneConfig } from './scene-config';
+import { SectionTool } from './section/section-tool';
 import { registerSelectionEvents } from './selection';
 import { registerSequenceEvents } from './sequence';
 import { ShortcutManager } from './shortcut-manager';
@@ -112,10 +118,12 @@ const main = async () => {
     // register events that only need the events object (before UI is created)
     registerTimelineEvents(events);
     registerCameraPosesEvents(events);
+    registerLayerAnimEvents(events);
     registerTrackManagerEvents(events);
     registerTransformHandlerEvents(events);
     registerPublishEvents(events);
     registerIframeApi(events);
+    registerDepthFilterEvents(events);
 
     // initialize shortcuts
     const shortcutManager = new ShortcutManager(events);
@@ -265,6 +273,9 @@ const main = async () => {
     toolManager.register('rotate', new RotateTool(events, scene));
     toolManager.register('scale', new ScaleTool(events, scene));
     toolManager.register('measure', new MeasureTool(events, scene, editorUI.canvasContainer, editorUI.annotationContainer.dom));
+    toolManager.register('align', new AlignTool(events, scene, editorUI.canvasContainer));
+    toolManager.register('quality', new QualityTool(events, scene, editorUI.canvasContainer));
+    toolManager.register('section', new SectionTool(events, scene, editorUI.canvasContainer));
     toolManager.register('orient', new OrientTool(events, scene, editorUI.toolsContainer.dom, editorUI.canvasContainer, editorUI.annotationContainer.dom));
 
     const boundDimensionsOverlay = new BoundDimensionsOverlay(events, scene, editorUI.canvasContainer, editorUI.annotationContainer.dom);
@@ -278,6 +289,7 @@ const main = async () => {
 
     // register events that need scene or other dependencies
     registerEditorEvents(events, editHistory, scene);
+    registerCleanupEvents(events, scene);
     registerSelectionEvents(events, scene);
     registerSequenceEvents(events, scene);
     registerDocEvents(scene, events);

@@ -14,10 +14,15 @@ interface Tool {
     getFocus?: () => { position: Vec3, radius: number } | null;
 }
 
+// tools that return to the previously active tool when they end
+const RETURNING_TOOLS = new Set(['align', 'quality', 'section']);
+
 class ToolManager {
     tools = new Map<string, Tool>();
     events: Events;
     active: string | null = null;
+    // the tool to restore when a returning tool ends
+    returnTo: string | null = null;
 
     constructor(events: Events) {
         this.events = events;
@@ -97,6 +102,19 @@ class ToolManager {
                 this.activate(null);
             }
         } else {
+            // modal tools (align) hand back to the tool that was active
+            // before them when they end (toggle or Esc); picking another
+            // tool directly drops that
+            if (RETURNING_TOOLS.has(this.active)) {
+                if (toolName === null && this.returnTo) {
+                    toolName = this.returnTo;
+                }
+                this.returnTo = null;
+            }
+            if (RETURNING_TOOLS.has(toolName)) {
+                this.returnTo = this.active;
+            }
+
             // deactive old tool
             if (this.active) {
                 const tool = this.tools.get(this.active);

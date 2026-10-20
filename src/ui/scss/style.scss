@@ -10,6 +10,12 @@
 @use 'splat-list.scss';
 @use 'transform.scss';
 @use 'bottom-toolbar.scss';
+@use 'depth-filter-panel.scss';
+@use 'camera-list.scss';
+@use 'layer-anim-panel.scss';
+@use 'align-panel.scss';
+@use 'quality-panel.scss';
+@use 'section-panel.scss';
 @use 'right-toolbar.scss';
 @use 'select-toolbar.scss';
 @use 'data-panel.scss';
@@ -268,6 +274,9 @@ body {
     padding: 0;
     margin: 0;
     flex-grow: 1;
+    // let the canvas shrink below its pixel size instead of pushing the timeline
+    min-height: 0;
+    overflow: hidden;
 }
 
 #annotation-container {

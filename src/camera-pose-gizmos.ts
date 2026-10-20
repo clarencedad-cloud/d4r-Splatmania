@@ -9,6 +9,7 @@ import {
     Vec3
 } from 'playcanvas';
 
+import type { ShotCamera } from './camera-poses';
 import { Element, ElementType } from './element';
 import { vertexShader, fragmentShader } from './shaders/debug-shader';
 
@@ -23,16 +24,14 @@ const tmpBL = new Vec3();
 const tmpBR = new Vec3();
 const tmpUpTip = new Vec3();
 
-// lines per camera icon: 4 pyramid + 4 base rect + 2 up indicator = 10
-const LINES_PER_CAMERA = 10;
-const VERTS_PER_CAMERA = LINES_PER_CAMERA * 2;
-
 class CameraPoseGizmos extends Element {
     entity: Entity;
     mesh: Mesh;
     material: ShaderMaterial;
     meshInstance: MeshInstance;
     dirty = true;
+    // timeline frame the current-pose frustums are drawn at
+    frame = 0;
 
     constructor() {
         super(ElementType.debug);
@@ -89,6 +88,18 @@ class CameraPoseGizmos extends Element {
         events.on('track.keysCleared', markDirty);
         events.on('track.keysLoaded', markDirty);
         events.on('scene.boundChanged', markDirty);
+        events.on('track.changed', markDirty);
+        events.on('shotCameras.changed', markDirty);
+        events.on('camera.viewMode', markDirty);
+        events.on('camera.showPaths', markDirty);
+        events.on('timeline.frame', (frame: number) => {
+            this.frame = frame;
+            markDirty();
+        });
+        events.on('timeline.time', (time: number) => {
+            this.frame = time;
+            markDirty();
+        });
     }
 
     destroy() {
@@ -111,29 +122,33 @@ class CameraPoseGizmos extends Element {
     }
 
     private rebuildMesh() {
-        const poses = this.scene.events.invoke('camera.poses') as { position: Vec3, target: Vec3 }[];
-        if (!poses || poses.length === 0) {
-            this.mesh.primitive[0].count = 0;
-            return;
-        }
+        const { events } = this.scene;
+        const cameras = events.invoke('shotCameras.list') as ShotCamera[] ?? [];
+        const frames = events.invoke('timeline.frames') as number;
+        const showPaths = events.invoke('camera.showPaths') as boolean;
+        const selected = events.invoke('shotCameras.selected') as ShotCamera;
+        // the camera the viewport is looking through sits at the eye; drawing
+        // it would only put lines across the screen
+        const followed = events.invoke('shotCameras.followed') as ShotCamera | null;
 
-        const depth = 0.08;
-        const halfW = 0.06;
-        const halfH = 0.04;
+        // gizmo size follows the scene so it reads at any scale
+        const bound = this.scene.bound;
+        const radius = bound ? bound.halfExtents.length() : 1;
+        const size = Math.max(0.05, radius * 0.06);
 
-        const numVerts = poses.length * VERTS_PER_CAMERA;
         const positions: number[] = [];
-        const colors = new Uint8Array(numVerts * 4);
+        const colors: number[] = [];
 
-        const pushLine = (a: Vec3, b: Vec3) => {
+        const pushLine = (a: Vec3, b: Vec3, c: number[]) => {
             positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+            colors.push(c[0], c[1], c[2], 255, c[0], c[1], c[2], 255);
         };
 
-        for (const pose of poses) {
-            const { position, target } = pose;
-
-            // forward direction
-            tmpForward.sub2(target, position).normalize();
+        // camera pyramid with the pose's fov at a 16:9 aspect
+        const pushFrustum = (position: Vec3, target: Vec3, fov: number, depth: number, c: number[]) => {
+            tmpForward.sub2(target, position);
+            if (tmpForward.lengthSq() === 0) return;
+            tmpForward.normalize();
 
             // right direction (handle degenerate case when looking straight up/down)
             if (Math.abs(tmpForward.y) > 0.999) {
@@ -141,48 +156,77 @@ class CameraPoseGizmos extends Element {
             } else {
                 tmpRight.cross(tmpForward, Vec3.UP).normalize();
             }
-
-            // up direction
             tmpUp.cross(tmpRight, tmpForward);
 
-            // base center (in front of camera position)
-            tmpBase.copy(position).addScaled(tmpForward, depth);
+            const halfH = depth * Math.tan((fov ?? 60) * Math.PI / 360);
+            const halfW = halfH * 16 / 9;
 
-            // frustum corners
+            tmpBase.copy(position).addScaled(tmpForward, depth);
             tmpTL.copy(tmpBase).addScaled(tmpUp, halfH).addScaled(tmpRight, -halfW);
             tmpTR.copy(tmpBase).addScaled(tmpUp, halfH).addScaled(tmpRight, halfW);
             tmpBL.copy(tmpBase).addScaled(tmpUp, -halfH).addScaled(tmpRight, -halfW);
             tmpBR.copy(tmpBase).addScaled(tmpUp, -halfH).addScaled(tmpRight, halfW);
 
-            // pyramid edges from position to corners
-            pushLine(position, tmpTL);
-            pushLine(position, tmpTR);
-            pushLine(position, tmpBL);
-            pushLine(position, tmpBR);
-
-            // base rectangle
-            pushLine(tmpTL, tmpTR);
-            pushLine(tmpTR, tmpBR);
-            pushLine(tmpBR, tmpBL);
-            pushLine(tmpBL, tmpTL);
+            pushLine(position, tmpTL, c);
+            pushLine(position, tmpTR, c);
+            pushLine(position, tmpBL, c);
+            pushLine(position, tmpBR, c);
+            pushLine(tmpTL, tmpTR, c);
+            pushLine(tmpTR, tmpBR, c);
+            pushLine(tmpBR, tmpBL, c);
+            pushLine(tmpBL, tmpTL, c);
 
             // up indicator triangle
             tmpUpTip.copy(tmpBase).addScaled(tmpUp, halfH * 1.5);
-            pushLine(tmpTL, tmpUpTip);
-            pushLine(tmpTR, tmpUpTip);
+            pushLine(tmpTL, tmpUpTip, c);
+            pushLine(tmpTR, tmpUpTip, c);
+        };
+
+        const pathA = new Vec3();
+        const pathB = new Vec3();
+
+        for (const camera of cameras) {
+            const poses = camera.track.getPoses();
+            if (poses.length === 0) continue;
+
+            const isSelected = camera === selected;
+            const full = camera.color;
+            const dim = full.map(v => Math.round(v * 0.45));
+
+            // keyframes: small pyramids
+            for (const pose of poses) {
+                pushFrustum(pose.position, pose.target, pose.fov, size * 0.5, isSelected ? full : dim);
+            }
+
+            // path through the spline
+            if (showPaths && frames > 1) {
+                const steps = Math.min(frames - 1, 240);
+                let prev: Vec3 | null = null;
+                for (let i = 0; i <= steps; i++) {
+                    const pose = camera.track.getPoseAt(i / steps * (frames - 1));
+                    if (!pose) break;
+                    const point = (i % 2 === 0 ? pathA : pathB).copy(pose.position);
+                    if (prev) pushLine(prev, point, isSelected ? full : dim);
+                    prev = point;
+                }
+            }
+
+            // current pose: a full-size frustum
+            if (camera !== followed) {
+                const current = camera.track.getPoseAt(this.frame);
+                if (current) {
+                    pushFrustum(current.position, current.target, current.fov, size * (isSelected ? 1.4 : 1), full);
+                }
+            }
         }
 
-        // fill vertex colors with cyan (0, 255, 255, 255)
-        for (let i = 0; i < numVerts; i++) {
-            const off = i * 4;
-            colors[off] = 0;
-            colors[off + 1] = 255;
-            colors[off + 2] = 255;
-            colors[off + 3] = 255;
+        if (positions.length === 0) {
+            this.mesh.primitive[0].count = 0;
+            return;
         }
 
         this.mesh.setPositions(positions);
-        this.mesh.setColors32(colors);
+        this.mesh.setColors32(new Uint8Array(colors));
         this.mesh.update(PRIMITIVE_LINES);
     }
 }

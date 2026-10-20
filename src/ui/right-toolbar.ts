@@ -3,12 +3,15 @@ import { Button, Container, Element, Label } from '@playcanvas/pcui';
 import { Events } from '../events';
 import { ShortcutManager } from '../shortcut-manager';
 import { i18n } from './localization';
+import alignSvg from './svg/align.svg';
 import appearanceSvg from './svg/appearance.svg';
 import cameraFrameSelectionSvg from './svg/camera-frame-selection.svg';
 import cameraResetSvg from './svg/camera-reset.svg';
 import flyCameraSvg from './svg/fly-camera.svg';
 import orbitCameraSvg from './svg/orbit-camera.svg';
 import overlaysSvg from './svg/overlays.svg';
+import qualitySvg from './svg/quality.svg';
+import sectionSvg from './svg/section.svg';
 import { Tooltips } from './tooltips';
 
 const createSvg = (svgString: string) => {
@@ -59,6 +62,12 @@ class RightToolbar extends Container {
             class: 'right-toolbar-toggle'
         });
 
+        // anchor alignment tool (src/tools/align-tool.ts)
+        const align = new Button({
+            id: 'right-toolbar-align',
+            class: 'right-toolbar-tool'
+        });
+
         const settings = new Button({
             id: 'right-toolbar-settings',
             class: 'right-toolbar-toggle',
@@ -71,6 +80,21 @@ class RightToolbar extends Container {
         cameraFrameSelection.dom.appendChild(createSvg(cameraFrameSelectionSvg));
         cameraReset.dom.appendChild(createSvg(cameraResetSvg));
         overlays.dom.appendChild(createSvg(overlaysSvg));
+        align.dom.appendChild(createSvg(alignSvg));
+
+        // quality heatmap / scan comparison tool (src/quality/quality-tool.ts)
+        const quality = new Button({
+            id: 'right-toolbar-quality',
+            class: 'right-toolbar-tool'
+        });
+        quality.dom.appendChild(createSvg(qualitySvg));
+
+        // section cut tool (src/section/section-tool.ts)
+        const section = new Button({
+            id: 'right-toolbar-section',
+            class: 'right-toolbar-tool'
+        });
+        section.dom.appendChild(createSvg(sectionSvg));
 
         // icon-only buttons: keep accessible names in sync with the language
         const buttonLabels: [Button, string][] = [
@@ -95,6 +119,10 @@ class RightToolbar extends Container {
         this.append(cameraFrameSelection);
         this.append(cameraReset);
         this.append(new Element({ class: 'right-toolbar-separator' }));
+        this.append(align);
+        this.append(quality);
+        this.append(section);
+        this.append(new Element({ class: 'right-toolbar-separator' }));
         this.append(settings);
 
         // Helper to compose localized tooltip text with shortcut
@@ -117,6 +145,9 @@ class RightToolbar extends Container {
         tooltips.register(cameraReset, tooltip('tooltip.right-toolbar.reset-camera', 'camera.reset'), 'left');
         tooltips.register(overlays, tooltip('panel.overlays'), 'left');
         tooltips.register(settings, tooltip('panel.settings'), 'left');
+        tooltips.register(align, tooltip('tooltip.right-toolbar.align', 'tool.align'), 'left');
+        tooltips.register(quality, tooltip('tooltip.right-toolbar.quality', 'tool.quality'), 'left');
+        tooltips.register(section, tooltip('tooltip.right-toolbar.section', 'tool.section'), 'left');
 
         // add event handlers
 
@@ -127,6 +158,15 @@ class RightToolbar extends Container {
         cameraReset.on('click', () => events.fire('camera.reset'));
         overlays.on('click', () => events.fire('overlaysPanel.toggleVisible'));
         settings.on('click', () => events.fire('settingsPanel.toggleVisible'));
+        align.on('click', () => events.fire('tool.align'));
+        quality.on('click', () => events.fire('tool.quality'));
+        section.on('click', () => events.fire('tool.section'));
+
+        events.on('tool.activated', (toolName: string) => {
+            align.class[toolName === 'align' ? 'add' : 'remove']('active');
+            quality.class[toolName === 'quality' ? 'add' : 'remove']('active');
+            section.class[toolName === 'section' ? 'add' : 'remove']('active');
+        });
 
         events.on('appearancePanel.visible', (visible: boolean) => {
             appearance.class[visible ? 'add' : 'remove']('active');

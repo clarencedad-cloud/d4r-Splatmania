@@ -1,0 +1,87 @@
+@use 'colors.scss' as *;
+
+// quality heatmap / scan comparison (src/quality/quality-tool.ts)
+#quality-panel {
+    position: absolute;
+    top: 150px;
+    right: 80px;
+    width: 320px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background-color: $bcg-dark;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    &.pcui-hidden {
+        display: none;
+    }
+
+    .quality-title {
+        margin: 0;
+        color: $clr-active;
+        font-weight: bold;
+    }
+
+    .quality-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+
+        > .pcui-slider {
+            flex-grow: 1;
+            margin: 0;
+        }
+    }
+
+    .quality-label {
+        flex-shrink: 0;
+        width: 64px;
+        margin: 0;
+        color: $text-secondary;
+    }
+
+    .quality-button {
+        flex: 1;
+        text-align: center;
+        padding: 4px 4px;
+        cursor: pointer;
+        border-radius: 3px;
+        background-color: $bcg-lighter;
+        color: $clr-default;
+        font-size: 11px;
+
+        &:hover {
+            filter: brightness(1.15);
+        }
+
+        &.quality-segment.active {
+            background-color: $clr-hilight;
+            color: $clr-active;
+        }
+    }
+
+    .quality-message {
+        margin: 0;
+        white-space: normal;
+        color: $clr-icon-hilight;
+    }
+}
+
+#quality-panel {
+    .quality-hint {
+        margin: 0;
+        min-width: 30px;
+        color: $clr-icon-hilight;
+        font-size: 11px;
+        white-space: nowrap;
+    }
+
+    .quality-note {
+        margin: 0;
+        white-space: normal;
+        font-size: 10px;
+        color: $text-secondary;
+    }
+}

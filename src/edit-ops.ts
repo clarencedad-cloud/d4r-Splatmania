@@ -550,11 +550,12 @@ class ShapeTransformOp {
 // Captures the full track state before and after a mutation.
 class AnimTrackEditOp {
     name: string;
-    track: AnimTrack;
+    // any snapshot/restore-able track: camera tracks and the cut track
+    track: Pick<AnimTrack, 'restore'>;
     before: unknown;
     after: unknown;
 
-    constructor(name: string, track: AnimTrack, before: unknown, after: unknown) {
+    constructor(name: string, track: Pick<AnimTrack, 'restore'>, before: unknown, after: unknown) {
         this.name = name;
         this.track = track;
         this.before = before;

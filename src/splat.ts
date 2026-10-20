@@ -454,7 +454,11 @@ class Splat extends Element {
             scale: pack3(this.entity.getLocalScale()),
             localFrameOrigin: pack3(this.localFrameOrigin),
             localFrame: pack4(this.localFrame),
-            visible: this.visible
+            visible: this.visible,
+            // layer animation and render mode (src/layer-anim.ts)
+            anim: this.scene?.events.invoke('layerAnim.serialize', this),
+            // alignment anchors (src/align/align-tool.ts)
+            align: this.scene?.events.invoke('align.serialize', this)
         };
     }
 
@@ -468,6 +472,8 @@ class Splat extends Element {
         this.localFrame = doc.localFrame ? new Quat(doc.localFrame) : new Quat();
         this.visible = visible;
         this.migrateLayerGrade(doc);
+        this.scene?.events.invoke('layerAnim.deserialize', this, doc.anim);
+        this.scene?.events.invoke('align.deserialize', this, doc.align);
     }
 
     // Documents up to v0 carried one colour grade for the whole layer. Colour is

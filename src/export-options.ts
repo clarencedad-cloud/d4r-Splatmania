@@ -1,4 +1,4 @@
-import type { Pose } from './camera-poses';
+import type { Pose, ShotCamera } from './camera-poses';
 import { Events } from './events';
 import type { WriteTarget } from './io';
 import { AnimTrack, defaultPostEffectSettings, ExperienceSettings, SerializeSettings, ViewerExportSettings } from './splat-serialize';
@@ -11,6 +11,9 @@ type ExportType = 'ply' | 'splat' | 'sog' | 'spz' | 'viewer';
 interface ExportChoices {
     filename: string;
     maxSHBands?: number;
+
+    // export only the active layer instead of every visible one
+    activeLayerOnly?: boolean;
 
     // ply
     compressedPly?: boolean;
@@ -75,11 +78,23 @@ const buildViewerSettings = (events: Events, choices: ExportChoices): ViewerExpo
         const frames = events.invoke('timeline.frames');
         const frameRate = events.invoke('timeline.frameRate');
         const smoothness = events.invoke('timeline.smoothness');
-        const orderedPoses = (events.invoke('camera.poses') as Pose[])
-        .filter(entry => entry.frame >= 0 && entry.frame < frames)
-        .sort((a, b) => a.frame - b.frame);
 
-        if (orderedPoses.length > 0) {
+        // one track per shot camera (src/camera-poses.ts), the selected camera
+        // first: the viewer starts with the first track
+        const shotCameras = (events.invoke('shotCameras.list') as ShotCamera[] ?? []).slice();
+        const selected = events.invoke('shotCameras.selected') as ShotCamera;
+        shotCameras.sort((a, b) => (a === selected ? -1 : b === selected ? 1 : 0));
+        const sources = shotCameras.length > 0 ?
+            shotCameras.map(c => ({ name: c.name, poses: c.track.getPoses() as Pose[] })) :
+            [{ name: 'cameraAnim', poses: events.invoke('camera.poses') as Pose[] }];
+
+        for (const source of sources) {
+            const orderedPoses = source.poses
+            .filter(entry => entry.frame >= 0 && entry.frame < frames)
+            .sort((a, b) => a.frame - b.frame);
+
+            if (orderedPoses.length === 0) continue;
+
             const times: number[] = [];
             const position: number[] = [];
             const target: number[] = [];
@@ -93,7 +108,7 @@ const buildViewerSettings = (events: Events, choices: ExportChoices): ViewerExpo
             }
 
             animTracks.push({
-                name: 'cameraAnim',
+                name: source.name,
                 duration: frames / frameRate,
                 frameRate,
                 loopMode: choices.loopMode,
@@ -102,6 +117,16 @@ const buildViewerSettings = (events: Events, choices: ExportChoices): ViewerExpo
                 keyframes: {
                     times,
                     values: { position, target, fov: fovKeys }
+                }
+            });
+
+            // each shot camera also becomes a viewer camera at its first key
+            const first = orderedPoses[0];
+            cameras.push({
+                initial: {
+                    position: [first.position.x, first.position.y, first.position.z],
+                    target: [first.target.x, first.target.y, first.target.z],
+                    fov: first.fov ?? fov
                 }
             });
         }
@@ -122,11 +147,19 @@ const buildViewerSettings = (events: Events, choices: ExportChoices): ViewerExpo
     return { type: choices.viewerType, experienceSettings };
 };
 
+// index of the active layer among the exported (visible, non-empty) splats,
+// or 'all' when exporting every visible layer
+const activeLayerIndex = (events: Events, choices: ExportChoices): 'all' | number => {
+    if (!choices.activeLayerOnly) return 'all';
+    const index = (events.invoke('scene.splats') as unknown[]).indexOf(events.invoke('selection'));
+    return index === -1 ? 'all' : index;
+};
+
 // turn the dialog's choices into export options against the current scene
 const buildExportOptions = (events: Events, exportType: ExportType, choices: ExportChoices): SceneExportOptions => {
     const options: SceneExportOptions = {
         filename: choices.filename,
-        splatIdx: 'all',
+        splatIdx: activeLayerIndex(events, choices),
         serializeSettings: { maxSHBands: choices.maxSHBands }
     };
 

@@ -201,6 +201,9 @@ const registerDocEvents = (scene: Scene, events: Events) => {
 
             events.invoke('docDeserialize.timeline', document.timeline);
             events.invoke('docDeserialize.poseSets', document.poseSets, document.camera?.fov);
+            events.invoke('docDeserialize.cuts', document.cuts);
+            events.invoke('docDeserialize.pointCloud', document.pointCloud);
+            events.invoke('docDeserialize.section', document.section);
             events.invoke('docDeserialize.view', document.view);
             scene.camera.docDeserialize(document.camera);
 
@@ -309,6 +312,9 @@ const registerDocEvents = (scene: Scene, events: Events) => {
                 camera: scene.camera.docSerialize(),
                 view: events.invoke('docSerialize.view'),
                 poseSets: events.invoke('docSerialize.poseSets'),
+                cuts: events.invoke('docSerialize.cuts'),
+                pointCloud: events.invoke('docSerialize.pointCloud'),
+                section: events.invoke('docSerialize.section'),
                 timeline: events.invoke('docSerialize.timeline'),
                 resources: groups.map((group, i) => ({
                     filename: `resource_${i}.ply`,

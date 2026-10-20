@@ -72,7 +72,8 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         'view.centersColorBlend', 'view.centersSelectionBlend',
         'view.ringsColorBlend', 'view.ringsSelectionBlend',
         'view.bands', 'view.minPixelSize', 'view.stochastic', 'view.perfOverlay', 'view.overdraw', 'camera.bound', 'camera.boundDimensions', 'camera.showPoses',
-        'camera.showInfo', 'selection.changed', 'tool.coordSpace', 'colorPanel.pendingChanged'
+        'camera.showInfo', 'selection.changed', 'tool.coordSpace', 'colorPanel.pendingChanged',
+        'depthFilter.changed', 'layerAnim.changed', 'layerAnim.points'
     ].forEach((eventName) => {
         events.on(eventName, () => {
             scene.forceRender = true;
@@ -427,6 +428,12 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         return (events.invoke('selection.footprint') as number) > 0 ? 'footprint' : 'centers';
     };
 
+    // the depth filter's [near, far] range, snapshotted at gesture time, or
+    // null when it is off. The centers intersect tests it directly; the
+    // footprint and pick paths get it from the projector, which culls
+    // out-of-range splats in every selection pass (src/depth-filter.ts)
+    const depthRange = () => events.invoke('depthFilter.range') as { near: number, far: number } | null;
+
     type SelectRegion = { y0: number, y1: number, intervals: Uint32Array };
 
     // footprint is passed in rather than read here: the task runs from the
@@ -578,11 +585,13 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     events.function('select.rect', async (op: 'add'|'remove'|'set'|'intersect', rect: any) => {
         const method = selectionMethod();
         const footprint = events.invoke('selection.footprint') as number;
+        const depth = depthRange();
 
         for (const splat of selectedSplats()) {
             if (method === 'centers') {
                 await runSelectIntersect(splat, op, {
-                    rect: { x1: rect.start.x, y1: rect.start.y, x2: rect.end.x, y2: rect.end.y }
+                    rect: { x1: rect.start.x, y1: rect.start.y, x2: rect.end.x, y2: rect.end.y },
+                    depth
                 });
             } else if (method === 'footprint') {
                 await runFootprintSelect(splat, op, rectRegion(rect.start.x, rect.start.y, rect.end.x, rect.end.y), footprint);
@@ -597,7 +606,8 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
 
                 if (footprint === 0) {
                     await runVisibleCentersSelect(splat, op, new Set(pick), {
-                        rect: { x1: rect.start.x, y1: rect.start.y, x2: rect.end.x, y2: rect.end.y }
+                        rect: { x1: rect.start.x, y1: rect.start.y, x2: rect.end.x, y2: rect.end.y },
+                        depth
                     });
                 } else {
                     const sortedIds = new Uint32Array(new Set(pick)).sort();
@@ -633,12 +643,14 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         const region = method === 'footprint' ? maskRegion(context, canvas.width, canvas.height) : null;
         const maskPixels = method === 'pick' ? context.getImageData(0, 0, canvas.width, canvas.height) : null;
         const footprint = events.invoke('selection.footprint') as number;
+        const depth = depthRange();
 
         try {
             for (const splat of selectedSplats()) {
                 if (method === 'centers') {
                     await runSelectIntersect(splat, op, {
-                        mask: maskTexture
+                        mask: maskTexture,
+                        depth
                     });
                 } else if (method === 'footprint') {
                     await runFootprintSelect(splat, op, region, footprint);
@@ -693,7 +705,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
                     }
 
                     if (footprint === 0) {
-                        await runVisibleCentersSelect(splat, op, selected, { mask: maskTexture });
+                        await runVisibleCentersSelect(splat, op, selected, { mask: maskTexture, depth });
                     } else {
                         const sortedIds = new Uint32Array(selected).sort();
                         events.fire('edit.add', new SelectOp(splat, op, sortedIds));
@@ -723,6 +735,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         const projection = scene.camera.camera.projectionMatrix.clone();
         const view = scene.camera.camera.viewMatrix.clone();
         const footprint = events.invoke('selection.footprint') as number;
+        const depth = depthRange();
         const pixelScale = scene.camera.worldSizePerPixel(1);
         const ortho = scene.camera.ortho;
         const pose = {
@@ -760,7 +773,8 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
                 const pathPoints = new Float32Array(path);
                 for (const splat of splats) {
                     const data = await scene.dataProcessor.intersect({
-                        sphereBrush: { points: pathPoints, mask, footprint, projection, view }
+                        sphereBrush: { points: pathPoints, mask, footprint, projection, view },
+                        depth
                     }, splat);
                     // SelectOp consumes `data` synchronously in its constructor
                     events.fire('edit.add', new SelectOp(splat, op, data));
@@ -776,6 +790,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         const { width, height } = scene.targetSize;
         const method = selectionMethod();
         const footprint = events.invoke('selection.footprint') as number;
+        const depth = depthRange();
 
         for (const splat of selectedSplats()) {
             if (method === 'centers') {
@@ -785,7 +800,8 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
                         y1: point.y,
                         x2: point.x + 1 / width,
                         y2: point.y + 1 / height
-                    }
+                    },
+                    depth
                 });
             } else if (method === 'footprint') {
                 await runFootprintSelect(splat, op, rectRegion(

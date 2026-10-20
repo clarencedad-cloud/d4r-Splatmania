@@ -185,6 +185,25 @@ class ExportPopup extends Container {
         fovRow.append(fovLabel);
         fovRow.append(fovSlider);
 
+        // active layer only
+
+        const layerRow = new Container({
+            class: 'row'
+        });
+
+        const layerLabel = new Label({
+            class: 'label',
+            text: 'Nur aktiver Layer'
+        });
+
+        const layerBoolean = new BooleanInput({
+            class: 'boolean',
+            type: 'toggle'
+        });
+
+        layerRow.append(layerLabel);
+        layerRow.append(layerBoolean);
+
         // compress
 
         const compressRow = new Container({
@@ -320,6 +339,7 @@ class ExportPopup extends Container {
         content.append(loopRow);
         content.append(colorRow);
         content.append(fovRow);
+        content.append(layerRow);
         content.append(compressRow);
         content.append(bandsRow);
         content.append(iterationsRow);
@@ -510,16 +530,16 @@ class ExportPopup extends Container {
 
         const reset = (exportType: FileDialogType, splatNames: string[], hasPoses: boolean) => {
             const allRows = [
-                viewerTypeRow, animationRow, loopRow, colorRow, fovRow, compressRow, bandsRow, iterationsRow, spzVersionRow
+                viewerTypeRow, animationRow, loopRow, colorRow, fovRow, compressRow, bandsRow, iterationsRow, spzVersionRow, layerRow
             ];
 
             const activeRows: Container[] = {
-                ply: [compressRow, bandsRow],
-                splat: [],
+                ply: [layerRow, compressRow, bandsRow],
+                splat: [layerRow],
                 ssproj: [],
-                sog: [bandsRow, iterationsRow],
-                spz: [bandsRow, spzVersionRow],
-                viewer: [viewerTypeRow, animationRow, loopRow, colorRow, fovRow, bandsRow]
+                sog: [layerRow, bandsRow, iterationsRow],
+                spz: [layerRow, bandsRow, spzVersionRow],
+                viewer: [viewerTypeRow, animationRow, loopRow, colorRow, fovRow, layerRow, bandsRow]
             }[exportType];
 
             allRows.forEach((r) => {
@@ -594,7 +614,7 @@ class ExportPopup extends Container {
             this.dom.addEventListener('keydown', keydown);
             filenameEntry.focus(true);
 
-            const getChoices = (): ExportChoices => {
+            const getTypeChoices = (): ExportChoices => {
                 const filename = getFilename();
                 switch (exportType) {
                     case 'ply':
@@ -618,6 +638,8 @@ class ExportPopup extends Container {
                         return { filename };
                 }
             };
+
+            const getChoices = (): ExportChoices => ({ ...getTypeChoices(), activeLayerOnly: layerBoolean.value });
 
             return new Promise<null | ExportDialogResult>((resolve) => {
                 onCancel = () => {

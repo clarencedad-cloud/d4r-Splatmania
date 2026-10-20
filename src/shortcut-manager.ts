@@ -12,6 +12,7 @@ const defaultShortcuts: Record<string, ShortcutBinding> = {
     'camera.reset': { keys: ['f'], shift: 'required' },
     'camera.focus': { keys: ['f'] },
     'camera.toggleControlMode': { keys: ['v'] },
+    'camera.toggleLookThrough': { keys: ['k'] },
 
     // Show
     'grid.toggleVisible': { keys: ['g'] },
@@ -50,6 +51,10 @@ const defaultShortcuts: Record<string, ShortcutBinding> = {
     'tool.brushSelection': { keys: ['b'] },
     'tool.sphereBrushSelection': { keys: ['b'], shift: 'required' },
     'tool.floodSelection': { keys: ['o'] },
+    // anchor alignment; 'a' is taken by fly mode (KeyA)
+    'tool.align': { keys: ['j'] },
+    'tool.quality': { keys: ['u'] },
+    'tool.section': { keys: ['y'] },
     'tool.eyedropperSelection': { keys: ['e'], ctrl: 'required', capture: true },
     'tool.brushSelection.smaller': { keys: ['['], repeat: true },
     'tool.brushSelection.bigger': { keys: [']'], repeat: true },

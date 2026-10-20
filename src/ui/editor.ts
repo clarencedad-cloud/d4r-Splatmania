@@ -9,6 +9,7 @@ import type { BlobReadSource } from '../io';
 import { AboutPopup } from './about-popup';
 import { BottomToolbar } from './bottom-toolbar';
 import { CameraInfoOverlay } from './camera-info-overlay';
+import { DepthFilterPanel } from './depth-filter-panel';
 import { ExportPopup } from './export-popup';
 import { ImageSettingsDialog } from './image-settings-dialog';
 import { i18n } from './localization';
@@ -111,6 +112,7 @@ class EditorUI {
         const appearancePanel = new AppearancePanel(events, tooltips);
         const overlaysPanel = new OverlaysPanel(events, tooltips);
         const bottomToolbar = new BottomToolbar(events, tooltips);
+        const depthFilterPanel = new DepthFilterPanel(events);
         const rightToolbar = new RightToolbar(events, tooltips);
         const menu = new Menu(events);
         const cameraInfoOverlay = new CameraInfoOverlay(events, tooltips);
@@ -126,6 +128,7 @@ class EditorUI {
         canvasContainer.append(toolsContainer);
         canvasContainer.append(scenePanel);
         canvasContainer.append(bottomToolbar);
+        canvasContainer.append(depthFilterPanel);
         canvasContainer.append(rightToolbar);
         canvasContainer.append(menu);
 
@@ -348,6 +351,30 @@ class EditorUI {
                             description: `MP4 Video (${codecName})`,
                             accept: { 'video/mp4': ['.mp4'] }
                         }];
+                    }
+
+                    // every shot camera as its own file: one render per camera,
+                    // written into a chosen folder (or downloaded one by one)
+                    if (videoSettings.shot?.mode === 'all') {
+                        const cameras = events.invoke('shotCameras.list') as { id: number, name: string }[];
+                        const base = events.invoke('render.baseFilename');
+                        const safe = (name: string) => name.replace(/[\\/:*?"<>|]/g, '_');
+                        const directory = window.showDirectoryPicker ?
+                            await window.showDirectoryPicker({ id: 'SuperSplatVideoFolderExport', mode: 'readwrite' }) :
+                            null;
+
+                        for (const camera of cameras) {
+                            const suffix = `_${safe(camera.name)}`;
+                            const settings = { ...videoSettings, shot: { mode: 'camera' as const, cameraId: camera.id }, filenameSuffix: suffix };
+                            const handle = directory ? await directory.getFileHandle(`${base}${suffix}${fileExtension}`, { create: true }) : null;
+                            const stream = handle ? await handle.createWritable() : undefined;
+                            const ok = await events.invoke('render.video', settings, stream);
+                            if (!ok) {
+                                if (handle && directory) await directory.removeEntry(handle.name);
+                                break;
+                            }
+                        }
+                        return;
                     }
 
                     const suggested = `${events.invoke('render.baseFilename')}${fileExtension}`;

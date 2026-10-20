@@ -1,0 +1,124 @@
+@use 'colors.scss' as *;
+
+#camera-list {
+    display: flex;
+    flex-direction: column;
+
+    .camera-list-button {
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+        color: $clr-default;
+
+        &:hover {
+            color: $clr-active;
+        }
+    }
+
+    .camera-list-rows {
+        display: flex;
+        flex-direction: column;
+        max-height: 160px;
+        overflow: auto;
+    }
+
+    .camera-list-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 28px;
+        padding: 0 10px;
+        cursor: pointer;
+        color: $clr-default;
+
+        &:hover {
+            background-color: $bcg-lighter;
+        }
+
+        &.selected {
+            background-color: $bcg-light;
+            color: $clr-active;
+        }
+    }
+
+    .camera-list-swatch {
+        flex-shrink: 0;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+    }
+
+    .camera-list-name {
+        flex-grow: 1;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .camera-list-rename {
+        flex-grow: 1;
+        min-width: 0;
+        background: $bcg-darkest;
+        color: $text-primary;
+        border: 1px solid $clr-hilight;
+        font: inherit;
+    }
+
+    .camera-list-keys {
+        font-size: 11px;
+        color: $text-secondary;
+    }
+
+    .camera-list-remove {
+        opacity: 0.5;
+
+        &:hover {
+            opacity: 1;
+            color: $clr-hilight;
+        }
+    }
+
+    .camera-list-options {
+        display: flex;
+        flex-direction: column;
+        padding: 4px 10px 8px;
+        gap: 4px;
+    }
+
+    .camera-list-option {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .camera-list-label {
+        margin: 0;
+        color: $text-secondary;
+    }
+
+    .camera-list-viewmode {
+        display: flex;
+        flex-direction: row;
+        flex-grow: 1;
+    }
+
+    .camera-list-mode {
+        flex: 1;
+        text-align: center;
+        padding: 3px 4px;
+        cursor: pointer;
+        background-color: $bcg-darker;
+        color: $clr-default;
+        border: 1px solid $bcg-light;
+
+        &:not(:first-child) {
+            border-left: none;
+        }
+
+        &.active {
+            background-color: $clr-hilight;
+            color: $clr-active;
+        }
+    }
+}

@@ -45,7 +45,8 @@ varying gaussianUV: vec2f;
 varying @interpolate(flat, either) packedColor0: u32;
 varying @interpolate(flat, either) packedColor1: u32;
 varying @interpolate(flat, either) packedColor2: u32;
-// bits 0-1 selected/locked, bits 8-15 the opacity byte
+// bits 0-1 selected/locked, bits 8-15 the opacity byte, 16-19 point mix,
+// 20-21 point glow
 varying @interpolate(flat, either) gaussianFlags: u32;
 varying @interpolate(flat, either) gaussianId: u32;
 varying @interpolate(flat, either) gaussianDepth: f32;
@@ -171,7 +172,8 @@ fn vertexMain(input: VertexInput) -> VertexOutput {
     output.packedColor0 = pack2x16float(fill.rg);
     output.packedColor1 = pack2x16float(vec2f(fill.b, ring.r));
     output.packedColor2 = pack2x16float(ring.gb);
-    output.gaussianFlags = flags | (alphaByte << 8u);
+    // bits 16-19 point mix, 20-21 glow (projector cacheB bits 26-31)
+    output.gaussianFlags = flags | (alphaByte << 8u) | (((b >> 26u) & 63u) << 16u);
     output.gaussianId = entry - uniform.pickBase;
     // linear view depth for the depth pick (fragment normalizes it by near/far).
     // clip.w carries this for perspective but is a constant 1 in ortho, which
@@ -202,6 +204,8 @@ uniform ringSelectionOnly: u32;
 uniform ringsBase: u32;
 uniform ringsCount: u32;
 uniform pickMode: i32;
+// id picks: minimum gaussian opacity for a fragment to claim the pixel
+uniform pickAlphaMin: f32;
 uniform cameraParams: vec4f;
 
 ${overlayEligibleWGSL}
@@ -244,6 +248,12 @@ fn fragmentMain(input: FragmentInput) -> FragmentOutput {
             }
             output.color = vec4f(depth * opacity, 0.0, 0.0, opacity);
         } else {
+            // "visible splats only" (depth filter): a splat claims the pixel
+            // only where it contributes enough opacity, so faint splats in
+            // front no longer win the frontmost pick
+            if (uniform.pickAlphaMin > 0.0 && normExp(radius) * opacity < uniform.pickAlphaMin) {
+                discard;
+            }
             let id = gaussianId;
             output.color = vec4f(vec4u(id, id >> 8u, id >> 16u, id >> 24u) & vec4u(255u)) / 255.0;
         }
@@ -257,7 +267,12 @@ fn fragmentMain(input: FragmentInput) -> FragmentOutput {
         output.color1 = vec4f(0.0);
       #else
         let selected = (gaussianFlags & 1u) != 0u;
-        let norm = normExp(radius);
+        // points (src/layer-anim.ts): a round disc with a soft edge instead of
+        // the gaussian falloff; glow lowers the written alpha so the
+        // premultiplied blend turns additive
+        let pointMix = f32((gaussianFlags >> 16u) & 15u) / 15.0;
+        let pointGlow = f32((gaussianFlags >> 20u) & 3u) / 3.0 * pointMix;
+        let norm = mix(normExp(radius), 1.0 - smoothstep(0.6, 1.0, radius), pointMix);
         let showGaussian = uniform.showGaussians != 0u || (selected && uniform.showSelectedGaussians != 0u);
         var alpha = select(0.0, norm * opacity, showGaussian);
         let packedMid = unpack2x16float(packedColor1);
@@ -323,7 +338,7 @@ fn fragmentMain(input: FragmentInput) -> FragmentOutput {
             output.color = vec4f(color * alpha * 0.8, alpha);
             output.color1 = vec4f(color * alpha * 0.2, alpha);
         } else {
-            output.color = vec4f(color * alpha, alpha);
+            output.color = vec4f(color * alpha, alpha * (1.0 - pointGlow));
             output.color1 = vec4f(0.0);
         }
       #endif

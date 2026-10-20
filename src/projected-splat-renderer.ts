@@ -47,6 +47,8 @@ import {
 
 import { createGradeTerms, gradeRows, gradeTerms, type GradeParams } from './color-grade';
 import { maskByteSize } from './data-processor/histogram-config';
+import type { DepthFilterState } from './depth-filter';
+import type { PointCloudSettings } from './layer-anim';
 import type { Scene } from './scene';
 import { footprintIntersect } from './shaders/footprint-intersect-shader';
 import { projectedSplatDepthReduce } from './shaders/projected-splat-depth-reduce-shader';
@@ -55,6 +57,9 @@ import { projectedSplatProjector } from './shaders/projected-splat-projector-sha
 import { fragmentShader, vertexShader } from './shaders/projected-splat-shader';
 import { fragmentShader as centersFragmentShader, vertexShader as centersVertexShader } from './shaders/splat-centers-shader';
 import type { Splat } from './splat';
+
+// transition uniforms that leave every splat untouched
+const NEUTRAL_TRANSITION = { transA: [0, 1, 0, 0], transB: [0, 0, 0, 0], transC: [0, 1, 0, 0], transD: [0, 1, 1, 0], transE: [1, 0, 0, 0], transF: [0, 0, 0, 0], transG: [1, 0, 0, 0], transH: [0, 0, 0, 0] };
 
 const INSTANCE_SIZE = 128;
 const WORKGROUP_SIZE = 256;
@@ -391,6 +396,9 @@ class ProjectedSplatRenderer {
         // so both render at 1
         const footprint = (this.scene.events.invoke('selection.footprint') as number) ?? 1;
         this.material.setParameter('pickFootprint', depth || footprint === 0 ? 1 : footprint);
+        // "visible splats only": id picks ignore fragments below this opacity
+        const depthFilter = this.scene.events.invoke('depthFilter') as DepthFilterState;
+        this.material.setParameter('pickAlphaMin', depth ? 0 : depthFilter?.minAlpha ?? 0);
     }
 
     finishPick() {
@@ -399,6 +407,7 @@ class ProjectedSplatRenderer {
         this.material.setParameter('pickOp', 2);
         this.material.setParameter('pickMode', 0);
         this.material.setParameter('pickFootprint', 1);
+        this.material.setParameter('pickAlphaMin', 0);
     }
 
     // Switch between the default sorted premultiplied-alpha renderer and the
@@ -426,6 +435,16 @@ class ProjectedSplatRenderer {
         this.overdraw = value;
         this.material.setDefine('OVERDRAW', value ? '' : undefined);
         this.material.update();
+    }
+
+    // a one-word score buffer bound when a layer has no quality scores
+    private dummyScore: StorageBuffer = null;
+
+    private getDummyScore() {
+        if (!this.dummyScore) {
+            this.dummyScore = new StorageBuffer(this.device, 4, BUFFERUSAGE_COPY_DST);
+        }
+        return this.dummyScore;
     }
 
     private getVariant(bands: number) {
@@ -490,7 +509,22 @@ class ProjectedSplatRenderer {
             new UniformFormat('occlusionBlocksX', UNIFORMTYPE_UINT),
             new UniformFormat('occlusionBlocksY', UNIFORMTYPE_UINT),
             new UniformFormat('occlusionBlock', UNIFORMTYPE_FLOAT),
-            new UniformFormat('occlusionEnabled', UNIFORMTYPE_UINT)
+            new UniformFormat('occlusionEnabled', UNIFORMTYPE_UINT),
+            new UniformFormat('depthRange', UNIFORMTYPE_VEC4),
+            new UniformFormat('layerParams', UNIFORMTYPE_VEC4),
+            new UniformFormat('pointParams', UNIFORMTYPE_VEC4),
+            new UniformFormat('pointColor', UNIFORMTYPE_VEC4),
+            new UniformFormat('transA', UNIFORMTYPE_VEC4),
+            new UniformFormat('transB', UNIFORMTYPE_VEC4),
+            new UniformFormat('transC', UNIFORMTYPE_VEC4),
+            new UniformFormat('transD', UNIFORMTYPE_VEC4),
+            new UniformFormat('transE', UNIFORMTYPE_VEC4),
+            new UniformFormat('transF', UNIFORMTYPE_VEC4),
+            new UniformFormat('transG', UNIFORMTYPE_VEC4),
+            new UniformFormat('transH', UNIFORMTYPE_VEC4),
+            new UniformFormat('quality', UNIFORMTYPE_VEC4),
+            new UniformFormat('sectionPlane', UNIFORMTYPE_VEC4),
+            new UniformFormat('sectionEdge', UNIFORMTYPE_VEC4)
         ]);
         const bindGroupFormat = new BindGroupFormat(this.device, [
             new BindStorageBufferFormat('sortKeys', SHADERSTAGE_COMPUTE),
@@ -502,6 +536,7 @@ class ProjectedSplatRenderer {
             new BindStorageBufferFormat('instanceFlags', SHADERSTAGE_COMPUTE, true),
             new BindStorageBufferFormat('instancePalette', SHADERSTAGE_COMPUTE, true),
             new BindStorageBufferFormat('prevDepthMax', SHADERSTAGE_COMPUTE, true),
+            new BindStorageBufferFormat('instanceScore', SHADERSTAGE_COMPUTE, true),
             ...textureFormats,
             new BindUniformBufferFormat('uniforms', SHADERSTAGE_COMPUTE)
         ]);
@@ -850,6 +885,16 @@ class ProjectedSplatRenderer {
         // Size culling is visual only: selection and depth queries need every footprint.
         const minPixelSize = forPick ? 0 : (events.invoke('view.minPixelSize') as number) ?? 0;
 
+        // depth filter: selection passes (forPick) always cull out-of-range
+        // splats, normal frames follow the filter's display mode
+        const depthFilter = events.invoke('depthFilter') as DepthFilterState;
+        let depthMode = 0;
+        if (depthFilter?.enabled) {
+            depthMode = (forPick || depthFilter.display === 'hide') ? 1 : depthFilter.display === 'dim' ? 2 : 0;
+        }
+        const depthRange = [depthFilter?.near ?? 0, depthFilter?.far ?? 0, depthMode, 0];
+        const pointCloud = events.invoke('layerAnim.points') as PointCloudSettings;
+
         // the centres overlay draws the selected layer's centres from this
         // frame's projection: all of them in the edit view with centres on,
         // otherwise the selection's alone
@@ -995,6 +1040,32 @@ class ProjectedSplatRenderer {
             compute.setParameter('occlusionBlocksY', this.occlusionBlocks.y);
             compute.setParameter('occlusionBlock', OCCLUSION_BLOCK);
             compute.setParameter('occlusionEnabled', occlusion ? 1 : 0);
+            compute.setParameter('depthRange', depthRange);
+            // layer animation and point cloud: selection passes see plain
+            // splats at full opacity so picking is unaffected
+            const layer = forPick ? null : events.invoke('layerAnim.renderParams', splat);
+            compute.setParameter('layerParams', layer ? [layer.opacity, layer.mix, layer.glow, 0] : [1, 0, 0, 0]);
+            compute.setParameter('pointParams', [pointCloud.size, pointCloud.sizeMode === 'world' ? 1 : 0, pointCloud.opacity, pointCloud.colorMode === 'uniform' ? 1 : 0]);
+            compute.setParameter('pointColor', [pointCloud.color[0], pointCloud.color[1], pointCloud.color[2], 1]);
+            // build transition; neutral in selection passes
+            const trans = forPick ? NEUTRAL_TRANSITION : events.invoke('layerAnim.transitionParams', splat) ?? NEUTRAL_TRANSITION;
+            compute.setParameter('transA', trans.transA);
+            compute.setParameter('transB', trans.transB);
+            compute.setParameter('transC', trans.transC);
+            compute.setParameter('transD', trans.transD);
+            compute.setParameter('transE', trans.transE);
+            compute.setParameter('transF', trans.transF);
+            compute.setParameter('transG', trans.transG);
+            compute.setParameter('transH', trans.transH);
+            // quality heatmap (src/quality/quality-tool.ts); off in selection passes
+            const quality = forPick ? null : events.invoke('quality.renderParams', splat);
+            compute.setParameter('instanceScore', quality?.buffer ?? this.getDummyScore());
+            compute.setParameter('quality', quality ? [quality.mode, quality.threshold, 0, 0] : [0, 0, 0, 0]);
+            // section cut (src/section/section-tool.ts): applies to selection
+            // passes too, so cut-away splats can't be picked
+            const section = events.functions.has('section.params') ? events.invoke('section.params', splat) : null;
+            compute.setParameter('sectionPlane', section ? [section.axis[0], section.axis[1], section.axis[2], section.height] : [0, 1, 0, 0]);
+            compute.setParameter('sectionEdge', section ? [1, forPick ? 0 : section.edge, 0, 0] : [0, 0, 0, 0]);
 
             const workgroups = Math.ceil(placement.entryCapacity / WORKGROUP_SIZE);
             Compute.calcDispatchSize(workgroups, this.dispatchSize);

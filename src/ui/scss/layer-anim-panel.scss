@@ -1,0 +1,223 @@
+@use 'colors.scss' as *;
+
+#layer-anim-panel {
+    display: flex;
+    flex-direction: column;
+
+    .layer-anim-body {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 4px 10px 8px;
+    }
+
+    .layer-anim-none {
+        color: $text-secondary;
+        margin: 2px 0;
+    }
+
+    .layer-anim-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .layer-anim-row {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        min-height: 26px;
+
+        > .pcui-slider {
+            flex-grow: 1;
+            margin: 0;
+        }
+    }
+
+    .layer-anim-label {
+        flex-shrink: 0;
+        width: 74px;
+        margin: 0;
+        color: $text-secondary;
+    }
+
+    .layer-anim-segmented {
+        display: flex;
+        flex-direction: row;
+        flex-grow: 1;
+    }
+
+    .layer-anim-segment {
+        flex: 1;
+        text-align: center;
+        padding: 3px 4px;
+        cursor: pointer;
+        background-color: $bcg-darker;
+        color: $clr-default;
+        border: 1px solid $bcg-light;
+
+        &:not(:first-child) {
+            border-left: none;
+        }
+
+        &.active {
+            background-color: $clr-hilight;
+            color: $clr-active;
+        }
+    }
+
+    .layer-anim-buttons {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+
+        .layer-anim-label {
+            width: auto;
+        }
+    }
+
+    .layer-anim-button {
+        flex: 1;
+        text-align: center;
+        padding: 4px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+        background-color: $bcg-lighter;
+        color: $clr-default;
+
+        &:hover {
+            background-color: $bcg-light;
+            color: $clr-active;
+        }
+    }
+
+    .layer-anim-duration {
+        width: 54px;
+        flex-shrink: 0;
+        margin: 0;
+    }
+
+    .layer-anim-color {
+        width: 32px;
+        height: 22px;
+        padding: 0;
+        border: none;
+        background: none;
+        cursor: pointer;
+    }
+}
+
+#layer-anim-panel {
+    .layer-anim-transition-list {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        // fixed height: adding a block scrolls inside instead of pushing
+        // the panel below it down
+        height: 72px;
+        overflow-y: auto;
+    }
+
+    .layer-anim-transition-item {
+        padding: 3px 6px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 11px;
+        color: $clr-default;
+        border-left: 3px solid rgba(80, 220, 255, 0.9);
+        background-color: $bcg-darker;
+
+        &.out {
+            border-left-color: rgba(255, 90, 200, 0.9);
+        }
+
+        &.selected {
+            background-color: $bcg-light;
+            color: $clr-active;
+        }
+    }
+
+    .layer-anim-effect-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 2px;
+
+        > .layer-anim-segment {
+            border: 1px solid $bcg-light;
+        }
+    }
+
+    .layer-anim-origin {
+        flex-grow: 1;
+        margin: 0;
+        font-size: 11px;
+        color: $text-secondary;
+    }
+}
+
+// splat-transform cleanup (src/ui/cleanup-panel.ts) shares the animator's layout
+#cleanup-panel {
+    display: flex;
+    flex-direction: column;
+
+    .layer-anim-body {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 4px 10px 8px;
+    }
+
+    .layer-anim-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 26px;
+    }
+
+    .layer-anim-label {
+        flex-shrink: 0;
+        width: 74px;
+        margin: 0;
+        color: $text-secondary;
+    }
+
+    .layer-anim-buttons {
+        display: flex;
+        gap: 6px;
+    }
+
+    .layer-anim-button {
+        flex: 1;
+        text-align: center;
+        padding: 4px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+        background-color: $bcg-lighter;
+        color: $clr-default;
+
+        &:hover {
+            background-color: $bcg-light;
+            color: $clr-active;
+        }
+    }
+
+    .cleanup-number {
+        flex: 1;
+        min-width: 0;
+        margin: 0;
+    }
+
+    .cleanup-section {
+        margin: 6px 0 0;
+        color: $clr-default;
+        font-weight: bold;
+    }
+
+    .cleanup-result {
+        margin: 6px 0 0;
+        color: $clr-icon-hilight;
+        white-space: normal;
+    }
+}

@@ -15,6 +15,16 @@
     flex-direction: column;
     align-items: center;
 
+    // never taller than the viewport (e.g. with the timeline open): scroll
+    max-height: calc(100% - 32px);
+    box-sizing: border-box;
+    overflow-y: auto;
+    scrollbar-width: none;
+
+    > * {
+        flex-shrink: 0;
+    }
+
     &>.right-toolbar-button, .right-toolbar-tool, .right-toolbar-toggle {
         display: flex;
         align-items: center;

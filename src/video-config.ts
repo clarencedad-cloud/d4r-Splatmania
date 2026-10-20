@@ -13,6 +13,12 @@ type VideoSettings = {
     codec: VideoCodecChoice;
     projection?: 'standard' | 'equirect';
     levelHorizon?: boolean;
+    // which shot camera drives the render: the cut track (one edited video),
+    // one camera, or every camera as its own file ('all' is expanded into
+    // one 'camera' render per camera by the export flow)
+    shot?: { mode: 'cut' | 'camera' | 'all', cameraId?: number };
+    // appended to the default download filename (e.g. "_Kamera 2")
+    filenameSuffix?: string;
 };
 
 type MuxerVideoCodec = 'avc' | 'hevc' | 'vp9' | 'av1';

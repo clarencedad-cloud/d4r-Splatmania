@@ -23,7 +23,7 @@ const sceneConfig = {
         grid: true,
         bound: true,
         boundDimensions: false,
-        cameraPoses: false,
+        cameraPoses: true,
         cameraInfo: false,
         shBands: 3
     },

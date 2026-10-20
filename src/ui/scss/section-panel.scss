@@ -1,0 +1,86 @@
+@use 'colors.scss' as *;
+
+// section cut (src/section/section-tool.ts)
+#section-panel {
+    position: absolute;
+    top: 150px;
+    right: 80px;
+    width: 320px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background-color: $bcg-dark;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    &.pcui-hidden {
+        display: none;
+    }
+
+    .section-title {
+        margin: 0;
+        color: $clr-active;
+        font-weight: bold;
+    }
+
+    .section-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+
+        > .pcui-slider {
+            flex-grow: 1;
+            margin: 0;
+        }
+    }
+
+    .section-label {
+        flex-shrink: 0;
+        width: 70px;
+        margin: 0;
+        color: $text-secondary;
+    }
+
+    .section-number {
+        width: 70px;
+        flex-shrink: 0;
+        margin: 0;
+    }
+
+    .section-hint {
+        margin: 0;
+        font-size: 10px;
+        color: $text-secondary;
+        white-space: nowrap;
+    }
+
+    .section-button {
+        flex: 1;
+        text-align: center;
+        padding: 4px 4px;
+        cursor: pointer;
+        border-radius: 3px;
+        background-color: $bcg-lighter;
+        color: $clr-default;
+        font-size: 11px;
+
+        &:hover {
+            filter: brightness(1.15);
+        }
+
+        &.active {
+            background-color: $clr-hilight;
+            color: $clr-active;
+        }
+    }
+
+    .section-message {
+        margin: 0;
+        color: $clr-icon-hilight;
+    }
+}
+
+#timeline-panel > #timeline-tracks > .track-row.section-track {
+    background-color: rgba(255, 102, 0, 0.04);
+}

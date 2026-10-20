@@ -1,8 +1,9 @@
-import { Button, Container, Element, NumericInput, SelectInput } from '@playcanvas/pcui';
+import { Button, Container, Element, Label, NumericInput, SelectInput } from '@playcanvas/pcui';
 
 import { Events } from '../events';
 import { ShortcutManager } from '../shortcut-manager';
 import { i18n } from './localization';
+import { TimelineTracks } from './timeline-tracks';
 import { Tooltips } from './tooltips';
 
 class Ticks extends Container {
@@ -278,7 +279,8 @@ class Ticks extends Container {
         });
 
         events.on('timeline.frame', (frame: number) => {
-            moveCursor(frame);
+            // the strip is laid out on its first resize; a frame change before that has no cursor yet
+            moveCursor?.(frame);
         });
 
         // rebuild when track keys change
@@ -347,6 +349,23 @@ class TimelinePanel extends Container {
             enabled: false
         });
 
+        // what a key goes to (src/track-manager.ts) and auto key
+        const keyTarget = new Label({ id: 'key-target', text: '' });
+        const autoKeyButton = new Button({ id: 'auto-key', text: '●' });
+        autoKeyButton.dom.title = 'Auto-Key: Transform- und Deckkraft-Änderungen am gewählten Splat setzen automatisch einen Key';
+        autoKeyButton.on('click', () => events.fire('track.setAutoKey', !events.invoke('track.autoKey')));
+        events.on('track.autoKey', (value: boolean) => autoKeyButton.class[value ? 'add' : 'remove']('active'));
+
+        const syncKeyTarget = () => {
+            const t = events.invoke('track.target');
+            if (!t) return;
+            keyTarget.text = t.kind === 'layer' ? `Key → Splat: ${t.name}` : t.kind === 'section' ? 'Key → Schnitt' : `Key → ${t.name}`;
+            keyTarget.dom.style.color = `rgb(${t.color[0]}, ${t.color[1]}, ${t.color[2]})`;
+        };
+        events.on('track.target', syncKeyTarget);
+        // the target functions are registered before the ui; sync once ready
+        setTimeout(syncKeyTarget);
+
         const buttonControls = new Container({
             id: 'button-controls'
         });
@@ -355,6 +374,8 @@ class TimelinePanel extends Container {
         buttonControls.append(next);
         buttonControls.append(addKey);
         buttonControls.append(removeKey);
+        buttonControls.append(autoKeyButton);
+        buttonControls.append(keyTarget);
 
         // settings
 
@@ -463,6 +484,7 @@ class TimelinePanel extends Container {
 
         this.append(controlsWrap);
         this.append(ticks);
+        this.append(new TimelineTracks(events));
 
         // ui handlers
 

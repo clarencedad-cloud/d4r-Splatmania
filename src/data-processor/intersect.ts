@@ -65,7 +65,13 @@ type SphereBrushOptions = {
     sphereBrush: { points: Float32Array, mask: Texture, footprint?: number, projection?: Mat4, view?: Mat4 };
 };
 
-type IntersectOptions = MaskOptions | RectOptions | SphereOptions | BoxOptions | SphereBrushOptions;
+// optional depth filter (src/depth-filter.ts): only splats whose view-space
+// depth lies within [near, far] can intersect
+type DepthOptions = {
+    depth?: { near: number, far: number } | null;
+};
+
+type IntersectOptions = (MaskOptions | RectOptions | SphereOptions | BoxOptions | SphereBrushOptions) & DepthOptions;
 
 const shapeInvMat = new Mat4();
 const identityMat = new Mat4();
@@ -86,7 +92,12 @@ struct Uniforms {
     pathBoundsMin: vec4f,
     pathBoundsMax: vec4f,
     shapeInverse: mat4x4f,
-    footprint: f32
+    footprint: f32,
+    view: mat4x4f,
+    // x near, y far, z enabled
+    depthRange: vec4f,
+    // section cut: xyz up axis, w height; enabled when the axis is non-zero
+    sectionPlane: vec4f
 }
 
 @group(0) @binding(0) var<storage, read_write> result: array<u32>;
@@ -180,6 +191,13 @@ fn intersects(index: u32) -> bool {
     let paletteIndex = instancePalette[index] & 0xffffu;
     let toWorld = uniforms.model * paletteMatrix(paletteIndex);
     let world = (toWorld * vec4f(center, 1.0)).xyz;
+    if (dot(uniforms.sectionPlane.xyz, uniforms.sectionPlane.xyz) > 0.0 && dot(world, uniforms.sectionPlane.xyz) >= uniforms.sectionPlane.w) {
+        return false;
+    }
+    if (uniforms.depthRange.z > 0.0) {
+        let depth = -(uniforms.view * vec4f(world, 1.0)).z;
+        if (depth < uniforms.depthRange.x || depth > uniforms.depthRange.y) { return false; }
+    }
     // the on-screen stroke mask gates the sphere brush only at footprint 0:
     // with a footprint, splats whose extent grazes the brushed volume count
     // even where their center projects outside the stroke (or off screen)
@@ -288,7 +306,10 @@ class Intersect {
             new UniformFormat('pathBoundsMin', UNIFORMTYPE_VEC4),
             new UniformFormat('pathBoundsMax', UNIFORMTYPE_VEC4),
             new UniformFormat('shapeInverse', UNIFORMTYPE_MAT4),
-            new UniformFormat('footprint', UNIFORMTYPE_FLOAT)
+            new UniformFormat('footprint', UNIFORMTYPE_FLOAT),
+            new UniformFormat('view', UNIFORMTYPE_MAT4),
+            new UniformFormat('depthRange', UNIFORMTYPE_VEC4),
+            new UniformFormat('sectionPlane', UNIFORMTYPE_VEC4)
         ]);
         this.bindGroupFormat = new BindGroupFormat(device, [
             new BindStorageBufferFormat('result', SHADERSTAGE_COMPUTE),
@@ -383,6 +404,12 @@ class Intersect {
         this.compute.setParameter('pathBoundsMax', pathBoundsMax);
         this.compute.setParameter('shapeInverse', shapeInverse.data);
         this.compute.setParameter('footprint', sphere?.footprint ?? box?.footprint ?? sphereBrush?.footprint ?? 0);
+        const depth = options.depth;
+        this.compute.setParameter('view', (sphereBrush?.view ?? camera.viewMatrix).data);
+        this.compute.setParameter('depthRange', depth ? [depth.near, depth.far, 1, 0] : [0, 0, 0, 0]);
+        const events = splat.scene.events;
+        const section = events.functions.has('section.params') ? events.invoke('section.params', splat) : null;
+        this.compute.setParameter('sectionPlane', section ? [section.axis[0], section.axis[1], section.axis[2], section.height] : [0, 0, 0, 0]);
         Compute.calcDispatchSize(Math.ceil(outputWords / WORKGROUP_SIZE), this.dispatchSize);
         this.compute.setupDispatch(this.dispatchSize.x, this.dispatchSize.y);
         this.device.computeDispatch([this.compute], 'intersect');
@@ -393,4 +420,4 @@ class Intersect {
     }
 }
 
-export { Intersect, IntersectOptions, MaskOptions, RectOptions, SphereOptions, BoxOptions, SphereBrushOptions };
+export { Intersect, IntersectOptions, DepthOptions, MaskOptions, RectOptions, SphereOptions, BoxOptions, SphereBrushOptions };

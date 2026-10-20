@@ -145,7 +145,40 @@ struct ProjectorUniforms {
     occlusionBlocksX: u32,
     occlusionBlocksY: u32,
     occlusionBlock: f32,
-    occlusionEnabled: u32
+    occlusionEnabled: u32,
+    // depth filter (src/depth-filter.ts): x near, y far in view depth, z mode
+    // (0 off, 1 cull out-of-range splats, 2 dim them)
+    depthRange: vec4f,
+    // layer animation (src/layer-anim.ts): x opacity, y splat->point mix,
+    // z additive glow of points
+    layerParams: vec4f,
+    // point cloud: x size, y size mode (0 pixels, 1 world), z point opacity,
+    // w colour mode (0 splat colour, 1 pointColor)
+    pointParams: vec4f,
+    pointColor: vec4f,
+    // build transition (src/layer-anim.ts transitionParams):
+    // A effect id, build (1 = built), front width, scatter
+    // B origin xyz, seed;  C axis xyz, fly mode (1 = explode)
+    // D axis min, axis range, origin radius, swirl
+    // E layer radius, point phase, glow strength;  F glow colour
+    transA: vec4f,
+    transB: vec4f,
+    transC: vec4f,
+    transD: vec4f,
+    transE: vec4f,
+    transF: vec4f,
+    // dissolve: G noise frequency (world), mode (0 noise, 1 axis, 2 radial),
+    // point size (px), drift mode (0 outward, 1 along axis, 2 random)
+    // H point tint toward the glow colour, noise share of the threshold
+    transG: vec4f,
+    transH: vec4f,
+    // quality heatmap: x mode (0 off, 1 heatmap, 2 below threshold red,
+    // 3 worse than another scan), y threshold
+    quality: vec4f,
+    // section cut (src/section/section-tool.ts): xyz world up axis, w cut
+    // height along it; sectionEdge x enabled, y soft edge width (0 = hard)
+    sectionPlane: vec4f,
+    sectionEdge: vec4f
 }
 
 // compaction output: surviving splats are appended to a dense list, so the sort
@@ -167,15 +200,17 @@ struct ProjectorUniforms {
 @group(0) @binding(7) var<storage, read> instancePalette: array<u32>;
 // max depth per block of the previous stochastic frame (projected-splat-depth-reduce-shader)
 @group(0) @binding(8) var<storage, read> prevDepthMax: array<f32>;
-@group(0) @binding(9) var transformA: texture_2d<u32>;
-@group(0) @binding(10) var transformB: texture_2d<f32>;
-@group(0) @binding(11) var splatColor: texture_2d<f32>;
-@group(0) @binding(12) var transformPalette: texture_2d<f32>;
-@group(0) @binding(13) var colorPalette: texture_2d<f32>;
-${bands > 0 ? '@group(0) @binding(14) var splatSH_1to3: texture_2d<u32>;' : ''}
-${bands > 1 ? '@group(0) @binding(15) var splatSH_4to7: texture_2d<u32>;\n@group(0) @binding(16) var splatSH_8to11: texture_2d<u32>;' : ''}
-${bands > 2 ? '@group(0) @binding(17) var splatSH_12to15: texture_2d<u32>;' : ''}
-@group(0) @binding(${14 + (bands > 0 ? 1 : 0) + (bands > 1 ? 2 : 0) + (bands > 2 ? 1 : 0)}) var<uniform> uniforms: ProjectorUniforms;
+// quality score per instance (src/quality), packed 4 bytes to a word
+@group(0) @binding(9) var<storage, read> instanceScore: array<u32>;
+@group(0) @binding(10) var transformA: texture_2d<u32>;
+@group(0) @binding(11) var transformB: texture_2d<f32>;
+@group(0) @binding(12) var splatColor: texture_2d<f32>;
+@group(0) @binding(13) var transformPalette: texture_2d<f32>;
+@group(0) @binding(14) var colorPalette: texture_2d<f32>;
+${bands > 0 ? '@group(0) @binding(15) var splatSH_1to3: texture_2d<u32>;' : ''}
+${bands > 1 ? '@group(0) @binding(16) var splatSH_4to7: texture_2d<u32>;\n@group(0) @binding(17) var splatSH_8to11: texture_2d<u32>;' : ''}
+${bands > 2 ? '@group(0) @binding(18) var splatSH_12to15: texture_2d<u32>;' : ''}
+@group(0) @binding(${15 + (bands > 0 ? 1 : 0) + (bands > 1 ? 2 : 0) + (bands > 2 ? 1 : 0)}) var<uniform> uniforms: ProjectorUniforms;
 
 ${shCode(bands)}
 ${indexToUvWGSL('sourceCoord', 'uniforms.sourceWidth')}
@@ -186,6 +221,224 @@ ${paletteGradeWGSL}
 ${overlayEligibleWGSL}
 ${compactTailWGSL}
 ${stochasticWarpWGSL}
+
+// per-splat build transition: what the transition does to one splat
+struct BuildResult {
+    offset: vec3f,
+    scale: f32,
+    alpha: f32,
+    glow: f32,
+    mix: f32,
+    // point diameter while the splat is a point (px); 0 = point cloud setting
+    pointSize: f32,
+    // how far the colour is pulled to the glow colour (points)
+    tint: f32
+}
+
+// 3d value noise and a 3-octave fbm over it: smooth, deterministic and
+// organic enough for a frayed dissolve front
+fn hash31(p: vec3f) -> f32 {
+    let q = fract(p * 0.1031);
+    let r = q + dot(q, q.yzx + 33.33);
+    return fract((r.x + r.y) * r.z);
+}
+
+fn valueNoise(p: vec3f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let n000 = hash31(i);
+    let n100 = hash31(i + vec3f(1.0, 0.0, 0.0));
+    let n010 = hash31(i + vec3f(0.0, 1.0, 0.0));
+    let n110 = hash31(i + vec3f(1.0, 1.0, 0.0));
+    let n001 = hash31(i + vec3f(0.0, 0.0, 1.0));
+    let n101 = hash31(i + vec3f(1.0, 0.0, 1.0));
+    let n011 = hash31(i + vec3f(0.0, 1.0, 1.0));
+    let n111 = hash31(i + vec3f(1.0, 1.0, 1.0));
+    return mix(
+        mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+        mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y),
+        u.z
+    );
+}
+
+fn fbm(p: vec3f) -> f32 {
+    return valueNoise(p) * 0.55 + valueNoise(p * 2.03 + 17.1) * 0.3 + valueNoise(p * 4.11 + 41.7) * 0.15;
+}
+
+// the dissolve / materialize transition of one splat. A threshold sweeps the
+// layer, driven by fbm noise over the world position plus an optional axis or
+// radial gradient, so every splat gets its own time in the overall progress.
+// Within its window a splat goes: drifting particle -> small glowing point
+// flying in -> flare at the front -> grows into the full gaussian
+fn dissolveTransition(world: vec3f, id: u32, h: f32) -> BuildResult {
+    var r: BuildResult;
+    r.offset = vec3f(0.0);
+    r.scale = 1.0;
+    r.alpha = 1.0;
+    r.glow = 0.0;
+    r.mix = 0.0;
+    r.pointSize = 0.0;
+    r.tint = 0.0;
+
+    let build = uniforms.transA.y;
+    let span = clamp(uniforms.transA.z, 0.05, 1.0);
+    let seed = uniforms.transB.w;
+    let axis = uniforms.transC.xyz;
+    let thresholdMode = i32(uniforms.transG.y + 0.5);
+
+    // noise threshold in 0..1, stretched from fbm's narrow middle range
+    let n = clamp((fbm(world * uniforms.transG.x + vec3f(seed * 7.31, seed * 3.17, seed * 5.53)) - 0.28) / 0.44, 0.0, 1.0);
+    var d = n;
+    if (thresholdMode == 1) {
+        let g = clamp((dot(world, axis) - uniforms.transD.x) / uniforms.transD.y, 0.0, 1.0);
+        d = mix(g, n, uniforms.transH.y);
+    } else if (thresholdMode == 2) {
+        let g = clamp(length(world - uniforms.transB.xyz) / uniforms.transD.z, 0.0, 1.0);
+        d = mix(g, n, uniforms.transH.y);
+    }
+    // a hair of per-splat jitter frays the front at the splat scale
+    d = clamp(d + (h - 0.5) * 0.03, 0.0, 1.0);
+
+    // this splat's progress through its own window
+    let t = clamp((build * (1.0 + span) - d) / span, 0.0, 1.0);
+    if (t <= 0.0) {
+        r.alpha = 0.0;
+        return r;
+    }
+
+    // 1-2: particle -> point flying in (first 55% of the window)
+    let fly = clamp(t / 0.55, 0.0, 1.0);
+    let remain = (1.0 - fly) * (1.0 - fly);
+    let driftMode = i32(uniforms.transG.w + 0.5);
+    var dir = world - uniforms.transB.xyz;
+    if (driftMode == 1) {
+        dir = axis;
+    } else if (driftMode == 2) {
+        dir = vec3f(buildHash(id * 3u + 1u), buildHash(id * 3u + 2u), buildHash(id * 3u + 3u)) * 2.0 - 1.0;
+    }
+    dir = dir / max(length(dir), 1e-5);
+    // each particle drifts its own distance, so the cloud doesn't move as a shell
+    let reach = uniforms.transA.w * uniforms.transE.x * (0.5 + h);
+    let rel = world - uniforms.transB.xyz;
+    let swirled = rotateAround(rel, axis, uniforms.transD.w * 6.2831853 * remain);
+    r.offset = (swirled - rel) + dir * reach * remain;
+
+    // 4: materialize - point to full gaussian, colour and opacity to original
+    let grow = smoothstep(0.55, 1.0, t);
+    r.mix = 1.0 - grow;
+    r.pointSize = uniforms.transG.z;
+    r.tint = uniforms.transH.x * (1.0 - grow);
+    r.alpha = smoothstep(0.0, 0.12, t);
+
+    // 3: the front flares just before the splat lands
+    let flare = exp(-pow((t - 0.6) / 0.12, 2.0));
+    r.glow = (flare + 0.25 * (1.0 - grow)) * uniforms.transE.z;
+    return r;
+}
+
+fn buildHash(v: u32) -> f32 {
+    var x = v * 747796405u + 2891336453u;
+    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
+    x = (x >> 22u) ^ x;
+    return f32(x) / 4294967295.0;
+}
+
+// rotate v around the unit axis k by angle (Rodrigues)
+fn rotateAround(v: vec3f, k: vec3f, angle: f32) -> vec3f {
+    let c = cos(angle);
+    let s = sin(angle);
+    return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c);
+}
+
+fn buildTransition(world: vec3f, id: u32) -> BuildResult {
+    var r: BuildResult;
+    r.offset = vec3f(0.0);
+    r.scale = 1.0;
+    r.alpha = 1.0;
+    r.glow = 0.0;
+    r.mix = 0.0;
+    r.pointSize = 0.0;
+    r.tint = 0.0;
+
+    let effect = i32(uniforms.transA.x + 0.5);
+    if (effect == 0) {
+        return r;
+    }
+    if (effect == 3) {
+        return dissolveTransition(world, id, buildHash(id ^ (u32(uniforms.transB.w) * 2654435761u)));
+    }
+    let build = uniforms.transA.y;
+    let edge = max(uniforms.transA.z, 0.001);
+    let scatter = uniforms.transA.w;
+    let origin = uniforms.transB.xyz;
+    let seed = u32(uniforms.transB.w);
+    let axis = uniforms.transC.xyz;
+    let layerRadius = uniforms.transE.x;
+    let h = buildHash(id ^ (seed * 2654435761u));
+
+    // when this splat builds: 0 first .. 1 last
+    var d = 0.0;
+    if (effect == 1 || effect == 6) {
+        // sweep / wave: along the axis
+        d = clamp((dot(world, axis) - uniforms.transD.x) / uniforms.transD.y, 0.0, 1.0);
+    } else if (effect == 2 || effect == 4) {
+        // radial / grow: distance from the origin
+        d = clamp(length(world - origin) / uniforms.transD.z, 0.0, 1.0);
+    } else if (effect == 3) {
+        // dissolve: per-splat noise
+        d = h;
+    } else {
+        // fly-in: staggered at random
+        d = h * 0.6;
+    }
+    // a little noise on the front keeps it from banding
+    d = clamp(d + (h - 0.5) * 0.04, 0.0, 1.0);
+
+    // this splat's own progress through the front
+    let t = clamp((build * (1.0 + edge) - d) / edge, 0.0, 1.0);
+
+    if (effect == 1 || effect == 2) {
+        // sweep / radial: fade in behind a glowing front
+        r.alpha = t;
+        r.scale = mix(0.6, 1.0, t);
+        r.glow = 4.0 * t * (1.0 - t);
+    } else if (effect == 3) {
+        r.alpha = t;
+        r.glow = 4.0 * t * (1.0 - t) * 0.6;
+    } else if (effect == 4) {
+        // grow: each splat scales up from nothing
+        r.scale = t;
+        r.alpha = smoothstep(0.0, 0.15, t);
+    } else if (effect == 5) {
+        // fly-in: start scattered (random or exploded from the origin) and
+        // swirl into place around the axis
+        let remain = (1.0 - t) * (1.0 - t);
+        var dir = vec3f(buildHash(id * 3u + 1u), buildHash(id * 3u + 2u), buildHash(id * 3u + 3u)) * 2.0 - 1.0;
+        if (uniforms.transC.w > 0.5) {
+            dir = world - origin;
+        }
+        dir = dir / max(length(dir), 1e-5);
+        let rel = world - origin;
+        let swirled = rotateAround(rel, axis, uniforms.transD.w * 6.2831853 * remain);
+        r.offset = (swirled - rel) + dir * scatter * layerRadius * remain;
+        r.alpha = smoothstep(0.0, 0.3, t);
+    } else {
+        // wave: drop in along the axis (use a negative axis to rise from
+        // below) with a small bounce
+        let height = scatter * layerRadius;
+        r.offset = axis * height * ((1.0 - t) * (1.0 - t) + 0.08 * sin(t * 9.4247780) * (1.0 - t));
+        r.alpha = smoothstep(0.0, 0.2, t);
+    }
+
+    // points first, then splats
+    if (uniforms.transE.y > 0.5) {
+        r.mix = 1.0 - smoothstep(0.5, 1.0, t);
+        r.alpha = min(r.alpha, smoothstep(0.0, 0.5, t) + step(0.5, t));
+    }
+    r.glow *= uniforms.transE.z;
+    return r;
+}
 
 fn rotationMatrix(qIn: vec4f) -> mat3x3f {
     let q = normalize(qIn);
@@ -233,6 +486,12 @@ fn main(
         return;
     }
 
+    // a fully faded-out layer draws nothing
+    if (uniforms.layerParams.x <= 0.0) {
+        return;
+    }
+    var pointMix = clamp(uniforms.layerParams.y, 0.0, 1.0);
+
     let a = textureLoad(transformA, uv, 0);
     let b = textureLoad(transformB, uv, 0);
     let packedRotation = unpack2x16float(a.w);
@@ -240,10 +499,37 @@ fn main(
     let localCenter = bitcast<vec3f>(a.xyz);
     let paletteWord = instancePalette[instance];
     let model = uniforms.model * paletteMatrix(paletteWord & 0xffffu);
-    let worldCenter = model * vec4f(localCenter, 1.0);
+    var worldCenter = model * vec4f(localCenter, 1.0);
+
+    // build transition: per-splat offset, scale, alpha and front glow
+    let built = buildTransition(worldCenter.xyz, sourceIndex);
+    if (built.alpha <= 0.0) {
+        return;
+    }
+    worldCenter = vec4f(worldCenter.xyz + built.offset, 1.0);
+
+    // section cut: splats above the cut height are dropped (also from
+    // picking and selection passes), a soft edge fades the last band
+    var sectionFade = 1.0;
+    if (uniforms.sectionEdge.x > 0.5) {
+        let below = uniforms.sectionPlane.w - dot(worldCenter.xyz, uniforms.sectionPlane.xyz);
+        if (below <= 0.0) {
+            return;
+        }
+        if (uniforms.sectionEdge.y > 0.0) {
+            sectionFade = clamp(below / uniforms.sectionEdge.y, 0.0, 1.0);
+        }
+    }
+    pointMix = max(pointMix, built.mix);
     let viewCenter = uniforms.view * worldCenter;
     let depth = -viewCenter.z;
     if (uniforms.isOrtho == 0u && depth <= 0.0) {
+        return;
+    }
+
+    let depthOutside = uniforms.depthRange.z > 0.0
+        && (depth < uniforms.depthRange.x || depth > uniforms.depthRange.y);
+    if (depthOutside && uniforms.depthRange.z < 1.5) {
         return;
     }
 
@@ -261,7 +547,7 @@ fn main(
         vec3f(b.x, 0.0, 0.0),
         vec3f(0.0, b.y, 0.0),
         vec3f(0.0, 0.0, b.z)
-    );
+    ) * built.scale;
     let row0 = vec3f(gaussian[0].x, gaussian[1].x, gaussian[2].x);
     let row1 = vec3f(gaussian[0].y, gaussian[1].y, gaussian[2].y);
     let row2 = vec3f(gaussian[0].z, gaussian[1].z, gaussian[2].z);
@@ -311,7 +597,8 @@ fn main(
     // skip splats whose projected size falls below the cull threshold. With the
     // centres overlay up they are projected anyway - their centre still draws -
     // but land in the tail list below instead of among the survivors
-    let sizeCulled = 2.0 * sqrt(2.0 * lambda1) < uniforms.minPixelSize;
+    // points have their own size, so the size cull only applies to splats
+    let sizeCulled = pointMix < 0.01 && 2.0 * sqrt(2.0 * lambda1) < uniforms.minPixelSize;
     if (sizeCulled && uniforms.keepCulled == 0u) {
         return;
     }
@@ -331,8 +618,20 @@ fn main(
     let maxRadius = min(1024.0, min(viewport.x, viewport.y));
     let len1 = 2.0 * sqrt(2.0 * lambda1);
     let radiusScale = min(1.0, maxRadius / len1);
-    let axis1 = len1 * radiusScale * direction;
-    let len2 = 2.0 * sqrt(2.0 * lambda2) * radiusScale;
+    var axis1 = len1 * radiusScale * direction;
+    var len2 = 2.0 * sqrt(2.0 * lambda2) * radiusScale;
+
+    // point cloud: blend the ellipse into a round point of the configured
+    // size, in pixels or world units (perspective-attenuated)
+    if (pointMix > 0.0) {
+        var pointRadius = 0.5 * select(uniforms.pointParams.x, built.pointSize, built.pointSize > 0.0);
+        if (uniforms.pointParams.y > 0.5 && built.pointSize <= 0.0) {
+            pointRadius *= focal.y / select(max(depth, 0.001), 1.0, uniforms.isOrtho != 0u);
+        }
+        pointRadius = clamp(pointRadius, 0.75, maxRadius);
+        axis1 = mix(axis1, direction * pointRadius, pointMix);
+        len2 = mix(len2, pointRadius, pointMix);
+    }
     let axis2 = len2 * vec2f(direction.y, -direction.x);
 
     let ndc = clip.xy / clip.w;
@@ -421,6 +720,8 @@ fn main(
     if (previewed) {
         gradedAlpha *= uniforms.colorAlpha;
     }
+    // points take the point cloud opacity; the layer opacity (fades) scales both
+    gradedAlpha = mix(gradedAlpha, uniforms.pointParams.z, pointMix) * uniforms.layerParams.x * built.alpha * sectionFade;
     gradedAlpha = clamp(gradedAlpha, 0.0, 1.0);
     // stochastic frames also cull by contribution - the gaussian's alpha mass in
     // pixels, alpha * 2 pi * sqrt(det) of the dilated covariance, the engine's
@@ -442,6 +743,26 @@ fn main(
     if (previewed) {
         graded = applyColorGrade(graded, uniforms.colorRow0, uniforms.colorRow1, uniforms.colorRow2);
     }
+    if (pointMix > 0.0 && uniforms.pointParams.w > 0.5) {
+        graded = mix(graded, uniforms.pointColor.rgb, pointMix);
+    }
+    // quality heatmap (display only): score ramp red -> yellow -> green, or
+    // red where the score is under the threshold / the splat is flagged
+    // worse than another scan (score byte 0 in mode 3)
+    if (uniforms.quality.x > 0.5) {
+        let q = f32((instanceScore[instance >> 2u] >> ((instance & 3u) * 8u)) & 0xffu) / 255.0;
+        if (uniforms.quality.x < 1.5) {
+            let heat = select(mix(vec3f(1.0, 0.0, 0.0), vec3f(1.0, 0.9, 0.0), q * 2.0),
+                mix(vec3f(1.0, 0.9, 0.0), vec3f(0.0, 0.9, 0.2), q * 2.0 - 1.0), q > 0.5);
+            graded = mix(graded, heat, 0.85);
+        } else if (q < uniforms.quality.y) {
+            graded = mix(graded, vec3f(1.0, 0.05, 0.05), 0.9);
+        }
+    }
+
+    // dissolve points lean to the glow colour, and the front glows additively
+    graded = mix(graded, uniforms.transF.rgb, clamp(built.tint, 0.0, 1.0));
+    graded += uniforms.transF.rgb * built.glow * 1.5;
     color = vec4f(graded, gradedAlpha);
 
     let selected = (state & 1u) != 0u && uniforms.selectionEnabled != 0u;
@@ -457,6 +778,11 @@ fn main(
     // stage skips their quads unless a ring would show, so keeping them here
     // costs only cache slots and sort keys
     color = vec4f(max(color.rgb, vec3f(0.0)), color.a);
+    if (depthOutside) {
+        // dimmed out-of-range splats: darker and more transparent, so the
+        // in-range ones being selected stand out
+        color = vec4f(color.rgb * 0.25, color.a * 0.3);
+    }
 
     // rgb: 10/10/10 unorm with a 2-bit shared exponent (scale 1/2/4/8, range [0, 8])
     let maxChannel = max(color.r, max(color.g, color.b));
@@ -487,6 +813,9 @@ fn main(
             | (u32(clamp(color.a, 0.0, 1.0) * 255.0 + 0.5) << 16u)
             | select(0u, 0x01000000u, selected)
             | select(0u, 0x02000000u, locked)
+            // point mix (4 bits) and glow (2 bits) for the render shader
+            | (u32(pointMix * 15.0 + 0.5) << 26u)
+            | (u32(clamp(uniforms.layerParams.z, 0.0, 1.0) * 3.0 + 0.5) << 30u)
     ));
     if (sizeCulled || contributionCulled || occluded) {
         let tail = atomicAdd(&splatCounter[1], 1u);

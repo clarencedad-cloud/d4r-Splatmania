@@ -1,0 +1,142 @@
+@use 'colors.scss' as *;
+
+// anchor-point alignment (src/align/align-tool.ts)
+#align-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+
+    > .align-marker {
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        margin: -12px 0 0 -12px;
+        border: 2px solid;
+        border-radius: 50%;
+        background-color: rgba(0, 0, 0, 0.6);
+        font-size: 11px;
+        font-weight: bold;
+        line-height: 20px;
+        text-align: center;
+        cursor: move;
+        pointer-events: auto;
+        user-select: none;
+    }
+}
+
+#align-panel {
+    position: absolute;
+    top: 150px;
+    right: 80px;
+    width: 320px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background-color: $bcg-dark;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    &.pcui-hidden {
+        display: none;
+    }
+
+    .align-title {
+        margin: 0;
+        color: $clr-active;
+        font-weight: bold;
+    }
+
+    .align-help {
+        margin: 0;
+        white-space: normal;
+        font-size: 11px;
+        color: $text-secondary;
+    }
+
+    .align-layers {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .align-layer {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 4px;
+        border-radius: 3px;
+        color: $clr-default;
+
+        &.active {
+            background-color: $bcg-light;
+            color: $clr-active;
+        }
+    }
+
+    .align-swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        flex-shrink: 0;
+    }
+
+    .align-name {
+        flex-grow: 1;
+        cursor: pointer;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .align-info {
+        font-size: 10px;
+        color: $text-secondary;
+        white-space: nowrap;
+    }
+
+    .align-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .align-label {
+        margin: 0;
+        flex-grow: 1;
+        color: $text-secondary;
+    }
+
+    .align-button {
+        flex: 1;
+        text-align: center;
+        padding: 5px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+        background-color: $bcg-lighter;
+        color: $clr-default;
+
+        &:first-child {
+            background-color: $clr-hilight;
+            color: $clr-active;
+        }
+
+        &:hover {
+            filter: brightness(1.15);
+        }
+    }
+
+    .align-radius-hint {
+        margin: 0;
+        width: 30px;
+        color: $clr-icon-hilight;
+        font-size: 11px;
+    }
+
+    .align-message {
+        margin: 0;
+        white-space: normal;
+        color: $clr-icon-hilight;
+    }
+}

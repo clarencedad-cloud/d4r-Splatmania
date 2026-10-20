@@ -3,6 +3,12 @@
 #timeline-panel {
     flex-direction: column;
     border-top: none;
+    // never shrink: a shrinking panel and the canvas resize each other in a loop (viewport jitter)
+    flex-shrink: 0;
+
+    > * {
+        flex-shrink: 0;
+    }
 
     &:not(.pcui-hidden) {
         display: flex;
@@ -190,4 +196,188 @@
             }
         }
     }
+}
+// shot camera key rows and the cut track (src/ui/timeline-tracks.ts)
+#timeline-panel > #timeline-tracks {
+    display: flex;
+    flex-direction: column;
+    background-color: $bcg-darkest;
+    border-top: 1px solid $bcg-primary;
+
+    > .track-row {
+        position: relative;
+        height: 18px;
+        border-bottom: 1px solid $bcg-darker;
+        cursor: pointer;
+
+        &.selected {
+            background-color: $bcg-darker;
+        }
+
+        &.cut-track {
+            height: 24px;
+            cursor: crosshair;
+        }
+
+        > .track-label {
+            position: absolute;
+            left: 24px;
+            top: 50%;
+            transform: translate(0, -50%);
+            font-size: 10px;
+            color: $text-secondary;
+            pointer-events: none;
+            white-space: nowrap;
+            // drawn over transition blocks, which start at frame 0 too
+            z-index: 2;
+            padding: 0 4px;
+            border-radius: 2px;
+            background-color: rgba(24, 24, 24, 0.85);
+        }
+
+        > .track-key {
+            position: absolute;
+            top: 50%;
+            width: 8px;
+            height: 8px;
+            transform: translate(-50%, -50%) rotate(45deg);
+            cursor: ew-resize;
+            z-index: 3;
+        }
+
+        > .cut-segment {
+            position: absolute;
+            top: 2px;
+            bottom: 2px;
+            border: 1px solid transparent;
+            border-radius: 3px;
+            box-sizing: border-box;
+            overflow: hidden;
+            white-space: nowrap;
+            font-size: 10px;
+            line-height: 18px;
+            padding-left: 4px;
+            color: $text-primary;
+            pointer-events: none;
+
+            &.preview {
+                border-style: dashed;
+                z-index: 4;
+            }
+        }
+
+        > .track-cursor {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 1px;
+            background-color: $clr-hilight;
+            pointer-events: none;
+            z-index: 5;
+        }
+    }
+}
+
+// layer animation rows (src/layer-anim.ts); the track list keeps a fixed
+// maximum height and scrolls, so adding layers never resizes the canvas
+#timeline-panel > #timeline-tracks {
+    max-height: 170px;
+    overflow-y: auto;
+
+    > .track-row.layer-track {
+        background-color: rgba(255, 255, 255, 0.02);
+
+        &.selected {
+            background-color: $bcg-darker;
+        }
+
+        > .track-key.layer-key {
+            border-radius: 1px;
+
+            &.transform-only {
+                border: 1px solid #e6e6e6;
+                background-color: transparent !important;
+            }
+        }
+    }
+}
+
+// transition blocks in the layer rows (src/layer-anim.ts)
+#timeline-panel > #timeline-tracks > .track-row.layer-track > .transition-block {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    box-sizing: border-box;
+    border-radius: 3px;
+    border: 1px solid rgba(80, 220, 255, 0.9);
+    background-color: rgba(80, 220, 255, 0.25);
+    color: $text-primary;
+    font-size: 9px;
+    line-height: 12px;
+    padding: 0 6px;
+    overflow: hidden;
+    white-space: nowrap;
+    cursor: grab;
+    z-index: 1;
+
+    &.out {
+        border-color: rgba(255, 90, 200, 0.9);
+        background-color: rgba(255, 90, 200, 0.25);
+    }
+
+    &.selected {
+        border-width: 2px;
+        border-color: $clr-hilight;
+    }
+
+    &.preview {
+        border-style: dashed;
+        pointer-events: none;
+    }
+
+    // resize handles
+    &::before,
+    &::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 5px;
+        cursor: ew-resize;
+    }
+
+    &::before {
+        left: 0;
+    }
+
+    &::after {
+        right: 0;
+    }
+}
+
+// key target label and auto key (src/track-manager.ts)
+#timeline-panel #button-controls {
+    > #key-target {
+        margin: 0 0 0 8px;
+        align-self: center;
+        font-size: 11px;
+        white-space: nowrap;
+        // fixed width so the buttons don't shift when the target changes
+        width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    > #auto-key {
+        color: $clr-disabled;
+
+        &.active {
+            color: #ff3b3b;
+        }
+    }
+}
+
+#timeline-panel > #timeline-tracks > .track-row.key-target {
+    box-shadow: inset 3px 0 0 $clr-hilight;
+    background-color: rgba(255, 102, 0, 0.12);
 }

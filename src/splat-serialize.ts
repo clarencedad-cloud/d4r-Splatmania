@@ -841,6 +841,7 @@ const serializeSpz = async (splats: Splat[], settings: SpzSettings, fs: FileSyst
 export {
     Writer,
     writeResourceFile,
+    createExportSource,
     writeSplatFile,
     serializeSog,
     serializeSpz,

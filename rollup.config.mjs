@@ -94,4 +94,26 @@ const application = {
     cache: false
 };
 
-export default application;
+// analysis worker (ICP fine alignment, quality scores): a separate bundle so
+// the pure cores run off the main thread (src/analysis/analysis-client.ts)
+const analysisWorker = {
+    input: 'src/analysis/analysis-worker.ts',
+    output: {
+        file: 'dist/analysis-worker.js',
+        format: 'esm',
+        sourcemap: true
+    },
+    plugins: [
+        typescript({
+            tsconfig: './tsconfig.json',
+            // the worker bundle only needs its own sources
+            include: ['src/analysis/analysis-worker.ts', 'src/align/icp.ts', 'src/quality/quality-score.ts'],
+            outputToFilesystem: false
+        }),
+        resolve(),
+        BUILD_TYPE !== 'debug' && terser()
+    ],
+    cache: false
+};
+
+export default [application, analysisWorker];

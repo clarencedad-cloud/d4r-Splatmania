@@ -159,6 +159,18 @@ class VideoSettingsDialog extends Container {
         projectionRow.append(projectionLabel);
         projectionRow.append(projectionSelect);
 
+        // shot camera source
+
+        const shotLabel = new Label({ class: 'label', text: 'Kamera' });
+        const shotSelect = new SelectInput({
+            class: 'select',
+            defaultValue: 'cut',
+            options: [{ v: 'cut', t: 'Schnitt (ein MP4)' }]
+        });
+        const shotRow = new Container({ class: 'row' });
+        shotRow.append(shotLabel);
+        shotRow.append(shotSelect);
+
         // resolution
 
         const resolutionLabel = new Label({ class: 'label' });
@@ -364,6 +376,7 @@ class VideoSettingsDialog extends Container {
         // content
 
         const content = new Container({ id: 'content' });
+        content.append(shotRow);
         content.append(projectionRow);
         content.append(resolutionRow);
         content.append(formatRow);
@@ -669,6 +682,17 @@ class VideoSettingsDialog extends Container {
             const totalFrames = events.invoke('timeline.frames');
             frameRangeInput.max = totalFrames - 1;
             frameRangeInput.value = [0, totalFrames - 1];
+
+            // shot source options from the current cameras
+            const cameras = events.invoke('shotCameras.list') as { id: number, name: string }[];
+            const hasCuts = (events.invoke('cut.segments') as unknown[]).length > 0;
+            shotSelect.options = [
+                { v: 'cut', t: 'Schnitt (ein MP4)' },
+                ...cameras.map(c => ({ v: `camera:${c.id}`, t: `Kamera: ${c.name}` })),
+                { v: 'all', t: 'Alle Kameras einzeln' }
+            ];
+            const selectedCamera = events.invoke('shotCameras.selected') as { id: number };
+            shotSelect.value = hasCuts ? 'cut' : `camera:${selectedCamera.id}`;
         };
 
         // function implementations
@@ -703,7 +727,10 @@ class VideoSettingsDialog extends Container {
                         showDebug: !is360 && showDebugBoolean.value,
                         format: formatSelect.value as 'mp4' | 'webm' | 'mov' | 'mkv',
                         projection: (is360 ? 'equirect' : 'standard') as 'standard' | 'equirect',
-                        levelHorizon: is360 && levelHorizonBoolean.value
+                        levelHorizon: is360 && levelHorizonBoolean.value,
+                        shot: shotSelect.value.startsWith('camera:') ?
+                            { mode: 'camera', cameraId: parseInt(shotSelect.value.slice(7), 10) } :
+                            { mode: shotSelect.value as 'cut' | 'all' }
                     };
 
                     resolve(videoSettings);

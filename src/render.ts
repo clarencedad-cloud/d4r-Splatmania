@@ -355,6 +355,12 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
                 const is360 = projection === 'equirect';
 
+                // drive the camera from the chosen shot camera / cut track
+                const shot = videoSettings.shot;
+                if (shot && shot.mode !== 'all') {
+                    events.invoke('camera.setRenderOverride', { mode: shot.mode, cameraId: shot.cameraId });
+                }
+
                 // 360 mp4/mov exports have spherical metadata patched into the
                 // finished buffer, so they render to memory with moov written
                 // last (fastStart false) instead of streaming to disk
@@ -660,7 +666,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 }
                 await output.finalize();
 
-                const filename = () => `${baseFilename()}.${fileExtension}`;
+                const filename = () => `${baseFilename()}${videoSettings.filenameSuffix ?? ''}.${fileExtension}`;
 
                 if (taggable) {
                     // patch spherical metadata into the finished buffer so
@@ -732,6 +738,10 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     encoder.close();
                 }
                 cancelHandler.off();
+
+                // back to the interactive view mode
+                events.invoke('camera.setRenderOverride', null);
+                events.fire('camera.applyView');
 
                 if (equirect) {
                     scene.camera.setPoseOverride(null);
