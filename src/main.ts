@@ -27,6 +27,7 @@ import { ShortcutManager } from './shortcut-manager';
 import { registerTimelineEvents } from './timeline';
 import { BoxSelection } from './tools/box-selection';
 import { BrushSelection } from './tools/brush-selection';
+import { CameraPathTool } from './tools/camera-path-tool';
 import { EyedropperSelection } from './tools/eyedropper-selection';
 import { FloodSelection } from './tools/flood-selection';
 import { LassoSelection } from './tools/lasso-selection';
@@ -277,6 +278,7 @@ const main = async () => {
     toolManager.register('align', new AlignTool(events, scene, editorUI.canvasContainer));
     toolManager.register('quality', new QualityTool(events, scene, editorUI.canvasContainer));
     toolManager.register('section', new SectionTool(events, scene, editorUI.canvasContainer));
+    toolManager.register('cameraPath', new CameraPathTool(events, scene, editorUI.canvasContainer));
     registerDofEvents(events, scene, editorUI.canvasContainer);
     toolManager.register('orient', new OrientTool(events, scene, editorUI.toolsContainer.dom, editorUI.canvasContainer, editorUI.annotationContainer.dom));
 

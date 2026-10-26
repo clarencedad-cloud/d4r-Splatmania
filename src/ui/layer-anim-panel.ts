@@ -3,6 +3,7 @@ import { BooleanInput, Container, Label, NumericInput, SliderInput } from '@play
 import { Events } from '../events';
 import { TRANSITION_LABELS, type LayerRenderMode, type LayerState, type PointCloudSettings, type Transition, type TransitionAxis, type TransitionEasing, type TransitionEffect } from '../layer-anim';
 import type { Splat } from '../splat';
+import { CollapsibleSection } from './collapsible';
 
 // segmented button row; returns a sync function for the current value
 const segmented = (parent: Container, options: [string, string, string?][], onPick: (value: string) => void) => {
@@ -27,13 +28,6 @@ const row = (parent: Container, text: string, title?: string) => {
     r.append(new Label({ text, class: 'layer-anim-label' }));
     parent.append(r);
     return r;
-};
-
-const header = (text: string, icon: string) => {
-    const h = new Container({ class: 'panel-header' });
-    h.append(new Label({ text: icon, class: 'panel-header-icon' }));
-    h.append(new Label({ text, class: 'panel-header-label' }));
-    return h;
 };
 
 const button = (parent: Container, text: string, title: string, onClick: () => void) => {
@@ -63,9 +57,9 @@ class LayerAnimPanel extends Container {
 
         // layer animator
 
-        this.append(header('LAYER-ANIMATION', ''));
-        const body = new Container({ class: 'layer-anim-body' });
-        this.append(body);
+        const animSection = new CollapsibleSection({ key: 'layerAnim', title: 'Layer-Animation', icon: '\uE198', bodyClass: 'layer-anim-body' });
+        this.append(animSection);
+        const body = animSection.body;
 
         const none = new Label({ text: 'Kein Layer ausgewählt', class: 'layer-anim-none' });
         body.append(none);
@@ -118,9 +112,9 @@ class LayerAnimPanel extends Container {
 
         // transitions (per-splat build effects of the selected layer)
 
-        this.append(header('TRANSITIONS', '\uE163'));
-        const tb = new Container({ class: 'layer-anim-body' });
-        this.append(tb);
+        const transitionSection = new CollapsibleSection({ key: 'transitions', title: 'Transitions', icon: '\uE217', bodyClass: 'layer-anim-body' });
+        this.append(transitionSection);
+        const tb = transitionSection.body;
 
         const tNone = new Label({ text: 'Kein Layer ausgewählt', class: 'layer-anim-none' });
         tb.append(tNone);
@@ -195,9 +189,14 @@ class LayerAnimPanel extends Container {
             ['explode', 'Explosion']
         ], value => update({ flyMode: value as Transition['flyMode'] }));
 
+        // rarely tuned look parameters (shown below the dissolve settings)
+        const advSection = new CollapsibleSection({ key: 'transitions.advanced', title: 'Erweitert', sub: true });
+        editor.append(advSection);
+        const adv = advSection.body;
+
         const slider = (text: string, title: string, min: number, max: number, key: 'edge' | 'glow' | 'scatter' | 'swirl') => {
             const sl = new SliderInput({ min, max, sliderMin: min, sliderMax: max, precision: 2, step: 0.01, value: 0 });
-            row(editor, text, title).append(sl);
+            row(adv, text, title).append(sl);
             sl.on('change', (v: number) => update({ [key]: v }, false));
             return sl;
         };
@@ -206,7 +205,7 @@ class LayerAnimPanel extends Container {
         const scatterSlider = slider('Streuung', 'Flug- bzw. Fallweite relativ zur Layer-Größe', 0, 3, 'scatter');
         const swirlSlider = slider('Wirbel', 'Umdrehungen beim Fly-in', 0, 3, 'swirl');
 
-        const glowColorRow = row(editor, 'Glühfarbe');
+        const glowColorRow = row(adv, 'Glühfarbe');
         const glowColor = document.createElement('input');
         glowColor.type = 'color';
         glowColor.classList.add('layer-anim-color');
@@ -216,7 +215,7 @@ class LayerAnimPanel extends Container {
             update({ glowColor: [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255) as [number, number, number] });
         });
 
-        const extraRow = row(editor, 'Seed');
+        const extraRow = row(adv, 'Seed');
         const seedInput = new NumericInput({ min: 0, max: 100000, precision: 0, value: 1, class: 'layer-anim-duration' });
         extraRow.append(seedInput);
         seedInput.on('change', (v: number) => update({ seed: v }));
@@ -229,6 +228,7 @@ class LayerAnimPanel extends Container {
         // noise, particle drift and the point look
         const dissolveBox = new Container({ class: 'layer-anim-controls' });
         editor.append(dissolveBox);
+        editor.dom.insertBefore(dissolveBox.dom, advSection.dom);
         const dRow = (text: string, title?: string) => row(dissolveBox, text, title);
 
         const syncDissolveMode = segmented(dRow('Schwelle', 'Was die Dissolve-Front treibt: reines Rauschen, Richtung (Achse) oder Radial vom Ursprung, jeweils mit Rausch-Anteil'), [
@@ -282,6 +282,8 @@ class LayerAnimPanel extends Container {
                 }
             }
             editor.hidden = !current;
+            const count = s?.track.transitions.length ?? 0;
+            transitionSection.setInfo(current ? `${TRANSITION_LABELS[current.effect]} ${current.start}–${current.start + current.duration}` : count ? `${count}×` : '');
             if (current) {
                 syncKind(current.kind);
                 effectButtons.forEach(({ effect, b }) => b.classList.toggle('active', effect === current.effect));
@@ -316,9 +318,12 @@ class LayerAnimPanel extends Container {
 
         // point cloud (global)
 
-        this.append(header('PUNKTWOLKE', ''));
-        const pc = new Container({ class: 'layer-anim-body' });
-        this.append(pc);
+        const pointSection = new CollapsibleSection({ key: 'pointCloud', title: 'Punktwolke', icon: '', bodyClass: 'layer-anim-body' });
+        this.append(pointSection);
+        const pc = pointSection.body;
+        const pAdvSection = new CollapsibleSection({ key: 'pointCloud.advanced', title: 'Erweitert', sub: true });
+        pc.append(pAdvSection);
+        const pAdv = pAdvSection.body;
 
         const points = () => events.invoke('layerAnim.points') as PointCloudSettings;
         const setPoints = (v: Partial<PointCloudSettings>) => !syncing && events.fire('layerAnim.setPoints', v);
@@ -332,7 +337,7 @@ class LayerAnimPanel extends Container {
         row(pc, 'Größe', 'Punktdurchmesser in Pixeln bzw. Welteinheiten').append(size);
         size.on('change', (v: number) => setPoints({ size: v }));
 
-        const syncSizeMode = segmented(row(pc, 'Größe in', 'Pixel: konstant auf dem Bildschirm. Welt: wird mit der Entfernung kleiner'), [
+        const syncSizeMode = segmented(row(pAdv, 'Größe in', 'Pixel: konstant auf dem Bildschirm. Welt: wird mit der Entfernung kleiner'), [
             ['px', 'Pixel'],
             ['world', 'Welt']
         ], value => setPoints({ sizeMode: value as PointCloudSettings['sizeMode'] }));
@@ -356,8 +361,10 @@ class LayerAnimPanel extends Container {
         pointOpacity.on('change', (v: number) => setPoints({ opacity: v }));
 
         const glow = new SliderInput({ min: 0, max: 1, sliderMin: 0, sliderMax: 1, precision: 2, step: 0.01, value: 0 });
-        row(pc, 'Glühen', 'Additives Glühen der Punkte').append(glow);
+        row(pAdv, 'Glühen', 'Additives Glühen der Punkte').append(glow);
         glow.on('change', (v: number) => setPoints({ glow: v }));
+        // the advanced group goes last
+        pc.dom.appendChild(pAdvSection.dom);
 
         // sync
 
@@ -374,6 +381,8 @@ class LayerAnimPanel extends Container {
                 mix.enabled = s.mixOverride !== null;
                 syncInterp(s.track.interpolation);
             }
+            const keys = s?.track.keys.length ?? 0;
+            animSection.setInfo(s ? (keys === 1 ? '1 Key' : `${keys} Keys`) : '');
             syncing = false;
         };
 
@@ -387,6 +396,7 @@ class LayerAnimPanel extends Container {
             colorInput.value = `#${p.color.map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('')}`;
             pointOpacity.value = p.opacity;
             glow.value = p.glow;
+            pointSection.setInfo(p.mode === 'points' ? 'Punktwolke' : 'Splats');
             syncing = false;
         };
 

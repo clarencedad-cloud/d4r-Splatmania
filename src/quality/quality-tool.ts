@@ -8,6 +8,7 @@ import { ElementType } from '../element';
 import { Events } from '../events';
 import type { Scene } from '../scene';
 import type { Splat } from '../splat';
+import { makeFloating } from '../ui/floating-panel';
 
 // Quality tool: per-splat quality scores (0 bad .. 1 good) shown as a heatmap
 // in the splat renderer (display only, the data is untouched), a threshold to
@@ -257,7 +258,7 @@ class QualityTool {
         });
         canvasContainer.append(panel);
 
-        panel.append(new Label({ text: 'QUALITÄT', class: 'quality-title' }));
+        makeFloating(panel, { key: 'quality', title: 'Qualität' });
 
         const row = (text: string) => {
             const r = new Container({ class: 'quality-row' });

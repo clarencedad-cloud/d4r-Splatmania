@@ -55,6 +55,8 @@ const defaultShortcuts: Record<string, ShortcutBinding> = {
     'tool.align': { keys: ['j'] },
     'tool.quality': { keys: ['u'] },
     'tool.section': { keys: ['y'] },
+    // edit the camera path in the viewport (src/tools/camera-path-tool.ts)
+    'tool.cameraPath': { keys: ['x'] },
     'tool.eyedropperSelection': { keys: ['e'], ctrl: 'required', capture: true },
     'tool.brushSelection.smaller': { keys: ['['], repeat: true },
     'tool.brushSelection.bigger': { keys: [']'], repeat: true },

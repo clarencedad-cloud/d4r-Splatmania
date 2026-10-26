@@ -8,6 +8,7 @@ import { ElementType } from '../element';
 import { Events } from '../events';
 import type { Scene } from '../scene';
 import type { Splat } from '../splat';
+import { makeFloating } from '../ui/floating-panel';
 
 // Section cut: cuts the model from the top down along an up axis, e.g. the
 // roof off a building down to its floor plan. Non-destructive - the splat
@@ -333,7 +334,7 @@ class SectionTool {
             panel.dom.addEventListener(name, e => e.stopPropagation());
         });
         canvasContainer.append(panel);
-        panel.append(new Label({ text: 'SCHNITT', class: 'section-title' }));
+        makeFloating(panel, { key: 'section', title: 'Schnitt' });
 
         const row = (text: string, title?: string) => {
             const r = new Container({ class: 'section-row' });

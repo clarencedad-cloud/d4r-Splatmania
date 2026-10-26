@@ -1,0 +1,164 @@
+@use 'colors.scss' as *;
+
+// uniform collapsible sections of the scene panel (src/ui/collapsible.ts)
+.collapsible-section {
+    display: flex;
+    flex-direction: column;
+
+    &.pcui-hidden {
+        display: none;
+    }
+
+    > .collapsible-body.pcui-hidden {
+        display: none !important;
+    }
+}
+
+// top-level sections: a thin divider between them, header as one button
+.panel .collapsible-section:not(.collapsible-sub) {
+    border-top: 1px solid $bcg-lighter;
+
+    > .collapsible-header {
+        cursor: pointer;
+        gap: 2px;
+        padding: 2px 6px 2px 2px;
+
+        &:hover {
+            background-color: #221d30;
+        }
+
+        &:focus-visible {
+            outline: 1px solid $clr-hilight;
+            outline-offset: -1px;
+        }
+
+        > .collapsible-svg-icon > svg {
+            display: block;
+            width: 16px;
+            height: 16px;
+        }
+    }
+
+    &.open > .collapsible-header {
+        border-bottom: 1px solid rgba(194, 14, 126, 0.35);
+    }
+
+    > .collapsible-body {
+        padding-bottom: 6px;
+    }
+}
+
+.collapsible-arrow {
+    flex-shrink: 0;
+    width: 12px;
+    margin: 0 0 0 4px;
+    color: $clr-default;
+    text-align: center;
+    transition: transform 0.12s;
+
+    .open > .collapsible-header > &,
+    .open > .collapsible-sub-header > & {
+        color: $clr-hilight;
+        transform: rotate(90deg);
+    }
+}
+
+.collapsible-info {
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 130px;
+    margin: 0 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: $text-secondary;
+    font-weight: normal;
+    text-transform: none;
+}
+
+// "Erweitert" and other sub-groups inside a section
+.collapsible-sub {
+    margin-top: 6px;
+    border-top: 1px dashed $bcg-lighter;
+
+    > .collapsible-sub-header {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        height: 24px;
+        cursor: pointer;
+        border-radius: 4px;
+
+        &:hover {
+            background-color: #221d30;
+        }
+
+        > .collapsible-sub-label {
+            flex-grow: 1;
+            margin: 0 4px;
+            color: $text-secondary;
+        }
+    }
+
+    > .collapsible-body {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin: 2px 0 2px 6px;
+        padding-left: 8px;
+        border-left: 2px solid rgba(194, 14, 126, 0.45);
+    }
+}
+
+// floating viewport panels (src/ui/floating-panel.ts): title bar to drag,
+// minimize to the title bar
+.floating-panel {
+    > .floating-header {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        margin: -2px 0 2px;
+        cursor: grab;
+        touch-action: none;
+        border-bottom: 1px solid rgba(194, 14, 126, 0.35);
+
+        &.dragging {
+            cursor: grabbing;
+        }
+
+        > .floating-toggle {
+            width: 14px;
+            color: $clr-hilight;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        > .floating-title {
+            color: $clr-active;
+            font-weight: bold;
+        }
+
+        > .floating-info {
+            flex-grow: 1;
+            color: $text-secondary;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        > .floating-extra {
+            flex-shrink: 0;
+            margin: 0;
+        }
+    }
+
+    &.floating-collapsed > :not(.floating-header) {
+        display: none !important;
+    }
+
+    &.floating-collapsed > .floating-header {
+        margin-bottom: -2px;
+        border-bottom: none;
+    }
+}

@@ -2,9 +2,9 @@ import { Button, ColorPicker, Container, Label, SliderInput } from '@playcanvas/
 import { Color } from 'playcanvas';
 
 import { Events } from '../events';
+import { CollapsibleSection } from './collapsible';
 import { i18n } from './localization';
 import { Splat } from '../splat';
-import arrowSvg from './svg/arrow.svg';
 import checkSvg from './svg/check.svg';
 import colorsSvg from './svg/colors.svg';
 import editUndoSvg from './svg/edit-undo.svg';
@@ -25,30 +25,6 @@ class ColorPanel extends Container {
 
         super(args);
 
-        // header (click to expand/collapse)
-
-        const header = new Container({
-            class: ['panel-header', 'color-panel-header']
-        });
-
-        const icon = new Label({
-            class: 'panel-header-icon'
-        });
-        icon.dom.appendChild(createSvg(colorsSvg));
-
-        const label = new Label({
-            class: 'panel-header-label'
-        });
-        i18n.bindText(label, 'panel.colors');
-
-        const collapseArrow = new Label({
-            class: 'color-panel-collapse'
-        });
-        collapseArrow.dom.appendChild(createSvg(arrowSvg));
-
-        header.append(icon);
-        header.append(label);
-        header.append(collapseArrow);
 
         // tint
 
@@ -233,11 +209,12 @@ class ColorPanel extends Container {
         controlRow.append(apply);
         controlRow.append(reset);
 
-        // the collapsible body, closed by default
+        // the collapsible body (ui/collapsible.ts), closed by default
+        const section = new CollapsibleSection({ key: 'colors', title: i18n.t('panel.colors'), iconElement: createSvg(colorsSvg) });
         const content = new Container({
-            class: 'color-panel-content',
-            hidden: true
+            class: 'color-panel-content'
         });
+        section.body.append(content);
 
         content.append(tintRow);
         content.append(temperatureRow);
@@ -252,28 +229,7 @@ class ColorPanel extends Container {
         // collapsed state still ends cleanly at the section header bar
         content.append(new Container({ class: 'color-panel-footer' }));
 
-        this.append(header);
-        this.append(content);
-
-        // the header acts as a button: focusable, toggleable from the
-        // keyboard, and announcing its expanded state
-        header.dom.setAttribute('role', 'button');
-        header.dom.setAttribute('tabindex', '0');
-        header.dom.setAttribute('aria-expanded', 'false');
-
-        const toggleContent = () => {
-            content.hidden = !content.hidden;
-            collapseArrow.class[content.hidden ? 'remove' : 'add']('expanded');
-            header.dom.setAttribute('aria-expanded', String(!content.hidden));
-        };
-
-        header.on('click', toggleContent);
-        header.dom.addEventListener('keydown', (event: KeyboardEvent) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                toggleContent();
-            }
-        });
+        this.append(section);
 
         // The controls hold a *pending* grade rather than editing anything directly.
         // The viewport previews it on whatever an Apply would affect - the selection,

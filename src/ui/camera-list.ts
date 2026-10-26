@@ -2,6 +2,7 @@ import { BooleanInput, Container, Label, SliderInput } from '@playcanvas/pcui';
 
 import type { CameraViewMode, ShotCamera } from '../camera-poses';
 import { Events } from '../events';
+import { CollapsibleSection } from './collapsible';
 
 const rgb = (c: number[]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 
@@ -16,33 +17,37 @@ class CameraList extends Container {
 
         super(args);
 
-        // header: title + add / duplicate buttons
-
-        const header = new Container({ class: 'panel-header' });
-        const icon = new Label({ text: '', class: 'panel-header-icon' });
-        const title = new Label({ text: 'KAMERAS', class: 'panel-header-label' });
+        // collapsible section: title + add / duplicate buttons
 
         const button = (text: string, tip: string, onClick: () => void) => {
             const b = new Label({ text, class: ['panel-header-button', 'camera-list-button'] });
             b.dom.title = tip;
             b.dom.addEventListener('click', onClick);
-            return b;
+            return b.dom;
         };
 
-        header.append(icon);
-        header.append(title);
-        header.append(button('+', 'Kamera hinzufügen', () => events.fire('shotCameras.add')));
-        header.append(button('⧉', 'Gewählte Kamera duplizieren', () => events.fire('shotCameras.duplicate')));
-        this.append(header);
+        const section = new CollapsibleSection({
+            key: 'cameras',
+            title: 'Kameras',
+            icon: '',
+            open: true,
+            actions: [
+                button('+', 'Kamera hinzufügen', () => events.fire('shotCameras.add')),
+                button('⧉', 'Gewählte Kamera duplizieren', () => events.fire('shotCameras.duplicate'))
+            ]
+        });
+        this.append(section);
+        const body = section.body;
 
         // rows
 
         const rows = new Container({ class: 'camera-list-rows' });
-        this.append(rows);
+        body.append(rows);
 
         const rebuild = () => {
             rows.dom.innerHTML = '';
             const cameras = events.invoke('shotCameras.list') as ShotCamera[];
+            section.setInfo(cameras.length === 1 ? '1 Kamera' : `${cameras.length} Kameras`);
             const selected = events.invoke('shotCameras.selected') as ShotCamera;
 
             for (const camera of cameras) {
@@ -155,14 +160,30 @@ class CameraList extends Container {
         gizmoRow.append(new Label({ text: 'Pfade', class: 'camera-list-label' }));
         gizmoRow.append(paths);
 
+        // viewport path editing (src/tools/camera-path-tool.ts)
+        const pathRow = new Container({ class: 'camera-list-option' });
+        const pathEdit = document.createElement('span');
+        pathEdit.classList.add('camera-list-mode', 'camera-list-path-edit');
+        pathEdit.textContent = '✎ Pfad bearbeiten (X)';
+        pathEdit.title = 'Keys der gewählten Kamera im Viewport ziehen: Position und Ziel, Shift-Klick auf den Pfad fügt einen Key ein';
+        pathEdit.addEventListener('click', () => events.fire('tool.cameraPath'));
+        pathRow.dom.appendChild(pathEdit);
+        const syncPathEdit = () => pathEdit.classList.toggle('active', events.invoke('tool.active') === 'cameraPath');
+        events.on('tool.activated', syncPathEdit);
+        events.on('tool.deactivated', syncPathEdit);
+
         options.append(viewRow);
+        options.append(pathRow);
         options.append(gizmoRow);
-        this.append(options);
+        body.append(options);
 
         // depth of field (src/dof/dof.ts), registered after the ui: the
         // controls start at defaults and sync on dof.changed
 
+        const dofGroup = new CollapsibleSection({ key: 'cameras.dof', title: 'Tiefenschärfe', sub: true });
+        body.append(dofGroup);
         const dof = new Container({ class: 'camera-list-options' });
+        dofGroup.body.append(dof);
         let syncing = false;
         const dofHead = new Container({ class: 'camera-list-option' });
         const dofEnabled = new BooleanInput({ value: false });
@@ -182,7 +203,7 @@ class CameraList extends Container {
             events.fire('dof.addKey');
             events.fire('dof.selectTrack');
         });
-        dofHead.append(new Label({ text: 'Tiefenschärfe', class: 'camera-list-label' }));
+        dofHead.append(new Label({ text: 'An', class: 'camera-list-label' }));
         dofHead.append(dofEnabled);
         dofHead.dom.appendChild(dofPick);
         dofHead.dom.appendChild(dofKey);
@@ -204,7 +225,6 @@ class CameraList extends Container {
         const focusInput = slider('Fokus', 'Entfernung der Schärfeebene zur Kamera', 0.1, 50, 2, 'focus');
         const apertureInput = slider('Blende', 'Linsenradius: größer = geringere Tiefenschärfe', 0, 0.5, 3, 'aperture');
         const maxBlurInput = slider('Max. px', 'Obergrenze der Unschärfe in Pixeln', 2, 64, 0, 'maxBlur');
-        this.append(dof);
 
         events.on('dof.changed', (state: { enabled: boolean, focus: number, aperture: number, maxBlur: number }) => {
             syncing = true;
@@ -212,6 +232,7 @@ class CameraList extends Container {
             focusInput.value = state.focus;
             apertureInput.value = state.aperture;
             maxBlurInput.value = state.maxBlur;
+            dofGroup.setInfo(state.enabled ? `an · ${state.focus.toFixed(2).replace('.', ',')}` : '');
             syncing = false;
         });
         events.on('dof.picking', (value: boolean) => dofPick.classList.toggle('active', value));

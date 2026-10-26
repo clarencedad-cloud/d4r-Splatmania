@@ -12,6 +12,7 @@ import type { LayerAnimTrack } from '../layer-anim';
 import type { Scene } from '../scene';
 import type { Splat } from '../splat';
 import { Transform } from '../transform';
+import { makeFloating } from '../ui/floating-panel';
 
 // Anchor-point alignment of splat layers (Splatterline style). One layer is
 // the reference and stays put. On every other layer, anchor n pairs with
@@ -94,7 +95,7 @@ class AlignTool {
         });
         canvasContainer.append(panel);
 
-        panel.append(new Label({ text: 'AUSRICHTEN (Ankerpunkte)', class: 'align-title' }));
+        makeFloating(panel, { key: 'align', title: 'Ausrichten (Ankerpunkte)' });
         panel.append(new Label({ text: 'Aktiven Layer im Szenen-Manager wählen und auf seine Oberfläche klicken. Punkt n gehört zu Punkt n der Referenz. Ziehen = verschieben, Rechtsklick = löschen.', class: 'align-help' }));
         const layerList = new Container({ class: 'align-layers' });
         panel.append(layerList);

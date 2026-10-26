@@ -1,6 +1,7 @@
 import { BooleanInput, Container, Label, NumericInput } from '@playcanvas/pcui';
 
 import { Events } from '../events';
+import { CollapsibleSection } from './collapsible';
 
 const row = (parent: Container, text: string, title?: string) => {
     const r = new Container({ class: 'layer-anim-row' });
@@ -41,13 +42,10 @@ class CleanupPanel extends Container {
 
         super(args);
 
-        const header = new Container({ class: 'panel-header' });
-        header.append(new Label({ text: '', class: 'panel-header-icon' }));
-        header.append(new Label({ text: 'BEREINIGEN (splat-transform)', class: 'panel-header-label' }));
-        this.append(header);
-
-        const body = new Container({ class: 'layer-anim-body' });
-        this.append(body);
+        const panelSection = new CollapsibleSection({ key: 'cleanup', title: 'Bereinigen', icon: '', bodyClass: 'layer-anim-body' });
+        panelSection.setInfo('splat-transform');
+        this.append(panelSection);
+        const body = panelSection.body;
 
         const deleteRow = row(body, 'Direkt löschen', 'Aus: Betroffene Splats werden nur ausgewählt (dann Entf). An: sofort löschen (mit Undo)');
         const deleteNow = new BooleanInput({ value: false });

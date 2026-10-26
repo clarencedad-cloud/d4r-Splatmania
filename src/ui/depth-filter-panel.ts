@@ -2,8 +2,10 @@ import { BooleanInput, Container, Label, SelectInput, SliderInput } from '@playc
 
 import type { DepthFilterState } from '../depth-filter';
 import { Events } from '../events';
+import { makeFloating } from './floating-panel';
 
-// floating panel for the depth-limited selection (src/depth-filter.ts)
+// floating panel for the depth-limited selection (src/depth-filter.ts):
+// draggable and minimizable, the on/off switch stays in the title bar
 class DepthFilterPanel extends Container {
     constructor(events: Events, args = {}) {
         args = {
@@ -46,7 +48,8 @@ class DepthFilterPanel extends Container {
         });
         const minAlpha = new SliderInput({ min: 0, max: 1, sliderMin: 0, sliderMax: 1, precision: 2, step: 0.01, value: state.minAlpha });
 
-        row('Tiefenfilter', enabled, 'Rechteck, Lasso, Polygon, Pinsel und Klick erfassen nur Splats im Tiefenbereich');
+        enabled.dom.title = 'Rechteck, Lasso, Polygon, Pinsel und Klick erfassen nur Splats im Tiefenbereich';
+        const floating = makeFloating(this, { key: 'depthFilter', title: 'Tiefenfilter', extras: [enabled.dom] });
         row('Near (m)', near, 'Mindestabstand zur Kamera (View-Tiefe der Splat-Mitte)');
         row('Far (m)', far, 'Maximalabstand zur Kamera');
         row('Außerhalb', display, 'Wie Splats außerhalb des Bereichs angezeigt werden');
@@ -64,6 +67,8 @@ class DepthFilterPanel extends Container {
             minAlpha.value = s.minAlpha;
             syncing = false;
             this.class[s.enabled ? 'add' : 'remove']('active');
+            const fmt = (v: number) => String(Math.round(v * 100) / 100).replace('.', ',');
+            floating.setInfo(s.enabled ? `${fmt(s.near)}–${fmt(s.far)} m` : '');
         };
 
         enabled.on('change', (value: boolean) => !syncing && set({ enabled: value }));

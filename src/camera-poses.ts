@@ -149,6 +149,34 @@ class CameraAnimTrack implements AnimTrack {
         this.events.fire('track.keysCleared');
     }
 
+    // move the position and/or target of the key at frame (viewport path
+    // editing, src/tools/camera-path-tool.ts); the fov stays
+    setKeyPose(frame: number, position: Vec3 | null, target: Vec3 | null): boolean {
+        const pose = this.poses.find(p => p.frame === frame);
+        if (!pose) return false;
+        if (position) pose.position.copy(position);
+        if (target) pose.target.copy(target);
+        this.rebuildSpline();
+        this.events.fire('track.keyUpdated', frame);
+        return true;
+    }
+
+    // insert a key with an explicit pose (e.g. the interpolated one, so the
+    // path keeps its shape)
+    insertKey(frame: number, pose: PoseValue): boolean {
+        if (this.poses.some(p => p.frame === frame)) return false;
+        this.poses.push({
+            name: `camera_${this.poses.length}`,
+            frame,
+            position: pose.position.clone(),
+            target: pose.target.clone(),
+            fov: pose.fov
+        });
+        this.rebuildSpline();
+        this.events.fire('track.keyAdded', frame);
+        return true;
+    }
+
     snapshot(): Pose[] {
         return this.poses.map(p => ({
             name: p.name,

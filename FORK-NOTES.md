@@ -432,6 +432,101 @@ Jetzt gilt:
 - Umsetzung: `track-manager.ts` (Merkliste, `track.pending`), Label in `ui/timeline-panel.ts`.
 - Verifiziert: Splat-Deckkraft, Fokus und Schnitt geändert, dann ein Klick auf ◆ ergibt Keys auf allen drei Spuren bei Frame 10. Undo nimmt alle drei zurück, Redo stellt sie wieder her. Ein Frame-Wechsel leert die Liste.
 
+## UI-Überarbeitung: Szenen-Manager nach Relevanz, einklappbare Sektionen, schwebende Panels
+
+### Szenen-Manager (`src/ui/scene-panel.ts`)
+Neue Reihenfolge von oben nach unten:
+1. Splats
+2. **Transformation**
+3. Kameras
+4. Layer-Animation
+5. Transitions
+6. Punktwolke
+7. Bereinigen
+8. Farbe
+
+Begründung: Layer wählen und platzieren ist der häufigste Arbeitsschritt, deshalb steht die Transformation direkt unter der Layer-Liste und nicht mehr ganz unten. Kameras kommen danach, weil jede Animation eine Kamera braucht. Danach folgen die Werkzeuge pro Layer: Animation, Transitions, dann die globale Darstellung. Bereinigen und Farbe sind seltene, einmalige Arbeitsgänge und stehen am Ende.
+
+- **Einheitliche Sektionen** (`src/ui/collapsible.ts`, `CollapsibleSection`): Kopfzeile mit Pfeil, Icon, Titel, Kurzinfo rechts und optionalen Buttons (z. B. + / ⧉ bei Kameras). Ein Klick auf die ganze Kopfzeile klappt, Enter und Leertaste ebenfalls. Der Zustand wird pro Sektion in `localStorage` gespeichert (`splatmania.ui.sections`, mit try/catch).
+- **Standard:** Splats, Transformation und Kameras sind offen, der Rest ist zu.
+- **Kurzinfos:** „1 Layer“, Name des gewählten Layers, „2 Kameras“, „3 Keys“, „Dissolve 0–30“ (gewählte Transition) bzw. „2×“, „Splats/Punktwolke“, „splat-transform“. Die Tiefenschärfe-Untergruppe zeigt „an · Fokus“.
+- **Untergruppen** (`advancedGroup` bzw. `CollapsibleSection` mit `sub: true`), standardmäßig zu:
+  - Transitions → **Erweitert**: Kante, Glühkante, Streuung, Wirbel, Glühfarbe, Seed / Punkte zuerst. Die Gruppe steht unter den Dissolve-Einstellungen.
+  - Punktwolke → **Erweitert**: Größe in Pixel/Welt, Glühen.
+  - Kameras → **Tiefenschärfe**: An, Pipette, Key, Fokus, Blende, Max. px.
+- **Look:**
+  - Zwischen den Sektionen dünne Trennlinien (#3a3150), unter einer offenen Kopfzeile eine magentafarbene Linie (rgba(194,14,126,.35)).
+  - Untergruppen sind eingerückt und haben eine Magenta-Kante links.
+  - Hover-Fläche #221d30.
+  - Die Panelbreite bleibt bei 320 px, wird es zu hoch, scrollt es wie bisher.
+- Die eigene Klapp-Logik der Farbe-Sektion wurde durch `CollapsibleSection` ersetzt.
+- Layer-Animation und Transitions haben neue Icons (Figur bzw. Halbkreis), weil die alten Dreiecke wie Klapppfeile aussahen.
+
+### Schwebende Panels (`src/ui/floating-panel.ts`, `makeFloating`)
+Das Tiefenfilter-, Schnitt-, Qualitäts- und Ausrichten-Panel haben jetzt eine echte Titelzeile:
+- **Ziehen** an der Titelzeile verschiebt das Panel (Griff-Cursor). Es bleibt immer vollständig im Viewport, auch nach einem Fenster-Resize. Gespeichert wird die gewünschte Position: Wird das Fenster wieder größer, kehrt das Panel dorthin zurück.
+- **▾/▸** minimiert das Panel auf die Titelzeile.
+- **Doppelklick** auf die Titelzeile setzt es auf die Standardposition zurück.
+- Position und Zustand werden pro Panel in `localStorage` gespeichert (`splatmania.ui.floating`).
+- Beim Tiefenfilter sitzt der Ein/Aus-Schalter in der Titelzeile und bleibt auch minimiert sichtbar. Ist der Filter aktiv, zeigt die Titelzeile außerdem „0–3 m“.
+- Hinweis zum Testen: Bei ausgeblendetem Preview-Pane feuern weder `ResizeObserver` noch rAF. Deshalb wird die gespeicherte Position sofort gesetzt, und das Clamping hängt zusätzlich am `resize`-Event des Fensters.
+
+### Verifiziert (Klicktest, 1280×800, `test-data/house.ply`)
+- Tiefenfilter an der Titelzeile verschoben, minimiert, neu geladen: Position (777/463) und der minimierte Zustand bleiben.
+- Bei 880×580 rückt das Panel an den rechten Rand (578–880), statt herauszuragen. Doppelklick setzt es zurück, die Kurzinfo zeigt „0–3 m“.
+- Punktwolke auf- und Kameras zugeklappt, neu geladen: Der Zustand bleibt. Die Reihenfolge stimmt, Transformation steht direkt unter Splats.
+- Das Schnitt-Panel hat die Titelzeile „Schnitt“.
+- Screenshots: `test-data/out/ui_before.jpg`, `ui_after.jpg`, `ui_after_transitions.jpg`.
+- `tsc --noEmit` und `eslint src` sind sauber.
+
+## Neu: Kamerapfad im Viewport bearbeiten (Werkzeug `cameraPath`, Shortcut X)
+
+Starten mit **X** oder über den Knopf „✎ Pfad bearbeiten (X)“ in der Kameras-Sektion. Solange das Werkzeug aktiv ist, wirken Klicks im Viewport auf die Kamera-Keys statt auf die Splat-Selektion. Esc oder ein anderes Werkzeug beendet es.
+
+### Bedienung
+- **Marker:** Jeder Key der gewählten Kamera bekommt einen Ring in der Kamerafarbe mit Frame-Nummer. Sein **Ziel** ist eine kleinere Raute, verbunden durch eine gestrichelte Linie.
+  - Hover und Auswahl heben den Marker magenta hervor (#e6128a / #c20e7e).
+  - Keys anderer Kameras sind gedimmt, ein Klick darauf wählt diese Kamera.
+- **Klick** auf einen Marker wählt den Key: Die Timeline springt auf dessen Frame, die Ansicht bleibt, und das TranslateGizmo hängt daran.
+- **Ziehen:**
+  - Direkt am Marker verschiebt man in der Bildebene, in der Tiefe des Punkts.
+  - Am Gizmo verschiebt man entlang der Achsen bzw. Ebenen.
+  - **Alt** verschiebt Position und Ziel gemeinsam. Die FOV bleibt unverändert.
+  - Der Spline-Pfad folgt live.
+- **Shift-Klick auf die Pfad-Linie** (Toleranz 10 px) fügt an dieser Stelle einen Key ein. Frame ist der nächste ganze Frame auf der Kurve, die Pose ist die interpolierte, so bleibt der Pfad gleich.
+- **Entf** löscht den gewählten Key, **F** fokussiert die Ansicht auf ihn (über `getFocus`).
+- **Undo:** Jeder Drag (Marker oder Gizmo), jedes Einfügen und jedes Löschen ist genau ein Undo-Schritt (`AnimTrackEditOp`, Snapshot vor und nach).
+
+### Verträglichkeit
+- Ist beim Start „Durchschauen“ oder „Schnitt“ aktiv, stellt das Werkzeug den Viewport auf **Frei** und zeigt das in der Werkzeugleiste an. Sonst würde die eigene Ansicht beim Ziehen bzw. beim Sprung auf den Key-Frame mitfahren.
+- Die Marker sind HTML über dem Canvas. Tiefenfilter und Schnitt blenden sie deshalb nicht aus, und im Export tauchen sie nie auf. Das Gizmo läuft im Gizmo-Layer, ebenfalls nicht im Export.
+- Pfad-Linien werden beim Start eingeschaltet, falls sie aus waren.
+- Am `.ssproj`-Format ändert sich nichts: Es werden nur die vorhandenen Posen geändert.
+- `Entf` löscht im aktiven Werkzeug keine Gaussians (Guard in `editor.ts` wie bei Messen und Orient).
+
+### Umsetzung
+- `src/tools/camera-path-tool.ts`: Werkzeug mit Overlay (`#camera-path-overlay`, SVG-Linien plus Marker-Divs), Gizmo, Shift-Insert, Delete und Fokus.
+  - Während eines Marker-Drags werden die Marker nicht neu aufgebaut, sonst gingen Element und Pointer-Capture verloren. Die Auswahl schaltet nur eine Klasse um.
+- `CameraAnimTrack.setKeyPose()` und `insertKey()` in `src/camera-poses.ts`.
+- Styles in `src/ui/scss/camera-path.scss`.
+  - Die Raute ist ein Quadrat mit `rotate(45deg)` im selben `transform`. Die CSS-Eigenschaft `rotate` würde vor `transform` greifen und die Verschiebung mitdrehen.
+- Shortcut `tool.cameraPath` auf X in `shortcut-manager.ts`.
+
+### Verifiziert (Klicktest, `test-data/house.ply`, Kamera mit Keys 0/60/120 um das Haus)
+- Mittleren Key per Maus gezogen: Position (0, 3, 8) wird zu (0, 1,63, 9,34), die Pfad-Mitte bei Frame 30 folgt. Undo stellt (0, 3, 8) wieder her, Redo die neue Position.
+- Gizmo-Y-Pfeil gezogen: nur Y ändert sich (1,63 → 3,66), die Editor-Kamera bleibt stehen.
+- Ziel von Key 120 gezogen: nur das Ziel ändert sich.
+- Shift-Klick auf den Pfad: Key bei Frame 31. Entf löscht ihn, Undo bringt ihn zurück. Die Splat-Anzahl bleibt bei 19.959.
+- F fokussiert den gewählten Key.
+- Zweite Kamera: Die Keys der ersten werden gedimmt (3), ein Klick wählt Kamera 1 wieder.
+- Start im Durchschauen-Modus: Das Werkzeug schaltet auf Frei und zeigt den Hinweis.
+- MP4-Export mit Kamera 1 (`shot: { mode: 'camera' }`, `test-data/out/camera_path_edit.mp4`, 122 Frames): Der hochgezogene Key bei Frame 60 schaut von oben aufs Dach, im Bild sind keine Marker (Kontaktabzug `camera_path_sheet.png`).
+- Screenshots: `test-data/out/path_before.jpg`, `path_after.jpg`.
+- Hinweis: Im Viewport-Modus „Frei“ fährt der Export die Editor-Ansicht, nicht die Kamera. Dafür im Export-Dialog die Kamera bzw. den Schnitt wählen.
+
+### Idee (nicht gebaut)
+- Bild-im-Bild-Vorschau (z. B. 240×135) der Sicht durch die Kamera am gezogenen Key. Bräuchte einen zweiten Render-Target-Pass für die Splats und ist deshalb ein größerer Umbau.
+
 ## Nachbesserungen nach dem Klicktest der Hauptsession
 
 1. **Keine Startfehler „function not found 'selection'“ mehr**: Track-Manager, Layer-Animator, Layer-Animator-Panel und Zeitleisten-Zeilen fragen die Auswahl erst ab, wenn sie registriert ist (`events.functions.has('selection')`). Geprüft: Nach frischem Laden kamen keine neuen Meldungen hinzu.

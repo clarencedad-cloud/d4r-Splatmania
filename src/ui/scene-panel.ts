@@ -3,6 +3,7 @@ import { Container, Label } from '@playcanvas/pcui';
 import { Events } from '../events';
 import { CameraList } from './camera-list';
 import { CleanupPanel } from './cleanup-panel';
+import { CollapsibleSection } from './collapsible';
 import { ColorPanel } from './color-panel';
 import { LayerAnimPanel } from './layer-anim-panel';
 import { i18n } from './localization';
@@ -99,30 +100,30 @@ class ScenePanel extends Container {
         });
         splatListContainer.append(splatList);
 
-        const transformHeader = new Container({
-            class: 'panel-header'
-        });
+        // sections by relevance: layers, their transform, cameras, then the
+        // animation and effect tools; each one collapsible (ui/collapsible.ts)
 
-        const transformIcon = new Label({
-            text: '\uE111',
-            class: 'panel-header-icon'
-        });
+        const splatsSection = new CollapsibleSection({ key: 'splats', title: 'Splats', icon: '\uE344', open: true });
+        splatsSection.body.append(splatListContainer);
 
-        const transformLabel = new Label({
-            class: 'panel-header-label'
-        });
-        i18n.bindText(transformLabel, 'panel.scene.transform');
+        const transformSection = new CollapsibleSection({ key: 'transform', title: i18n.t('panel.scene.transform'), icon: '\uE111', open: true });
+        transformSection.body.append(new Transform(events));
 
-        transformHeader.append(transformIcon);
-        transformHeader.append(transformLabel);
+        // the layers live in the scene, the transform acts on the selected one
+        const syncInfo = () => {
+            const layers = events.functions.has('layerAnim.layers') ? events.invoke('layerAnim.layers').length : 0;
+            splatsSection.setInfo(layers ? `${layers} Layer` : '');
+            const splat = events.functions.has('selection') ? events.invoke('selection') : null;
+            transformSection.setInfo(splat?.name ?? '');
+        };
+        ['scene.elementAdded', 'scene.elementRemoved', 'selection.changed', 'splat.name'].forEach(name => events.on(name, syncInfo));
 
         this.append(sceneHeader);
-        this.append(splatListContainer);
+        this.append(splatsSection);
+        this.append(transformSection);
         this.append(new CameraList(events));
         this.append(new LayerAnimPanel(events));
         this.append(new CleanupPanel(events));
-        this.append(transformHeader);
-        this.append(new Transform(events));
         this.append(new ColorPanel(events));
     }
 }
