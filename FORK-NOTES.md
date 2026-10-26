@@ -673,3 +673,20 @@ Hinzufügen, Duplizieren, Löschen und Umbenennen von Kameras ist jetzt je ein U
 - Die Kamera folgt beim Export der Kamera-Animationsspur.
 
 **Fazit:** Layer, Keyframe-Timeline und MP4-Export waren als Grundgerüst vorhanden. Mehrere Kameraspuren mit Schnitt, Layer-Animation und ein Punktwolken-Modus sind inzwischen ergänzt (siehe oben). Offline-Betrieb und Installation als App laufen über die PWA (siehe „Offline und als App installieren“), eine Desktop-Hülle wie Electron oder Tauri ist dafür nicht nötig.
+
+## Offene Punkte (Stand 26.10.2026)
+
+Erledigt in dieser Runde: Offline/PWA, Undo der Kameraliste, Überblendung am Schnitt, „Veröffentlichen“ nur auf playcanvas.com.
+
+Nach Wichtigkeit für den Offline-Film-Editor:
+1. **Echter Layer-Fade**: Die Deckkraft wirkt pro Splat, dichte Layer verblassen erst spät. Nötig wäre ein eigenes Render-Target pro Layer, das dann eingeblendet wird.
+2. **Überblendung im Viewport/Vorschau** (heute nur im Export) und weitere Blenden wie Wischblende oder Abblende auf Schwarz.
+3. **Viewer-Export mit Schnitt**: Der HTML-Viewer bekommt alle Kameras als einzelne Spuren, aber nicht die geschnittene Abfolge.
+4. **Layer-Verwaltung**: Gruppen, ganze Layer sperren. Aufteilen gibt es schon unter Bearbeiten → Trennen.
+5. **Keys vs. manuelle Änderungen**: Transform- und Kamera-Spuren überschreiben beim Scrubben ungekeyte Änderungen. Hier fehlt ein Hinweis, oder Auto-Key sollte auch für die Kamera gelten.
+6. **Qualität**: Der Tiefenfilter wirkt bei „Unter Schwelle selektieren“ nicht mit. Nach dem Löschen sind die Scores veraltet.
+7. **Transitions**: Picking und Auswahl sehen die Endposition der Splats. Im stochastischen Modus gibt es kein Glühen.
+8. **Bereinigen**: Decimate ist nicht direkt rückgängig machbar, Abbrechen stoppt den laufenden Schritt nicht.
+9. **Bild-im-Bild-Vorschau** der Kamera beim Ziehen eines Keys (zweiter Render-Pass).
+10. **Nicht per Klick getestet**: Schnitt-Werkzeug (Boden-Pipette, Achse „Layer“, nur aktiver Layer, harte Kante), „Alle Kameras“-Export über den Ordner-Dialog und die PWA-Installation über das Browser-Symbol. Der Service Worker und der Offline-Start sind geprüft.
+11. Kleinkram: Das Hilfe-Menü verlinkt PlayCanvas-Tutorials, Discord und Forum, nur als Links und ohne den Namen im Text. `package.json` heißt noch `supersplat`, und Rollup meldet beim Build „Building SuperSplat“. Beides ist nicht in der Oberfläche sichtbar.
