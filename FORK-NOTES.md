@@ -602,7 +602,7 @@ Hinzufügen, Duplizieren, Löschen und Umbenennen von Kameras ist jetzt je ein U
 - Laufzeitprüfung im Browser (`performance.getEntriesByType('resource')` und Netzwerkliste): Nach dem Laden mit `house.ply` gab es nur Anfragen an `localhost:3000`.
 - Was online bleibt, aber nur bei ausdrücklicher Aktion:
   - Links im Hilfe- und About-Menü öffnen ein neues Fenster.
-  - **Veröffentlichen** (PlayCanvas-Cloud) fragt `/api/id` am eigenen Origin ab und meldet lokal „bitte anmelden“.
+  - **Veröffentlichen** (PlayCanvas-Cloud) braucht das Login von playcanvas.com. Der Menüpunkt samt Trenner ist deshalb nur noch auf `*.playcanvas.com` sichtbar (`canPublish` in `ui/menu.ts`). Lokal und in der installierten App ist er ausgeblendet, geprüft im Datei-Menü.
   - Der exportierte HTML-Viewer lädt im WebXR-Modus Controller-Profile von jsdelivr. Das betrifft nur die exportierte Datei und dort nur XR.
 
 ### Service Worker (`src/sw.js`, Build-Plugin `service-worker.mjs`)

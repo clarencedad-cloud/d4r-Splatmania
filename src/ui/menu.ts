@@ -63,6 +63,10 @@ const refreshRecentMenu = async <T extends { name: string }>(panel: MenuPanel, s
     }
 };
 
+// publishing uploads to the PlayCanvas cloud and needs its login, which only
+// exists on playcanvas.com - a local or installed editor hides the entry
+const canPublish = () => /(?:^|\.)playcanvas\.com$/.test(location.hostname);
+
 class Menu extends Container {
     constructor(events: Events, args = {}) {
         args = {
@@ -268,9 +272,11 @@ class Menu extends Container {
             onSelect: () => events.fire('scene.reexport')
         }, {
             // separator
+            isVisible: canPublish
         }, {
             text: () => i18n.t('menu.file.publish', { ellipsis: true }),
             icon: createSvg(scenePublish),
+            isVisible: canPublish,
             isEnabled: () => !events.invoke('scene.empty'),
             onSelect: async () => await events.invoke('show.publishSettingsDialog')
         }]);
