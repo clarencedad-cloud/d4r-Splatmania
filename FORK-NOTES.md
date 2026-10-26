@@ -111,7 +111,7 @@ Ebenfalls geprüft:
 Unterwegs gefunden und behoben: Der Render-Loop summiert `1/fps` auf, Frame 90 kommt deshalb als 89,99999 an. `CutTrack.cameraAt` rastet jetzt auf den Frame ein.
 
 ### Grenzen / offen
-- Kamera hinzufügen, löschen, umbenennen und duplizieren ist **nicht** rückgängig machbar. Rückgängig machbar sind nur Key- und Schnitt-Edits.
+- ~~Kamera hinzufügen, löschen, umbenennen und duplizieren ist nicht rückgängig machbar.~~ Erledigt, siehe „Undo für die Kameraliste“.
 - Schnitte sind nur harte Schnitte, es gibt keine Überblendungen.
 - Im Modus Durchschauen springt der Viewport beim nächsten Scrubben zurück auf die Spur, wenn du ihn frei bewegst und keinen Key setzt. Das war im Original auch so.
 - Viewer-Export und Publish nehmen die Spur der **gewählten** Kamera (`camera.poses`), nicht den Schnitt.
@@ -582,6 +582,18 @@ Die Dateien liegen in `test-data/out/export-*`.
 - Die CLI-Standardwerte sind für echte, metrische Scans gedacht. Bei kleinen oder synthetischen Szenen müssen Voxelgröße und Schwellen angepasst werden; das Panel zeigt dazu die Log-Meldung.
 - Decimate ist nicht direkt rückgängig machbar. Gesichert ist es über das ausgeblendete Original.
 - Abbrechen stoppt keinen laufenden splat-transform-Schritt, es verwirft nur das Ergebnis.
+
+## Undo für die Kameraliste
+
+Hinzufügen, Duplizieren, Löschen und Umbenennen von Kameras ist jetzt je ein Undo-Schritt (Strg+Z / Strg+Umschalt+Z).
+- Umsetzung in `src/camera-poses.ts`: Ein `rig`-Objekt mit `snapshot`/`restore` hält die Kameraliste (IDs, Namen, Farben), die Auswahl und die Schnittspur. Es läuft über die vorhandene `AnimTrackEditOp`. Die Keys selbst gehören nicht zum Snapshot, sie haben ihr eigenes Undo.
+- Gelöschte Kameras bleiben in einem Pool (`pool`, ID → Kamera) und werden nicht mehr zerstört. Undo holt **dasselbe Objekt** zurück. Key-Edits, die schon im Verlauf stehen, zeigen deshalb weiter auf die richtige Spur. Erst `scene.clear` und das Laden eines Projekts räumen den Pool, dabei wird der Verlauf ohnehin geleert.
+- Löschen entfernt auch die Schnitt-Segmente der Kamera, Undo stellt sie wieder her.
+- Umbenennen auf denselben Namen erzeugt keinen Schritt.
+- Verifiziert (`house.ply`):
+  - Kette Hinzufügen → Schnitt 30–60 → Duplizieren → Umbenennen in „Totale“ → Löschen, danach Schritt für Schritt zurück und wieder vor. Liste, Auswahl und Schnitt-Segmente stimmen in jedem Schritt.
+  - Kamera mit 2 Keys gelöscht, Undo: dieselbe Kamera mit 2 Keys. Zwei weitere Undos nehmen die Keys zurück.
+  - Per Klick auf „Kamera hinzufügen“, dann Strg+Z und Strg+Umschalt+Z über die Tastatur.
 
 ## Offline und als App installieren (PWA)
 

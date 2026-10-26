@@ -2,6 +2,7 @@ import { Vec3 } from 'playcanvas';
 
 import { CubicSpline } from './anim/spline';
 import { AnimTrack } from './anim-track';
+import { AnimTrackEditOp } from './edit-ops';
 import { Events } from './events';
 
 type Pose = {
@@ -401,6 +402,10 @@ const PALETTE: [number, number, number][] = [
  */
 const registerCameraPosesEvents = (events: Events) => {
     const cameras: ShotCamera[] = [];
+    // every camera created since the last clear, removed ones included: undo
+    // brings a removed camera back as the same object, so key edits in the
+    // history still point at its track
+    const pool = new Map<number, ShotCamera>();
     let nextId = 1;
     let selectedId = 0;
     // free by default: looking through a camera without keys would jump the
@@ -467,12 +472,51 @@ const registerCameraPosesEvents = (events: Events) => {
         };
         nextId = Math.max(nextId, camera.id + 1);
         cameras.push(camera);
+        pool.set(camera.id, camera);
         return camera;
     };
 
     const removeAll = () => {
-        cameras.forEach(c => c.track.destroy());
+        pool.forEach(c => c.track.destroy());
+        pool.clear();
         cameras.length = 0;
+    };
+
+    // undo of list edits (add, duplicate, remove, rename): the snapshot holds
+    // which cameras exist, their names and colors, the selection and the cut;
+    // the keys stay on the tracks and have their own undo
+    type RigSnapshot = {
+        cameras: { id: number, name: string, color: [number, number, number] }[],
+        selectedId: number,
+        cut: CutSegment[]
+    };
+
+    const rig = {
+        snapshot: (): RigSnapshot => ({
+            cameras: cameras.map(c => ({ id: c.id, name: c.name, color: c.color })),
+            selectedId,
+            cut: cut.snapshot()
+        }),
+        restore: (snapshot: unknown) => {
+            const snap = snapshot as RigSnapshot;
+            cameras.length = 0;
+            snap.cameras.forEach((entry) => {
+                const camera = pool.get(entry.id);
+                if (!camera) return;
+                camera.name = entry.name;
+                camera.color = entry.color;
+                cameras.push(camera);
+            });
+            selectedId = snap.selectedId;
+            cut.restore(snap.cut);
+            changed();
+        }
+    };
+
+    const recordEdit = (name: string, edit: () => void) => {
+        const before = rig.snapshot();
+        edit();
+        events.fire('edit.add', new AnimTrackEditOp(name, rig, before, rig.snapshot()), true);
     };
 
     events.on('timeline.time', (time: number) => {
@@ -519,35 +563,43 @@ const registerCameraPosesEvents = (events: Events) => {
     events.function('shotCameras.followed', (frame?: number) => followedCamera(frame ?? currentFrame));
 
     events.on('shotCameras.add', () => {
-        selectedId = create().id;
-        changed();
+        recordEdit('shotCameras.add', () => {
+            selectedId = create().id;
+            changed();
+        });
     });
 
     events.on('shotCameras.duplicate', (id?: number) => {
         const source = byId(id ?? selectedId);
         if (!source) return;
-        const copy = create(`${source.name} Kopie`);
-        copy.track.restore(source.track.snapshot());
-        selectedId = copy.id;
-        changed();
+        recordEdit('shotCameras.duplicate', () => {
+            const copy = create(`${source.name} Kopie`);
+            copy.track.restore(source.track.snapshot());
+            selectedId = copy.id;
+            changed();
+        });
     });
 
     events.on('shotCameras.remove', (id?: number) => {
         const camera = byId(id ?? selectedId);
         // always keep one camera
         if (!camera || cameras.length <= 1) return;
-        camera.track.destroy();
-        cameras.splice(cameras.indexOf(camera), 1);
-        cut.removeCamera(camera.id);
-        if (selectedId === camera.id) selectedId = cameras[0].id;
-        changed();
+        recordEdit('shotCameras.remove', () => {
+            // the track stays alive in the pool for undo
+            cameras.splice(cameras.indexOf(camera), 1);
+            cut.removeCamera(camera.id);
+            if (selectedId === camera.id) selectedId = cameras[0].id;
+            changed();
+        });
     });
 
     events.on('shotCameras.rename', (id: number, name: string) => {
         const camera = byId(id);
-        if (!camera || !name) return;
-        camera.name = name;
-        events.fire('shotCameras.changed', cameras);
+        if (!camera || !name || name === camera.name) return;
+        recordEdit('shotCameras.rename', () => {
+            camera.name = name;
+            events.fire('shotCameras.changed', cameras);
+        });
     });
 
     events.on('shotCameras.select', (id: number) => {
