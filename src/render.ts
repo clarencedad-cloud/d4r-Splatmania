@@ -2,6 +2,7 @@ import { WebPCodec } from '@playcanvas/splat-transform';
 import { BufferTarget, EncodedPacket, EncodedVideoPacketSource, MkvOutputFormat, MovOutputFormat, Mp4OutputFormat, Output, StreamTarget, WebMOutputFormat } from 'mediabunny';
 import { Color, path, Quat, Vec3 } from 'playcanvas';
 
+import type { CutFade } from './camera-poses';
 import { ElementType } from './element';
 import { EquirectRenderer } from './equirect-renderer';
 import { Events } from './events';
@@ -463,6 +464,10 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 // cpu-side buffer to read pixels into
                 const data = new Uint8Array(width * height * 4);
 
+                // cut cross-fades: the outgoing camera's frame, rendered
+                // first and mixed under the incoming one
+                const fadeData = shot?.mode === 'cut' ? new Uint8Array(width * height * 4) : null;
+
                 // remember last camera position so we can skip sorting if the camera didn't move
                 const last_pos = new Vec3(0, 0, 0);
                 const last_forward = new Vec3(1, 0, 0);
@@ -547,16 +552,40 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     videoFrame.close();
                 };
 
-                // capture the current video frame
-                const captureFrame = async (frameTime: number) => {
+                // read the rendered frame into buffer (immediate: see render.offscreen)
+                const readFrame = async (buffer: Uint8Array) => {
                     const { mainTarget, workTarget } = scene.camera;
 
                     scene.dataProcessor.copyRt(mainTarget, workTarget, scene.overdrawRender);
 
-                    // read the rendered frame (immediate: see render.offscreen)
-                    await workTarget.colorBuffer.read(0, 0, width, height, { renderTarget: workTarget, data, immediate: true });
+                    await workTarget.colorBuffer.read(0, 0, width, height, { renderTarget: workTarget, data: buffer, immediate: true });
+                };
 
+                // capture the current video frame
+                const captureFrame = async (frameTime: number) => {
+                    await readFrame(data);
                     await encodeFrame(frameTime);
+                };
+
+                // render the outgoing camera of a cut cross-fade into fadeData;
+                // returns the incoming camera's weight, or null outside a fade
+                const renderFadeFrom = async (animTime: number): Promise<number | null> => {
+                    const fade = fadeData && events.invoke('cut.fadeAt', animTime) as CutFade | null;
+                    if (!fade) return null;
+                    events.invoke('camera.setRenderOverride', { mode: 'camera', cameraId: fade.from });
+                    await prepareFrame(animTime);
+                    scene.lockedRender = true;
+                    await postRender();
+                    await readFrame(fadeData);
+                    events.invoke('camera.setRenderOverride', { mode: 'cut' });
+                    return fade.alpha;
+                };
+
+                const mixFade = (alpha: number) => {
+                    const a = Math.round(alpha * 256);
+                    for (let i = 0; i < data.length; i++) {
+                        data[i] = (fadeData[i] * (256 - a) + data[i] * a) >> 8;
+                    }
                 };
 
                 const animFrameRate = events.invoke('timeline.frameRate');
@@ -639,8 +668,11 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
                         await capture360(frameTime);
                     } else {
+                        const animTime = startFrame + frameTime * animFrameRate;
+                        const fadeAlpha = await renderFadeFrom(animTime);
+
                         // prepare the frame (loads PLY if needed, updates camera, sorts)
-                        await prepareFrame(startFrame + frameTime * animFrameRate);
+                        await prepareFrame(animTime);
 
                         // render a frame
                         scene.lockedRender = true;
@@ -649,7 +681,13 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                         await postRender();
 
                         // wait for capture
-                        await captureFrame(frameTime);
+                        if (fadeAlpha === null) {
+                            await captureFrame(frameTime);
+                        } else {
+                            await readFrame(data);
+                            mixFade(fadeAlpha);
+                            await encodeFrame(frameTime);
+                        }
 
                         events.fire('progressUpdate', {
                             text: i18n.t('panel.render.rendering', { ellipsis: true }),

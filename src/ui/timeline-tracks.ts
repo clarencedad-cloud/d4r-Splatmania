@@ -1,6 +1,6 @@
 import { Container } from '@playcanvas/pcui';
 
-import type { CutSegment, ShotCamera } from '../camera-poses';
+import type { CutSegment, CutTrack, ShotCamera } from '../camera-poses';
 import { Events } from '../events';
 import { TRANSITION_LABELS, type LayerState } from '../layer-anim';
 import type { Splat } from '../splat';
@@ -136,6 +136,7 @@ class TimelineTracks extends Container {
             cutRow.appendChild(cutLabel);
 
             const segments = events.invoke('cut.segments') as CutSegment[] ?? [];
+            const cutTrack = events.invoke('cut.track') as CutTrack;
             for (const segment of segments) {
                 const camera = events.invoke('shotCameras.byId', segment.cameraId) as ShotCamera;
                 if (!camera) continue;
@@ -149,6 +150,14 @@ class TimelineTracks extends Container {
                 block.style.borderColor = rgb(camera.color);
                 block.textContent = camera.name;
                 block.title = `Frame ${segment.start}–${segment.end - 1} → ${camera.name}`;
+                // cross-fade: the previous camera's colour fading out
+                const from = segment.fade && cutTrack.cutFrom(segment);
+                const fromCamera = from ? events.invoke('shotCameras.byId', from) as ShotCamera : null;
+                if (fromCamera) {
+                    const w = offsetFromFrame(segment.start + segment.fade) - x0;
+                    block.style.backgroundImage = `linear-gradient(90deg, ${rgb(fromCamera.color, 0.8)} 0, transparent ${w}px)`;
+                    block.title += ` · Überblendung von ${fromCamera.name}, ${segment.fade} Frames`;
+                }
                 cutRow.appendChild(block);
             }
 

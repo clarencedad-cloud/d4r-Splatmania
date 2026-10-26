@@ -211,6 +211,11 @@ const registerTrackManagerEvents = (events: Events) => {
         cutEdit('cutRemove', cut => cut.removeAt(frame));
     });
 
+    // cross-fade length (frames) of the cut the segment at frame starts with
+    events.on('cut.setFade', (frame: number, fade: number) => {
+        cutEdit('cutFade', cut => cut.setFade(frame, fade));
+    });
+
     // Copy key in active track
     events.on('track.copyKey', (fromFrame: number, toFrame: number) => {
         trackEdit('copyKey', track => track.copyKey(fromFrame, toFrame));

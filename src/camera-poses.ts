@@ -275,7 +275,16 @@ class CameraAnimTrack implements AnimTrack {
 type CutSegment = {
     start: number,
     end: number,
-    cameraId: number
+    cameraId: number,
+    // cross-fade from the previous camera over the first `fade` frames
+    fade?: number
+};
+
+// a cross-fade in progress: mix `alpha` of camera `to` over camera `from`
+type CutFade = {
+    from: number,
+    to: number,
+    alpha: number
 };
 
 /**
@@ -294,15 +303,17 @@ class CutTrack {
     set(start: number, end: number, cameraId: number): boolean {
         if (end <= start) return false;
         const result: CutSegment[] = [];
+        // a segment re-placed on an existing cut keeps that cut's fade
+        const fade = this.segments.find(s => s.start === start)?.fade;
         for (const s of this.segments) {
             if (s.end <= start || s.start >= end) {
                 result.push(s);
                 continue;
             }
-            if (s.start < start) result.push({ start: s.start, end: start, cameraId: s.cameraId });
+            if (s.start < start) result.push({ start: s.start, end: start, cameraId: s.cameraId, fade: s.fade });
             if (s.end > end) result.push({ start: end, end: s.end, cameraId: s.cameraId });
         }
-        result.push({ start, end, cameraId });
+        result.push({ start, end, cameraId, fade });
         this.segments = this.normalize(result);
         this.changed();
         return true;
@@ -320,6 +331,35 @@ class CutTrack {
         const before = this.segments.length;
         this.segments = this.segments.filter(s => s.cameraId !== cameraId);
         if (this.segments.length !== before) this.changed();
+    }
+
+    // the camera shown just before this segment, if it differs: only then is
+    // the segment start a cut that can fade
+    cutFrom(segment: CutSegment): number | null {
+        if (segment.start <= 0) return null;
+        const from = this.cameraAt(segment.start - 1);
+        return from !== null && from !== segment.cameraId ? from : null;
+    }
+
+    setFade(frame: number, fade: number): boolean {
+        const segment = this.segmentAt(frame);
+        if (!segment || this.cutFrom(segment) === null) return false;
+        const value = Math.max(0, Math.min(Math.round(fade), segment.end - segment.start));
+        if ((segment.fade ?? 0) === value) return false;
+        segment.fade = value || undefined;
+        this.changed();
+        return true;
+    }
+
+    // linear cross-fade at time: the first fade frame already shows a little
+    // of the new camera, the frame after the fade shows only the new one
+    fadeAt(time: number): CutFade | null {
+        const segment = this.segmentAt(Math.floor(time + 1e-4));
+        if (!segment?.fade) return null;
+        const from = this.cutFrom(segment);
+        if (from === null) return null;
+        const alpha = (time - segment.start + 1) / (segment.fade + 1);
+        return alpha < 1 ? { from, to: segment.cameraId, alpha } : null;
     }
 
     segmentAt(frame: number): CutSegment | null {
@@ -653,6 +693,7 @@ const registerCameraPosesEvents = (events: Events) => {
     events.function('cut.track', () => cut);
     events.function('cut.segments', () => cut.segments);
     events.function('cut.cameraAt', (frame: number) => cut.cameraAt(frame));
+    events.function('cut.fadeAt', (time: number) => cut.fadeAt(time));
 
     // Serialization: one pose set per camera, plus the cut track. Cut
     // segments reference cameras by pose set index so ids need not persist
@@ -713,7 +754,8 @@ const registerCameraPosesEvents = (events: Events) => {
             segments: cut.segments.map(s => ({
                 start: s.start,
                 end: s.end,
-                camera: cameras.findIndex(c => c.id === s.cameraId)
+                camera: cameras.findIndex(c => c.id === s.cameraId),
+                ...(s.fade ? { fade: s.fade } : {})
             })).filter(s => s.camera >= 0)
         };
     });
@@ -721,11 +763,11 @@ const registerCameraPosesEvents = (events: Events) => {
     events.function('docDeserialize.cuts', (doc: any) => {
         cut.restore((doc?.segments ?? [])
         .filter((s: any) => cameras[s.camera])
-        .map((s: any) => ({ start: s.start, end: s.end, cameraId: cameras[s.camera].id })));
+        .map((s: any) => ({ start: s.start, end: s.end, cameraId: cameras[s.camera].id, fade: s.fade || undefined })));
         if (doc?.viewMode) {
             events.fire('camera.setViewMode', doc.viewMode);
         }
     });
 };
 
-export { registerCameraPosesEvents, CameraAnimTrack, CutTrack, Pose, PoseValue, ShotCamera, CutSegment, CameraViewMode };
+export { registerCameraPosesEvents, CameraAnimTrack, CutTrack, Pose, PoseValue, ShotCamera, CutSegment, CutFade, CameraViewMode };

@@ -1,6 +1,6 @@
 import { BooleanInput, Container, Label, SliderInput } from '@playcanvas/pcui';
 
-import type { CameraViewMode, ShotCamera } from '../camera-poses';
+import type { CameraViewMode, CutTrack, ShotCamera } from '../camera-poses';
 import { Events } from '../events';
 import { CollapsibleSection } from './collapsible';
 
@@ -172,7 +172,34 @@ class CameraList extends Container {
         events.on('tool.activated', syncPathEdit);
         events.on('tool.deactivated', syncPathEdit);
 
+        // cross-fade of the cut under the playhead (src/camera-poses.ts
+        // CutTrack.setFade), mixed in the cut video export
+        const fadeRow = new Container({ class: 'camera-list-option' });
+        const fadeLabel = new Label({ text: 'Überblendung', class: 'camera-list-label' });
+        const fade = new SliderInput({ min: 0, max: 60, precision: 0, step: 1, value: 0, enabled: false });
+        fadeRow.dom.title = 'Überblendung am Schnitt unter dem Abspielkopf, in Frames. Wirkt im Video-Export mit Kamera „Schnitt“; der Viewport schneidet hart.';
+        fadeRow.append(fadeLabel);
+        fadeRow.append(fade);
+        let syncingFade = false;
+        const syncFade = () => {
+            const cut = events.invoke('cut.track') as CutTrack;
+            const segment = cut?.segmentAt(events.invoke('timeline.frame') ?? 0);
+            const isCut = !!segment && cut.cutFrom(segment) !== null;
+            syncingFade = true;
+            fade.enabled = isCut;
+            fade.max = isCut ? Math.max(1, Math.min(120, segment.end - segment.start)) : 60;
+            fade.value = isCut ? (segment.fade ?? 0) : 0;
+            syncingFade = false;
+        };
+        fade.on('change', (value: number) => {
+            if (!syncingFade) events.fire('cut.setFade', events.invoke('timeline.frame'), value);
+        });
+        events.on('cut.changed', syncFade);
+        events.on('timeline.frame', syncFade);
+        events.on('shotCameras.changed', syncFade);
+
         options.append(viewRow);
+        options.append(fadeRow);
         options.append(pathRow);
         options.append(gizmoRow);
         body.append(options);

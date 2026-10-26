@@ -112,7 +112,7 @@ Unterwegs gefunden und behoben: Der Render-Loop summiert `1/fps` auf, Frame 90 k
 
 ### Grenzen / offen
 - ~~Kamera hinzufügen, löschen, umbenennen und duplizieren ist nicht rückgängig machbar.~~ Erledigt, siehe „Undo für die Kameraliste“.
-- Schnitte sind nur harte Schnitte, es gibt keine Überblendungen.
+- ~~Schnitte sind nur harte Schnitte.~~ Überblendungen gibt es jetzt im Export, siehe „Überblendung am Schnitt“. Der Viewport schneidet weiterhin hart.
 - Im Modus Durchschauen springt der Viewport beim nächsten Scrubben zurück auf die Spur, wenn du ihn frei bewegst und keinen Key setzt. Das war im Original auch so.
 - Viewer-Export und Publish nehmen die Spur der **gewählten** Kamera (`camera.poses`), nicht den Schnitt.
 - Der „Alle Kameras“-Export über den Ordner-Dialog wurde nicht per Klick getestet, weil sich Dialoge aus der Automatisierung nicht bedienen lassen. Die Einzel-Renders mit Dateinamen-Suffix wurden direkt über `render.video` geprüft.
@@ -582,6 +582,34 @@ Die Dateien liegen in `test-data/out/export-*`.
 - Die CLI-Standardwerte sind für echte, metrische Scans gedacht. Bei kleinen oder synthetischen Szenen müssen Voxelgröße und Schwellen angepasst werden; das Panel zeigt dazu die Log-Meldung.
 - Decimate ist nicht direkt rückgängig machbar. Gesichert ist es über das ausgeblendete Original.
 - Abbrechen stoppt keinen laufenden splat-transform-Schritt, es verwirft nur das Ergebnis.
+
+## Überblendung am Schnitt (Cross-Fade)
+
+### Bedienung
+- Szenen-Manager → **Kameras** → **Überblendung** (Frames): Der Wert gilt für den Schnitt, mit dem das Segment unter dem Abspielkopf beginnt. Das Feld ist gesperrt, wenn dort kein Schnitt ist, also im ersten Segment oder wenn die vorige Kamera dieselbe ist. Die Obergrenze ist die Segmentlänge.
+- Die Überblendung beginnt am Schnitt-Frame und dauert n Frames. Die neue Kamera wird linear über die alte geblendet: Beim ersten Frame ist schon 1/(n+1) zu sehen, nach n Frames nur noch die neue.
+- **Timeline**: Das Segment beginnt mit einem Verlauf in der Farbe der vorigen Kamera, der Tooltip nennt Kamera und Länge.
+- Undo/Redo über `cut.setFade` (Schnitt-Edit wie `cut.set`). Wird ein Segment auf denselben Start-Frame neu gesetzt, behält es seine Überblendung.
+- Gespeichert wird im `.ssproj` unter `cuts.segments[].fade`, nur wenn größer als 0.
+- **Wirkt nur im Video-Export** mit Kamera „Schnitt“. Viewport und Vorschau schneiden hart.
+
+### Umsetzung
+- `src/camera-poses.ts`: `CutSegment.fade`, `CutTrack.cutFrom()`, `setFade()`, `fadeAt(time)` → `{ from, to, alpha }`, Funktion `cut.fadeAt`.
+- `src/render.ts`: In einem Überblend-Frame wird zuerst die alte Kamera gerendert (Render-Override auf diese Kamera, eigener Sortierlauf) und in `fadeData` gelesen. Danach kommt wie gewohnt der Schnitt-Frame, dann `mixFade` auf der CPU (8-Bit-Festkomma, alle vier Kanäle, also auch bei transparentem Hintergrund). Außerhalb der Überblendung bleibt der Export unverändert. 360°-Exporte überblenden nicht.
+- UI: `ui/camera-list.ts` (Regler), `ui/timeline-tracks.ts` (Verlauf).
+
+### Verifiziert (`house.ply`)
+- Kamera 1 schaut aufs Haus, Kamera 2 vom selben Punkt in die leere Gegenrichtung. Schnitt bei Frame 30 mit 20 Frames Überblendung.
+- `fadeAt`: Frame 29 –, 30 → 0,048, 39,5 → 0,5, 49 → 0,952, 50 –. Das Feld ist bei Frame 35 aktiv und bei Frame 10 gesperrt.
+- MP4-Export 320×180, 60 Frames, H.264 (2,4 s). Das Video wurde im Browser per `<video>` dekodiert und die mittlere Helligkeit gemessen:
+
+  | Frame | 0–29 | 30 | 35 | 40 | 45 | 49 | 50+ |
+  |---|---|---|---|---|---|---|---|
+  | gemessen | 97 | 92,1 | 68,5 | 45,6 | 22,3 | 3,8 | 0 |
+  | erwartet 97·(1−α) | 97 | 92,4 | 69,6 | 46,4 | 23,2 | 4,7 | 0 |
+
+- Undo und Redo der Länge, Round-Trip über `docSerialize.cuts`/`docDeserialize.cuts`. Ein Segment von Kamera 1 über den Bereich entfernt den Schnitt (zusammengeführt), Undo bringt ihn samt Überblendung zurück.
+- Screenshot: Der Verlauf in der Schnittspur ist sichtbar.
 
 ## Undo für die Kameraliste
 
