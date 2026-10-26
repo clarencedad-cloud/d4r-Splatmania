@@ -583,6 +583,33 @@ Die Dateien liegen in `test-data/out/export-*`.
 - Decimate ist nicht direkt rückgängig machbar. Gesichert ist es über das ausgeblendete Original.
 - Abbrechen stoppt keinen laufenden splat-transform-Schritt, es verwirft nur das Ergebnis.
 
+## Offline und als App installieren (PWA)
+
+### Prüfung der Netzwerkabhängigkeiten
+- Im Bundle (`dist/index.js`, `index.css`, `analysis-worker.js`) gibt es keine CDN-Abhängigkeit. Die Engine, PCUI, splat-transform, mediabunny und i18next sind eingebündelt. Das Icon-Font steckt als `data:`-URL im CSS. Die Sprachen kommen aus `static/locales`, der WebP-Decoder aus `static/lib/webp/webp.wasm`.
+- Laufzeitprüfung im Browser (`performance.getEntriesByType('resource')` und Netzwerkliste): Nach dem Laden mit `house.ply` gab es nur Anfragen an `localhost:3000`.
+- Was online bleibt, aber nur bei ausdrücklicher Aktion:
+  - Links im Hilfe- und About-Menü öffnen ein neues Fenster.
+  - **Veröffentlichen** (PlayCanvas-Cloud) fragt `/api/id` am eigenen Origin ab und meldet lokal „bitte anmelden“.
+  - Der exportierte HTML-Viewer lädt im WebXR-Modus Controller-Profile von jsdelivr. Das betrifft nur die exportierte Datei und dort nur XR.
+
+### Service Worker (`src/sw.js`, Build-Plugin `service-worker.mjs`)
+- Das Rollup-Plugin schreibt `dist/sw.js` mit der Liste aller Dateien dieses Builds (ohne Source Maps, plus `analysis-worker.js` aus dem zweiten Bundle). Die Cache-Version ist ein Hash über die Inhalte: Jeder neue Build bekommt einen neuen Cache (`splatmania-<hash>`), und der alte wird beim Aktivieren gelöscht.
+- Strategie **Netzwerk zuerst**: Läuft der Server, kommt immer der aktuelle Stand, auch im Dev-Watcher. Der Cache antwortet nur, wenn das Netzwerk fehlt. Navigationen mit Query (z. B. `?load=…`) finden offline trotzdem `index.html`.
+- Szenendateien (`.ply`, `.splat`, `.sog`, `.spz`, `.ksplat`, `.ssproj`, `.zip`) und Range-Anfragen werden nie gecacht, weil sie riesig sein können. Lokale Dateien öffnet man offline ohnehin per Datei-Dialog oder Drag & Drop.
+- `index.html` registriert `./sw.js`, sobald ein Secure Context besteht (`localhost` oder HTTPS). Fremde Service Worker auf demselben Origin und alte `superSplat-v*`-Caches werden wie bisher entfernt.
+- Manifest: `display: standalone` statt `fullscreen`, damit das installierte Fenster Titelleiste und Fensterknöpfe behält. Theme- und Hintergrundfarbe sind #15121e, dazu kommt `id: ./`. `file_handlers` war schon da, `main.ts` nimmt die Dateien über `launchQueue` entgegen. Ist die App installiert, öffnen PLY, SPLAT, SOG, SPZ, KSPLAT und SSPROJ per Doppelklick direkt in Splatmania.
+
+### Installieren
+1. Einmal `npm run build` und `npm run serve` ausführen (oder den Dev-Server starten) und `http://localhost:3000` in Chrome oder Edge öffnen.
+2. Über das Installieren-Symbol in der Adressleiste installieren.
+3. Danach startet die App aus dem Startmenü, auch ohne laufenden Server. Updates kommen, sobald der Server wieder läuft und die App einmal neu lädt.
+- `file://` geht nicht: Service Worker und Modul-Worker brauchen HTTP(S).
+
+### Verifiziert
+- Service Worker aktiv, Seite kontrolliert, 18 Dateien im Cache.
+- **Offline-Test**: Dev-Server gestoppt (Port 3000 frei), dann neu geladen. Der Editor startet vollständig mit deutscher Oberfläche, Szenen-Manager und Canvas, der Analyse-Worker lässt sich starten. Danach Server wieder gestartet: Neue Builds kommen ohne manuelles Leeren des Caches an.
+
 ## Was SuperSplat für die Roadmap schon mitbringt
 
 ### Layer (mehrere Splats)
@@ -605,4 +632,4 @@ Die Dateien liegen in `test-data/out/export-*`.
 - Optional: transparenter Hintergrund, 360°-Equirect inklusive Spherical-Metadaten, Horizont-Ausrichtung. Bildexport (PNG/WebP) gibt es ebenfalls.
 - Die Kamera folgt beim Export der Kamera-Animationsspur.
 
-**Fazit:** Layer, Keyframe-Timeline und MP4-Export waren als Grundgerüst vorhanden. Mehrere Kameraspuren mit Schnitt, Layer-Animation und ein Punktwolken-Modus sind inzwischen ergänzt (siehe oben). Es fehlt noch eine Desktop-Hülle (z. B. Electron oder Tauri) für echten Offline-Betrieb. Der Build ist bereits eine statische PWA und braucht keinen Server.
+**Fazit:** Layer, Keyframe-Timeline und MP4-Export waren als Grundgerüst vorhanden. Mehrere Kameraspuren mit Schnitt, Layer-Animation und ein Punktwolken-Modus sind inzwischen ergänzt (siehe oben). Offline-Betrieb und Installation als App laufen über die PWA (siehe „Offline und als App installieren“), eine Desktop-Hülle wie Electron oder Tauri ist dafür nicht nötig.

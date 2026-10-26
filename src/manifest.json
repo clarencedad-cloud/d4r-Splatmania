@@ -1,12 +1,13 @@
 {
+    "id": "./",
     "name": "Splatmania",
     "short_name": "Splatmania",
     "description": "Splatmania – Gaussian-Splat-Editor von design4real: säubern, ausrichten, animieren und als Film ausgeben.",
-    "display": "fullscreen",
+    "display": "standalone",
     "start_url": "./",
     "scope": "./",
-    "background_color": "#000000",
-    "theme_color": "#000000",
+    "background_color": "#15121e",
+    "theme_color": "#15121e",
     "icons": [
         {
             "src": "./static/icons/logo-192.png",
@@ -23,8 +24,16 @@
         {
             "action": "./",
             "accept": {
-                "application/ply": [".ply"],
-                "application/octet-stream": [".splat", ".sog", ".spz", ".ksplat", ".ssproj"]
+                "application/ply": [
+                    ".ply"
+                ],
+                "application/octet-stream": [
+                    ".splat",
+                    ".sog",
+                    ".spz",
+                    ".ksplat",
+                    ".ssproj"
+                ]
             }
         }
     ]

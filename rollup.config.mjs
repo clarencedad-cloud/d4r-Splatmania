@@ -12,6 +12,7 @@ import scss from 'rollup-plugin-scss';
 import sass from 'sass';
 
 import copyAndWatch from './copy-and-watch.mjs';
+import serviceWorker from './service-worker.mjs';
 
 // prod is release build
 if (process.env.BUILD_TYPE === 'prod') {
@@ -88,7 +89,10 @@ const application = {
             includePaths: [`${PCUI_DIR}/dist`],
             watch: 'src/ui/scss'
         }),
-        BUILD_TYPE !== 'debug' && terser()
+        BUILD_TYPE !== 'debug' && terser(),
+        // offline cache for the installed app; the worker bundle below is
+        // built separately, so it is listed by hand
+        serviceWorker({ src: 'src/sw.js', extra: ['analysis-worker.js'] })
     ],
     treeshake: 'smallest',
     cache: false

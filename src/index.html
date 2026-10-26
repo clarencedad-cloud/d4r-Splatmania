@@ -5,19 +5,27 @@
         <meta charset="utf-8" />
         <base href="__BASE_HREF__">
         <link rel="manifest" href="./manifest.json">
+        <meta name="theme-color" content="#15121e">
         <link rel="stylesheet" href="./index.css">
         <link rel="icon" href="./static/icons/logo-192.png" type="image/png">
         <meta name="description" content="Splatmania – Gaussian-Splat-Editor von design4real: säubern, ausrichten, animieren und als Film ausgeben." />
         <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
 
-        <!-- v3 removed the service worker: unregister workers and delete caches
-             left behind by earlier versions, so stale clients stop serving old
-             builds. Can be removed once pre-v3 clients have cycled through. -->
+        <!-- offline cache for the installed app (sw.js, network first). Workers
+             from other builds on this origin are removed, as are their caches. -->
         <script>
-            navigator.serviceWorker?.getRegistrations().then(regs => regs.forEach(reg => reg.unregister()));
+            navigator.serviceWorker?.getRegistrations().then(regs => regs.forEach((reg) => {
+                const url = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL || '';
+                if (!url.endsWith('/sw.js')) reg.unregister();
+            }));
             window.caches?.keys().then(keys => keys.forEach((key) => {
                 if (key.startsWith('superSplat-v')) caches.delete(key);
             }));
+            if (window.isSecureContext && navigator.serviceWorker) {
+                window.addEventListener('load', () => {
+                    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('service worker', err));
+                });
+            }
         </script>
     </head>
 
