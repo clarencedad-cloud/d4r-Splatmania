@@ -571,10 +571,17 @@ fn main(
     } else {
         let safeDepth = max(depth, 0.001);
         let invDepth = 1.0 / safeDepth;
+        // clamp the off-axis slope to 1.3 x the half fov like the 3dgs
+        // reference: the linearised projection of a splat far outside the
+        // frustum otherwise stretches into a long streak reaching back into
+        // view (very visible in the narrow ods strips, src/ods-renderer.ts)
+        let lim = 1.3 * 0.5 * viewport / focal;
+        let tx = clamp(viewCenter.x * invDepth, -lim.x, lim.x);
+        let ty = clamp(viewCenter.y * invDepth, -lim.y, lim.y);
         let jx0 = focal.x * invDepth;
-        let jx2 = focal.x * viewCenter.x * invDepth * invDepth;
+        let jx2 = focal.x * tx * invDepth;
         let jy1 = focal.y * invDepth;
-        let jy2 = focal.y * viewCenter.y * invDepth * invDepth;
+        let jy2 = focal.y * ty * invDepth;
         let u00 = jx0 * c00 + jx2 * c02;
         let u01 = jx0 * c01 + jx2 * c12;
         let u02 = jx0 * c02 + jx2 * c22;

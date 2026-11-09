@@ -1,8 +1,15 @@
-// Injects Spherical Video V1 metadata into an MP4/MOV buffer so players
-// (YouTube, VLC, Quest) auto-detect the equirectangular projection.
+import { pngChunk } from './png-writer';
+
+// Injects spherical metadata into an MP4/MOV buffer so players (YouTube,
+// VLC, Quest) auto-detect the equirectangular projection:
+// - Spherical Video V1: a uuid box with GSpherical xml as the last child of
+//   the video trak (with StereoMode top-bottom for stereo)
+// - Spherical Video V2 (stereo only): st3d (stereo mode) and sv3d (svhd +
+//   proj/prhd/equi) appended to the video sample entry (avc1/hvc1/...)
 // https://github.com/google/spatial-media/blob/master/docs/spherical-video-rfc.md
+// https://github.com/google/spatial-media/blob/master/docs/spherical-video-v2-rfc.md
 //
-// The metadata is a uuid box appended as the last child of the video trak.
+// Also GPano XMP for mono equirect images (jpeg app1 / png iTXt).
 // Throws on unexpected input; callers should fall back to the untagged buffer.
 
 const SPHERICAL_UUID = new Uint8Array([
@@ -10,14 +17,14 @@ const SPHERICAL_UUID = new Uint8Array([
     0x88, 0x14, 0x58, 0x7a, 0x02, 0x52, 0x1f, 0xdd
 ]);
 
-const SPHERICAL_XML =
-    '<?xml version="1.0"?>' +
+const sphericalXml = (stereo: boolean) => '<?xml version="1.0"?>' +
     '<rdf:SphericalVideo xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:GSpherical="http://ns.google.com/videos/1.0/spherical/">' +
     '<GSpherical:Spherical>true</GSpherical:Spherical>' +
     '<GSpherical:Stitched>true</GSpherical:Stitched>' +
     '<GSpherical:StitchingSoftware>Splatmania</GSpherical:StitchingSoftware>' +
-    '<GSpherical:ProjectionType>equirectangular</GSpherical:ProjectionType>' +
-    '</rdf:SphericalVideo>';
+    `<GSpherical:ProjectionType>equirectangular</GSpherical:ProjectionType>${
+        stereo ? '<GSpherical:StereoMode>top-bottom</GSpherical:StereoMode>' : ''
+    }</rdf:SphericalVideo>`;
 
 type Box = {
     type: string;
@@ -126,7 +133,26 @@ const patchChunkOffsets = (view: DataView, box: Box, delta: number) => {
     }
 };
 
-const injectSphericalMetadata = (buffer: ArrayBuffer): ArrayBuffer => {
+// build a box from its type and payload parts
+const makeBox = (type: string, ...parts: Uint8Array[]) => {
+    const size = 8 + parts.reduce((sum, part) => sum + part.length, 0);
+    const box = new Uint8Array(size);
+    new DataView(box.buffer).setUint32(0, size);
+    box.set(new TextEncoder().encode(type), 4);
+    let offset = 8;
+    parts.forEach((part) => {
+        box.set(part, offset);
+        offset += part.length;
+    });
+    return box;
+};
+
+// full box payload prefix: version 0, flags 0
+const fullBoxHeader = () => new Uint8Array(4);
+
+type Parsed = { view: DataView, topLevel: Box[], moov: Box, trak: Box };
+
+const parse = (buffer: ArrayBuffer): Parsed => {
     const view = new DataView(buffer);
     const topLevel = childBoxes(view, 0, buffer.byteLength);
 
@@ -145,41 +171,136 @@ const injectSphericalMetadata = (buffer: ArrayBuffer): ArrayBuffer => {
         throw new Error('video trak not found');
     }
 
-    if (moov.headerSize !== 8 || trak.headerSize !== 8) {
+    return { view, topLevel, moov, trak };
+};
+
+// splice bytes in at offset and grow every listed ancestor box by their length
+const insertBytes = (buffer: ArrayBuffer, parsed: Parsed, ancestors: Box[], offset: number, bytes: Uint8Array) => {
+    if (ancestors.some(box => box.headerSize !== 8)) {
         throw new Error('unexpected 64-bit box size');
     }
 
-    // build the uuid box: size (4) + 'uuid' (4) + extended type (16) + xml
-    const xml = new TextEncoder().encode(SPHERICAL_XML);
-    const uuidBox = new Uint8Array(24 + xml.length);
-    const uuidView = new DataView(uuidBox.buffer);
-    uuidView.setUint32(0, uuidBox.length);
-    uuidBox.set([0x75, 0x75, 0x69, 0x64], 4);   // 'uuid'
-    uuidBox.set(SPHERICAL_UUID, 8);
-    uuidBox.set(xml, 24);
-
-    // splice the uuid box in as the last child of the video trak
     const src = new Uint8Array(buffer);
-    const trakEnd = trak.start + trak.size;
-    const out = new Uint8Array(buffer.byteLength + uuidBox.length);
-    out.set(src.subarray(0, trakEnd), 0);
-    out.set(uuidBox, trakEnd);
-    out.set(src.subarray(trakEnd), trakEnd + uuidBox.length);
+    const out = new Uint8Array(buffer.byteLength + bytes.length);
+    out.set(src.subarray(0, offset), 0);
+    out.set(bytes, offset);
+    out.set(src.subarray(offset), offset + bytes.length);
 
-    // grow the ancestor box sizes
     const outView = new DataView(out.buffer);
-    outView.setUint32(moov.start, moov.size + uuidBox.length);
-    outView.setUint32(trak.start, trak.size + uuidBox.length);
+    ancestors.forEach(box => outView.setUint32(box.start, box.size + bytes.length));
 
     // fast-start layout defense: growing a moov that precedes mdat shifts the
     // media data, so chunk offsets must follow
+    const { moov, topLevel } = parsed;
     const mdat = topLevel.find(box => box.type === 'mdat');
     if (mdat && moov.start < mdat.start) {
         const outMoov = readBox(outView, moov.start, out.byteLength);
-        patchChunkOffsets(outView, outMoov, uuidBox.length);
+        patchChunkOffsets(outView, outMoov, bytes.length);
     }
 
     return out.buffer;
 };
 
-export { injectSphericalMetadata };
+// spherical video v2 boxes: st3d (top-bottom) and sv3d with an equirect proj
+const v2Boxes = (stereo: boolean) => {
+    const st3d = makeBox('st3d', fullBoxHeader(), new Uint8Array([stereo ? 1 : 0]));
+    const svhd = makeBox('svhd', fullBoxHeader(), new TextEncoder().encode('Splatmania\0'));
+    const prhd = makeBox('prhd', fullBoxHeader(), new Uint8Array(12));     // yaw, pitch, roll = 0
+    const equi = makeBox('equi', fullBoxHeader(), new Uint8Array(16));     // no cropping
+    const sv3d = makeBox('sv3d', svhd, makeBox('proj', prhd, equi));
+    const result = new Uint8Array(st3d.length + sv3d.length);
+    result.set(st3d, 0);
+    result.set(sv3d, st3d.length);
+    return result;
+};
+
+const injectSphericalMetadata = (buffer: ArrayBuffer, stereo = false): ArrayBuffer => {
+    let parsed = parse(buffer);
+
+    // v2: append st3d + sv3d to the video sample entry (stereo only; mono
+    // keeps the long-standing v1-only tagging)
+    if (stereo) {
+        const { view, moov, trak } = parsed;
+        const mdia = findChild(view, trak, 'mdia');
+        const minf = mdia && findChild(view, mdia, 'minf');
+        const stbl = minf && findChild(view, minf, 'stbl');
+        const stsd = stbl && findChild(view, stbl, 'stsd');
+        if (!stsd) {
+            throw new Error('stsd box not found');
+        }
+        // stsd: full box (4) + entry_count (4) + sample entries
+        const entry = readBox(view, stsd.start + stsd.headerSize + 8, stsd.start + stsd.size);
+        if (!entry) {
+            throw new Error('sample entry not found');
+        }
+        buffer = insertBytes(buffer, parsed, [moov, trak, mdia, minf, stbl, stsd, entry], entry.start + entry.size, v2Boxes(true));
+        parsed = parse(buffer);
+    }
+
+    // v1: uuid box (size + 'uuid' + extended type + xml) as the last child
+    // of the video trak
+    const xml = new TextEncoder().encode(sphericalXml(stereo));
+    const uuidBox = new Uint8Array(24 + xml.length);
+    new DataView(uuidBox.buffer).setUint32(0, uuidBox.length);
+    uuidBox.set([0x75, 0x75, 0x69, 0x64], 4);   // 'uuid'
+    uuidBox.set(SPHERICAL_UUID, 8);
+    uuidBox.set(xml, 24);
+
+    const { moov, trak } = parsed;
+    return insertBytes(buffer, parsed, [moov, trak], trak.start + trak.size, uuidBox);
+};
+
+// GPano xmp packet for a full (uncropped) equirect panorama
+const gpanoXmp = (width: number, height: number) => '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>' +
+    '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">' +
+    '<rdf:Description rdf:about="" xmlns:GPano="http://ns.google.com/photos/1.0/panorama/"' +
+    ' GPano:ProjectionType="equirectangular" GPano:UsePanoramaViewer="True"' +
+    ` GPano:CroppedAreaImageWidthPixels="${width}" GPano:CroppedAreaImageHeightPixels="${height}"` +
+    ` GPano:FullPanoWidthPixels="${width}" GPano:FullPanoHeightPixels="${height}"` +
+    ' GPano:CroppedAreaLeftPixels="0" GPano:CroppedAreaTopPixels="0"' +
+    ' GPano:StitchingSoftware="Splatmania"/>' +
+    '</rdf:RDF></x:xmpmeta><?xpacket end="w"?>';
+
+// jpeg: app1 xmp segment after SOI (and after a leading JFIF app0)
+const injectGPanoJpeg = (bytes: Uint8Array, width: number, height: number): Uint8Array => {
+    if (bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+        throw new Error('not a jpeg');
+    }
+    let offset = 2;
+    if (bytes[2] === 0xff && bytes[3] === 0xe0) {
+        offset = 4 + ((bytes[4] << 8) | bytes[5]);
+    }
+    const payload = new TextEncoder().encode(`http://ns.adobe.com/xap/1.0/\0${gpanoXmp(width, height)}`);
+    const length = payload.length + 2;
+    if (length > 0xffff) {
+        throw new Error('xmp too large');
+    }
+    const segment = new Uint8Array(4 + payload.length);
+    segment.set([0xff, 0xe1, length >> 8, length & 0xff], 0);
+    segment.set(payload, 4);
+    const out = new Uint8Array(bytes.length + segment.length);
+    out.set(bytes.subarray(0, offset), 0);
+    out.set(segment, offset);
+    out.set(bytes.subarray(offset), offset + segment.length);
+    return out;
+};
+
+// png: iTXt chunk with keyword XML:com.adobe.xmp right after IHDR
+const injectGPanoPng = (bytes: Uint8Array, width: number, height: number): Uint8Array => {
+    const ihdrEnd = 8 + 8 + 13 + 4;
+    const encoder = new TextEncoder();
+    const keyword = encoder.encode('XML:com.adobe.xmp');
+    const text = encoder.encode(gpanoXmp(width, height));
+    // keyword \0, compression flag 0, method 0, language \0, translated keyword \0
+    const data = new Uint8Array(keyword.length + 5 + text.length);
+    data.set(keyword, 0);
+    data.set(text, keyword.length + 5);
+    const itxt = pngChunk('iTXt', data);
+    const out = new Uint8Array(bytes.length + itxt.length);
+    out.set(bytes.subarray(0, ihdrEnd), 0);
+    out.set(itxt, ihdrEnd);
+    out.set(bytes.subarray(ihdrEnd), ihdrEnd + itxt.length);
+    return out;
+};
+
+export { injectSphericalMetadata, injectGPanoJpeg, injectGPanoPng };

@@ -11,8 +11,11 @@ type VideoSettings = {
     showDebug: boolean;
     format: 'mp4' | 'webm' | 'mov' | 'mkv';
     codec: VideoCodecChoice;
-    projection?: 'standard' | 'equirect';
+    // 'stereo': omnidirectional stereo, top-bottom (left eye on top), 1:1
+    projection?: 'standard' | 'equirect' | 'stereo';
     levelHorizon?: boolean;
+    // stereo 360 parameters (see render.ts StereoSettings)
+    stereo?: { ipd: number, poleStart: number, segments: number };
     // which shot camera drives the render: the cut track (one edited video),
     // one camera, or every camera as its own file ('all' is expanded into
     // one 'camera' render per camera by the export flow)

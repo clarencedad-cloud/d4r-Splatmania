@@ -1,4 +1,4 @@
-import { BooleanInput, Button, Container, Element, Label, SelectInput, VectorInput } from '@playcanvas/pcui';
+import { BooleanInput, Button, Container, Element, Label, NumericInput, SelectInput, SliderInput, VectorInput } from '@playcanvas/pcui';
 
 import { Events } from '../events';
 import { buildVideoEncoderConfig, VideoCodecChoice, VideoSettings } from '../video-config';
@@ -30,7 +30,21 @@ const equirectResolutions: ResolutionOption[] = [
     { v: '360-8192', t: '8192x4096' }
 ];
 
+// stereo 360: top-bottom, each eye 2:1, so the frame is square
+const stereoResolutions: ResolutionOption[] = [
+    { v: 'tb-1024', t: '1024x1024' },
+    { v: 'tb-2048', t: '2048x2048' },
+    { v: 'tb-4096', t: '4096x4096' },
+    { v: 'tb-5760', t: '5760x5760' },
+    { v: 'tb-8192', t: '8192x8192' }
+];
+
 const widths: Record<string, number> = {
+    'tb-1024': 1024,
+    'tb-2048': 2048,
+    'tb-4096': 4096,
+    'tb-5760': 5760,
+    'tb-8192': 8192,
     '540': 960,
     '720': 1280,
     '1080': 1920,
@@ -46,6 +60,11 @@ const widths: Record<string, number> = {
 };
 
 const heights: Record<string, number> = {
+    'tb-1024': 1024,
+    'tb-2048': 2048,
+    'tb-4096': 4096,
+    'tb-5760': 5760,
+    'tb-8192': 8192,
     '540': 540,
     '720': 720,
     '1080': 1080,
@@ -81,6 +100,11 @@ const bppfs: Record<string, number> = {
 
 // Scale down higher resolutions (matched by pixel count).
 const bppfFactors: Record<string, number> = {
+    'tb-1024': 1 / 2,
+    'tb-2048': 1 / 4,
+    'tb-4096': 1 / 5,
+    'tb-5760': 1 / 6,
+    'tb-8192': 1 / 7,
     '540': 1,
     '720': 1 / 2,
     '1080': 1 / 3,
@@ -148,12 +172,14 @@ class VideoSettingsDialog extends Container {
             defaultValue: 'standard',
             options: [
                 { v: 'standard', t: 'Standard' },
-                { v: 'equirect', t: '360° Equirectangular' }
+                { v: 'equirect', t: '360° Equirectangular' },
+                { v: 'stereo', t: '360° Stereo (oben/unten)' }
             ]
         });
         i18n.bindOptions(projectionSelect, () => [
             { v: 'standard', t: i18n.t('popup.render-video.projection.standard') },
-            { v: 'equirect', t: i18n.t('popup.render-video.projection.equirectangular') }
+            { v: 'equirect', t: i18n.t('popup.render-video.projection.equirectangular') },
+            { v: 'stereo', t: '360° Stereo (oben/unten)' }
         ]);
         const projectionRow = new Container({ class: 'row' });
         projectionRow.append(projectionLabel);
@@ -340,6 +366,34 @@ class VideoSettingsDialog extends Container {
         levelHorizonRow.append(levelHorizonLabel);
         levelHorizonRow.append(levelHorizonBoolean);
 
+        // stereo 360 (omnidirectional stereo, src/ods-renderer.ts)
+
+        const stereoRow = (text: string, input: Element, title: string) => {
+            const r = new Container({ class: 'row' });
+            r.dom.title = title;
+            r.append(new Label({ class: 'label', text }));
+            r.append(input);
+            r.hidden = true;
+            return r;
+        };
+        const ipdInput = new NumericInput({ class: 'numeric-input', min: 0, max: 1000, precision: 4, step: 0.001, value: 0.064 });
+        const ipdRow = stereoRow('Augenabstand', ipdInput,
+            'IPD in Szeneneinheiten: 0,064 = 6,4 cm in einer Szene in Metern. Unskalierte PLYs können andere Einheiten haben, dann anpassen');
+        const poleSlider = new SliderInput({ class: 'slider', min: 20, max: 69, precision: 0, value: 50 });
+        const poleRow = stereoRow('Pol-Überblendung ab', poleSlider,
+            'Ab dieser Höhe (Grad) blendet das Stereo weich ins Mono-Panorama, damit oben und unten keine Doppelbilder entstehen');
+        const segmentSelect = new SelectInput({
+            class: 'select',
+            defaultValue: '96',
+            options: [
+                { v: '48', t: 'Entwurf (48 Segmente)' },
+                { v: '96', t: 'Gut (96 Segmente)' },
+                { v: '112', t: 'Hoch (112 Segmente)' },
+                { v: '160', t: 'Sehr hoch (160 Segmente)' }
+            ]
+        });
+        const segmentRow = stereoRow('Stereo-Qualität', segmentSelect, 'Azimut-Streifen pro Auge: mehr = sauberere Disparität, längere Renderzeit (pro Bild 6 + 2 × Segmente Renderdurchgänge)');
+
         // transparent background
 
         const transparentBgLabel = new Label({ class: 'label' });
@@ -365,12 +419,16 @@ class VideoSettingsDialog extends Container {
         // sync the ui to the selected projection: 360 renders are 2:1
         // equirectangular without portrait mode or debug overlays
         const syncProjection = () => {
-            const is360 = projectionSelect.value === 'equirect';
-            resolutionSelect.options = is360 ? equirectResolutions : standardResolutions;
-            resolutionSelect.value = is360 ? '360-4k' : '1080';
+            const isStereo = projectionSelect.value === 'stereo';
+            const is360 = projectionSelect.value === 'equirect' || isStereo;
+            resolutionSelect.options = isStereo ? stereoResolutions : (is360 ? equirectResolutions : standardResolutions);
+            resolutionSelect.value = isStereo ? 'tb-2048' : (is360 ? '360-4k' : '1080');
             portraitRow.hidden = is360;
             showDebugRow.hidden = is360;
             levelHorizonRow.hidden = !is360;
+            [ipdRow, poleRow, segmentRow].forEach((r) => {
+                r.hidden = !isStereo;
+            });
         };
 
         // content
@@ -386,6 +444,9 @@ class VideoSettingsDialog extends Container {
         content.append(frameRangeRow);
         content.append(portraitRow);
         content.append(levelHorizonRow);
+        content.append(ipdRow);
+        content.append(poleRow);
+        content.append(segmentRow);
         content.append(transparentBgRow);
         content.append(showDebugRow);
 
@@ -429,11 +490,12 @@ class VideoSettingsDialog extends Container {
         let supportByResolution = new Map<string, boolean>();
 
         const activeResolutionOptions = () => {
+            if (projectionSelect.value === 'stereo') return stereoResolutions;
             return projectionSelect.value === 'equirect' ? equirectResolutions : standardResolutions;
         };
 
         const dimensionsFor = (resolution: string) => {
-            const is360 = projectionSelect.value === 'equirect';
+            const is360 = projectionSelect.value !== 'standard';
             const portrait = !is360 && portraitBoolean.value;
             return {
                 width: (portrait ? heights : widths)[resolution],
@@ -715,7 +777,8 @@ class VideoSettingsDialog extends Container {
                         return;
                     }
 
-                    const is360 = projectionSelect.value === 'equirect';
+                    const isStereo = projectionSelect.value === 'stereo';
+                    const is360 = projectionSelect.value === 'equirect' || isStereo;
                     const encodingSettings = encodingSettingsFor(resolutionSelect.value);
                     const frameRange = frameRangeInput.value as number[];
 
@@ -726,8 +789,9 @@ class VideoSettingsDialog extends Container {
                         transparentBg: transparentBgBoolean.value,
                         showDebug: !is360 && showDebugBoolean.value,
                         format: formatSelect.value as 'mp4' | 'webm' | 'mov' | 'mkv',
-                        projection: (is360 ? 'equirect' : 'standard') as 'standard' | 'equirect',
+                        projection: isStereo ? 'stereo' : (is360 ? 'equirect' : 'standard'),
                         levelHorizon: is360 && levelHorizonBoolean.value,
+                        stereo: isStereo ? { ipd: ipdInput.value, poleStart: poleSlider.value, segments: parseInt(segmentSelect.value, 10) } : undefined,
                         shot: shotSelect.value.startsWith('camera:') ?
                             { mode: 'camera', cameraId: parseInt(shotSelect.value.slice(7), 10) } :
                             { mode: shotSelect.value as 'cut' | 'all' }

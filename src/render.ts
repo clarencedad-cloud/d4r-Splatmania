@@ -6,9 +6,10 @@ import type { CutFade } from './camera-poses';
 import { ElementType } from './element';
 import { EquirectRenderer } from './equirect-renderer';
 import { Events } from './events';
+import { OdsRenderer } from './ods-renderer';
 import { encodePng } from './png-writer';
 import { Scene } from './scene';
-import { injectSphericalMetadata } from './spherical-metadata';
+import { injectGPanoJpeg, injectGPanoPng, injectSphericalMetadata } from './spherical-metadata';
 import { Splat } from './splat';
 import { i18n } from './ui/localization';
 import { buildVideoEncoderConfig, getVideoCodecType, VideoSettings } from './video-config';
@@ -33,9 +34,43 @@ type ImageSettings = {
     showDebug: boolean;
     format: 'png' | 'jpeg' | 'webp';
     quality?: number;           // 0..1, jpeg only
-    projection?: 'standard' | 'equirect';
+    // 'stereo': omnidirectional stereo, top-bottom (left eye on top), 1:1
+    projection?: 'standard' | 'equirect' | 'stereo';
     levelHorizon?: boolean;
+    stereo?: StereoSettings;
+    // where the panorama is taken from (360 only); default: the current view
+    source?: PanoramaSource;
+    // set per job by the export flow (see render.panoramaJobs)
+    job?: PanoramaJob;
+    // download filename (without extension) when no file stream is given
+    filename?: string;
 };
+
+type StereoSettings = {
+    // eye separation in scene units (6.4 cm in a metric scene)
+    ipd: number;
+    // elevation (deg) where the stereo fades into mono towards the poles
+    poleStart: number;
+    // azimuth strips per eye
+    segments: number;
+};
+
+type PanoramaSource = {
+    mode: 'view' | 'camera' | 'cameraKeys' | 'allCameras' | 'allCameraKeys',
+    cameraId?: number,
+    // panorama centre faces world -z instead of the camera's view direction
+    north?: boolean
+};
+
+// one panorama to render: capture position and heading (deg, like camera azim)
+type PanoramaJob = {
+    position: [number, number, number],
+    yaw: number,
+    // file name suffix, e.g. "_Kamera 1_f30"
+    suffix: string
+};
+
+const DEFAULT_STEREO: StereoSettings = { ipd: 0.064, poleStart: 50, segments: 112 };
 
 const removeExtension = (filename: string) => {
     return filename.substring(0, filename.length - path.getExtension(filename).length);
@@ -110,6 +145,122 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
         });
     };
 
+    // direction-independent clipping planes around a capture point, shared
+    // by all faces / strips so near-plane culling cannot differ at a seam
+    const panoramaClip = (position: Vec3, margin = 0) => {
+        const boundRadius = scene.bound.halfExtents.length() + margin;
+        const dist = new Vec3().sub2(scene.bound.center, position).length();
+        const far = dist + boundRadius;
+        const near = Math.max(1e-6, dist < boundRadius ? far / (1024 * 16) : dist - boundRadius);
+        return { near, far };
+    };
+
+    const qWorld = new Quat();
+    const qStrip = new Quat();
+    const eyeRight = new Vec3();
+    const eyePos = new Vec3();
+
+    // capture a 360 panorama at position with the capture-space rotation
+    // into data: mono (equirect, 6 cube faces) or omnidirectional stereo
+    // (ods: 6 mono faces for the poles plus 2 x N strips, top-bottom output)
+    const capturePanorama = async (p: {
+        position: Vec3,
+        rotation: Quat,
+        equirect: EquirectRenderer | null,
+        ods: OdsRenderer | null,
+        faceSize: number,
+        data: Uint8Array,
+        // trigger a render and wait for it
+        render: () => Promise<void>,
+        cancelled: () => boolean,
+        progress: (fraction: number) => void
+    }) => {
+        const { position, rotation, equirect, ods, data } = p;
+        const { near, far } = panoramaClip(position, ods ? ods.options.ipd : 0);
+        const steps = 6 + (ods ? 2 * ods.segments : 0);
+        let done = 0;
+
+        // six cube faces: the mono panorama (for stereo the pole fill)
+        const faces = ods ? ods.mono.faceTargets : equirect.faceTargets;
+        if (ods) scene.camera.startOffscreenMode(p.faceSize, p.faceSize);
+        for (let face = 0; face < 6; face++) {
+            if (p.cancelled()) return false;
+            qWorld.mul2(rotation, EquirectRenderer.faceRotations[face]);
+            scene.camera.setPoseOverride({ position, rotation: qWorld, fov: EquirectRenderer.faceFov, near, far });
+            await p.render();
+            scene.dataProcessor.copyRt(scene.camera.mainTarget, faces[face]);
+            p.progress(++done / steps);
+        }
+
+        if (!ods) {
+            equirect.project();
+            await equirect.read(data);
+            return true;
+        }
+
+        ods.projectMono();
+
+        // strips: per eye and azimuth a narrow perspective view from the eye
+        // point tangent to the ipd circle, yaw only (pitch 0)
+        scene.camera.startOffscreenMode(ods.stripWidth, ods.stripHeight);
+        ods.clearEyes();
+        for (let eye = 0; eye < 2; eye++) {
+            for (let k = 0; k < ods.segments; k++) {
+                if (p.cancelled()) return false;
+                const azimuth = ods.azimuth(k);
+                qStrip.setFromEulerAngles(0, -azimuth * 180 / Math.PI, 0);
+                qWorld.mul2(rotation, qStrip);
+                // the strip camera's right axis in capture space, then world
+                eyeRight.set(Math.cos(azimuth), 0, Math.sin(azimuth));
+                rotation.transformVector(eyeRight, eyeRight);
+                eyePos.copy(position).addScaled(eyeRight, ods.eyeOffset(eye));
+                scene.camera.setPoseOverride({ position: eyePos, rotation: qWorld, fov: ods.stripFov, near, far });
+                await p.render();
+                scene.dataProcessor.copyRt(scene.camera.mainTarget, ods.stripTarget);
+                ods.compositeStrip(eye, k);
+                p.progress(++done / steps);
+            }
+        }
+
+        // top: left eye, bottom: right eye
+        const half = ods.eyeWidth * ods.eyeHeight * 4;
+        await ods.read(0, data.subarray(0, half));
+        await ods.read(1, data.subarray(half, 2 * half));
+        return true;
+    };
+
+    // the panoramas a source asks for: capture point and heading per camera
+    // (or key); the horizon is always level, only the camera's yaw is used
+    events.function('render.panoramaJobs', (source: PanoramaSource | undefined): PanoramaJob[] => {
+        if (!source || source.mode === 'view') return [];
+        const cameras = (events.invoke('shotCameras.list') ?? []) as { id: number, name: string, track: any }[];
+        const frame = Math.round(events.invoke('timeline.frame') ?? 0);
+        const safe = (name: string) => name.replace(/[\\/:*?"<>|]/g, '_');
+        const jobs: PanoramaJob[] = [];
+        const add = (camera: { name: string, track: any }, f: number) => {
+            const pose = camera.track.getPoseAt(f);
+            if (!pose) return;
+            const dx = pose.target.x - pose.position.x;
+            const dz = pose.target.z - pose.position.z;
+            // camera azim convention: yaw 0 looks down -z, positive turns left
+            const yaw = source.north || (dx === 0 && dz === 0) ? 0 : Math.atan2(-dx, -dz) * 180 / Math.PI;
+            jobs.push({ position: [pose.position.x, pose.position.y, pose.position.z], yaw, suffix: `_${safe(camera.name)}_f${f}` });
+        };
+        const keysOf = (camera: { track: any }) => [...camera.track.keys].sort((a: number, b: number) => a - b);
+        if (source.mode === 'allCameras') {
+            cameras.forEach(camera => add(camera, frame));
+        } else if (source.mode === 'allCameraKeys') {
+            cameras.forEach(camera => keysOf(camera).forEach((f: number) => add(camera, f)));
+        } else {
+            const camera = cameras.find(c => c.id === source.cameraId);
+            if (camera && source.mode === 'camera') add(camera, frame);
+            if (camera && source.mode === 'cameraKeys') {
+                keysOf(camera).forEach((f: number) => add(camera, f));
+            }
+        }
+        return jobs;
+    });
+
     events.function('render.offscreen', async (width: number, height: number): Promise<Uint8Array> => {
         try {
             // start rendering to offscreen buffer only
@@ -150,19 +301,34 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
     });
 
     events.function('render.image', async (imageSettings: ImageSettings, fileStream?: FileSystemWritableFileStream) => {
-        events.fire('startSpinner');
+        const isStereo = imageSettings.projection === 'stereo';
+
+        // stereo renders take a while: progress with cancel instead of the spinner
+        let cancelled = false;
+        const cancelHandler = isStereo ? events.on('progressCancel', () => {
+            cancelled = true;
+        }) : null;
+        if (isStereo) {
+            events.fire('progressStart', 'Stereo-360 rendern', true);
+        } else {
+            events.fire('startSpinner');
+        }
 
         let equirect: EquirectRenderer | null = null;
+        let ods: OdsRenderer | null = null;
         let savedFov = 0;
         let savedOrtho = false;
 
         try {
-            const { width, height, transparentBg, showDebug, format, quality, projection, levelHorizon } = imageSettings;
-            const is360 = projection === 'equirect';
+            const { width, height, transparentBg, showDebug, format, quality, projection, levelHorizon, job } = imageSettings;
+            const is360 = projection === 'equirect' || isStereo;
+
+            // stereo output is top-bottom: each eye is width x height / 2
+            const eyeHeight = isStereo ? Math.floor(height / 2) : height;
 
             // in 360 mode the offscreen target is a square cube face; the
             // equirect target holds the output-sized frame
-            const faceSize = Math.min(height, scene.graphicsDevice.maxTextureSize);
+            const faceSize = Math.min(eyeHeight, scene.graphicsDevice.maxTextureSize);
 
             // start rendering to offscreen buffer only
             scene.camera.startOffscreenMode(is360 ? faceSize : width, is360 ? faceSize : height);
@@ -179,48 +345,59 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             if (is360) {
                 savedFov = scene.camera.fov;
                 savedOrtho = scene.camera.ortho;
-                equirect = new EquirectRenderer(scene.graphicsDevice, faceSize, width, height);
+                if (isStereo) {
+                    ods = new OdsRenderer(scene.graphicsDevice, width, eyeHeight, { ...DEFAULT_STEREO, ...imageSettings.stereo });
+                } else {
+                    equirect = new EquirectRenderer(scene.graphicsDevice, faceSize, width, height);
+                }
                 scene.camera.ortho = false;
+                // captures always take the clean sorted path: with the
+                // camera jumping between faces / strips the adaptive
+                // stochastic mode would otherwise kick in (noise, smears)
+                scene.lockedRenderMode = true;
 
-                // snapshot the current camera pose. supersplat cameras never
+                // capture pose: a camera / key job (level, its yaw), or a
+                // snapshot of the current view. supersplat cameras never
                 // roll, so with level horizon the capture frame is the
                 // camera yaw, otherwise yaw and pitch
-                const camPos = new Vec3().copy(scene.camera.position);
+                const camPos = new Vec3();
                 const qCapture = new Quat();
-                if (levelHorizon ?? true) {
-                    qCapture.setFromEulerAngles(0, scene.camera.azim, 0);
+                if (job) {
+                    camPos.set(job.position[0], job.position[1], job.position[2]);
+                    qCapture.setFromEulerAngles(0, job.yaw, 0);
                 } else {
-                    qCapture.copy(scene.camera.mainCamera.getRotation());
+                    camPos.copy(scene.camera.position);
+                    if (levelHorizon ?? true) {
+                        qCapture.setFromEulerAngles(0, scene.camera.azim, 0);
+                    } else {
+                        qCapture.copy(scene.camera.mainCamera.getRotation());
+                    }
                 }
 
-                // all faces share direction-independent clipping planes so
-                // near-plane culling cannot differ across a face boundary
-                const boundRadius = scene.bound.halfExtents.length();
-                const dist = new Vec3().sub2(scene.bound.center, camPos).length();
-                const far = dist + boundRadius;
-                const near = Math.max(1e-6, dist < boundRadius ? far / (1024 * 16) : dist - boundRadius);
-
-                const splats = (scene.getElementsByType(ElementType.splat) as Splat[]).filter(splat => splat.visible);
-                const qWorld = new Quat();
-
-                for (let face = 0; face < 6; face++) {
-                    qWorld.mul2(qCapture, EquirectRenderer.faceRotations[face]);
-                    scene.camera.setPoseOverride({ position: camPos, rotation: qWorld, fov: EquirectRenderer.faceFov, near, far });
-
-                    // faces view different directions, so each render must
-                    // wait for its own sort
-                    await sortSplatsAndWait(scene, splats);
-
-                    // render a frame and wait for it to finish
-                    scene.forceRender = true;
-                    await postRender();
-
-                    scene.dataProcessor.copyRt(scene.camera.mainTarget, equirect.faceTargets[face]);
+                const ok = await capturePanorama({
+                    position: camPos,
+                    rotation: qCapture,
+                    equirect,
+                    ods,
+                    faceSize,
+                    data,
+                    render: async () => {
+                        scene.lockedRender = true;
+                        await postRender();
+                    },
+                    cancelled: () => cancelled,
+                    progress: (fraction) => {
+                        if (isStereo) {
+                            events.fire('progressUpdate', { text: i18n.t('panel.render.rendering', { ellipsis: true }), progress: 100 * fraction });
+                        }
+                    }
+                });
+                if (!ok) {
+                    if (fileStream) {
+                        await fileStream.close();
+                    }
+                    return false;
                 }
-
-                // project the faces to the equirect target and read back
-                equirect.project();
-                await equirect.read(data);
             } else {
                 // render the next frame
                 scene.forceRender = true;
@@ -289,11 +466,25 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 mimeType = 'image/webp';
             }
 
+            // mono panoramas: GPano xmp so photo viewers open them as 360.
+            // GPano has no top-bottom stereo mode (a tag would make viewers
+            // show the stacked eyes as one distorted pano), so stereo images
+            // rely on the _TB name suffix instead
+            if (projection === 'equirect') {
+                try {
+                    if (format === 'jpeg') bytes = injectGPanoJpeg(bytes, width, height) as Uint8Array<ArrayBuffer>;
+                    if (format === 'png') bytes = injectGPanoPng(bytes, width, height) as Uint8Array<ArrayBuffer>;
+                } catch (error) {
+                    console.warn(`failed to add GPano metadata: ${error.message ?? error}`);
+                }
+            }
+
             if (fileStream) {
                 await fileStream.write(bytes);
                 await fileStream.close();
             } else {
-                downloadFile(bytes, `${baseFilename()}.${extension}`, mimeType);
+                const name = imageSettings.filename ?? `${baseFilename()}${job?.suffix ?? ''}${isStereo ? '_TB' : ''}`;
+                downloadFile(bytes, `${name}.${extension}`, mimeType);
             }
 
             return true;
@@ -316,12 +507,15 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
             return false;
         } finally {
-            if (equirect) {
+            if (equirect || ods) {
                 scene.camera.setPoseOverride(null);
                 scene.camera.fov = savedFov;
                 scene.camera.ortho = savedOrtho;
-                equirect.destroy();
+                scene.lockedRenderMode = false;
+                equirect?.destroy();
                 equirect = null;
+                ods?.destroy();
+                ods = null;
             }
 
             scene.camera.endOffscreenMode();
@@ -331,7 +525,12 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.camera.clearPass.setClearColor(nullClr);
             scene.forceRender = true;       // repaint the viewport with normal rendering
 
-            events.fire('stopSpinner');
+            if (isStereo) {
+                cancelHandler.off();
+                events.fire('progressEnd');
+            } else {
+                events.fire('stopSpinner');
+            }
         }
     });
 
@@ -346,6 +545,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
             let encoder: VideoEncoder | null = null;
             let equirect: EquirectRenderer | null = null;
+            let ods: OdsRenderer | null = null;
             let savedFov = 0;
             let savedOrtho = false;
             let output: Output | null = null;
@@ -354,7 +554,10 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             try {
                 const { startFrame, endFrame, frameRate, width, height, bitrate, transparentBg, showDebug, format, codec: codecChoice, projection, levelHorizon } = videoSettings;
 
-                const is360 = projection === 'equirect';
+                const isStereo = projection === 'stereo';
+                const is360 = projection === 'equirect' || isStereo;
+                // stereo frames are top-bottom: each eye is width x height / 2
+                const eyeHeight = isStereo ? Math.floor(height / 2) : height;
 
                 // drive the camera from the chosen shot camera / cut track
                 const shot = videoSettings.shot;
@@ -442,7 +645,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
                 // in 360 mode the offscreen target is a square cube face; the
                 // equirect target holds the output-sized frame
-                const faceSize = Math.min(height, scene.graphicsDevice.maxTextureSize);
+                const faceSize = Math.min(eyeHeight, scene.graphicsDevice.maxTextureSize);
 
                 // start rendering to offscreen buffer only
                 scene.camera.startOffscreenMode(is360 ? faceSize : width, is360 ? faceSize : height);
@@ -457,7 +660,11 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 if (is360) {
                     savedFov = scene.camera.fov;
                     savedOrtho = scene.camera.ortho;
-                    equirect = new EquirectRenderer(scene.graphicsDevice, faceSize, width, height);
+                    if (isStereo) {
+                        ods = new OdsRenderer(scene.graphicsDevice, width, eyeHeight, { ...DEFAULT_STEREO, ...videoSettings.stereo });
+                    } else {
+                        equirect = new EquirectRenderer(scene.graphicsDevice, faceSize, width, height);
+                    }
                     scene.camera.ortho = false;
                 }
 
@@ -594,13 +801,10 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
                 // work objects for 360 capture
                 const camPos = new Vec3();
-                const vec = new Vec3();
                 const qCapture = new Quat();
-                const qWorld = new Quat();
 
-                // capture a 360 frame: render the six cube faces from the
-                // animated camera position, re-sorting splats per face
-                // direction, then project to equirect and encode
+                // capture a 360 frame (mono: six cube faces, stereo: ods
+                // strips) from the animated camera position and encode it
                 const capture360 = async (frameTime: number) => {
                     // snapshot the animated camera pose. supersplat cameras
                     // never roll, so with level horizon the capture frame is
@@ -612,45 +816,29 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                         qCapture.copy(scene.camera.mainCamera.getRotation());
                     }
 
-                    // all faces share direction-independent clipping planes so
-                    // near-plane culling cannot differ across a face boundary
-                    const boundRadius = scene.bound.halfExtents.length();
-                    const dist = vec.sub2(scene.bound.center, camPos).length();
-                    const far = dist + boundRadius;
-                    const near = Math.max(1e-6, dist < boundRadius ? far / (1024 * 16) : dist - boundRadius);
-
-                    const splats = (scene.getElementsByType(ElementType.splat) as Splat[]).filter(splat => splat.visible);
-
-                    for (let face = 0; face < 6; face++) {
-                        // check for cancellation
-                        if (cancelled) return;
-
-                        qWorld.mul2(qCapture, EquirectRenderer.faceRotations[face]);
-                        scene.camera.setPoseOverride({ position: camPos, rotation: qWorld, fov: EquirectRenderer.faceFov, near, far });
-
-                        // faces view different directions, so each render must
-                        // wait for its own sort
-                        await sortAndWait(splats);
-
-                        // render a frame
-                        scene.lockedRender = true;
-
-                        // wait for render to finish
-                        await postRender();
-
-                        scene.dataProcessor.copyRt(scene.camera.mainTarget, equirect.faceTargets[face]);
-
-                        const frameIndex = Math.round(frameTime * frameRate);
-                        events.fire('progressUpdate', {
-                            text: i18n.t('panel.render.rendering', { ellipsis: true }),
-                            progress: 100 * (frameIndex + (face + 1) / 6) / totalFrames
-                        });
+                    const frameIndex = Math.round(frameTime * frameRate);
+                    const ok = await capturePanorama({
+                        position: camPos,
+                        rotation: qCapture,
+                        equirect,
+                        ods,
+                        faceSize,
+                        data,
+                        render: async () => {
+                            scene.lockedRender = true;
+                            await postRender();
+                        },
+                        cancelled: () => cancelled,
+                        progress: (fraction) => {
+                            events.fire('progressUpdate', {
+                                text: i18n.t('panel.render.rendering', { ellipsis: true }),
+                                progress: 100 * (frameIndex + fraction) / totalFrames
+                            });
+                        }
+                    });
+                    if (ok) {
+                        await encodeFrame(frameTime);
                     }
-
-                    // project the faces to the equirect target and encode
-                    equirect.project();
-                    await equirect.read(data);
-                    await encodeFrame(frameTime);
                 };
 
                 for (let frameTime = 0; frameTime <= duration; frameTime += 1.0 / frameRate) {
@@ -659,7 +847,9 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
                     if (is360) {
                         // restore animated-pose evaluation before the timeline
-                        // advances (fov feeds the tween-to-position mapping)
+                        // advances (fov feeds the tween-to-position mapping);
+                        // stereo left the target at strip size
+                        if (ods) scene.camera.startOffscreenMode(faceSize, faceSize);
                         scene.camera.setPoseOverride(null);
                         scene.camera.fov = savedFov;
 
@@ -704,7 +894,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 }
                 await output.finalize();
 
-                const filename = () => `${baseFilename()}${videoSettings.filenameSuffix ?? ''}.${fileExtension}`;
+                const filename = () => `${baseFilename()}${videoSettings.filenameSuffix ?? (isStereo ? '_TB' : '')}.${fileExtension}`;
 
                 if (taggable) {
                     // patch spherical metadata into the finished buffer so
@@ -712,7 +902,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     if (!cancelled) {
                         let buffer = (target as BufferTarget).buffer;
                         try {
-                            buffer = injectSphericalMetadata(buffer);
+                            buffer = injectSphericalMetadata(buffer, isStereo);
                         } catch (error) {
                             console.warn(`failed to inject spherical metadata: ${error.message ?? error}`);
                         }
@@ -781,12 +971,14 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 events.invoke('camera.setRenderOverride', null);
                 events.fire('camera.applyView');
 
-                if (equirect) {
+                if (equirect || ods) {
                     scene.camera.setPoseOverride(null);
                     scene.camera.fov = savedFov;
                     scene.camera.ortho = savedOrtho;
-                    equirect.destroy();
+                    equirect?.destroy();
                     equirect = null;
+                    ods?.destroy();
+                    ods = null;
                 }
 
                 scene.camera.endOffscreenMode();
@@ -811,5 +1003,5 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
     });
 };
 
-export { ImageSettings, registerRenderEvents };
+export { ImageSettings, PanoramaJob, PanoramaSource, StereoSettings, registerRenderEvents };
 export type { VideoSettings } from './video-config';

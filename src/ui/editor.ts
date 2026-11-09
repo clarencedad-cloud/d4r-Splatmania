@@ -6,6 +6,7 @@ import { DataPanel } from './data-panel';
 import { Events } from '../events';
 import { ExportSettings } from '../export-settings';
 import type { BlobReadSource } from '../io';
+import type { PanoramaJob } from '../render';
 import { AboutPopup } from './about-popup';
 import { BottomToolbar } from './bottom-toolbar';
 import { CameraInfoOverlay } from './camera-info-overlay';
@@ -274,6 +275,45 @@ class EditorUI {
                     };
                     const imageFileType = imageFileTypes[imageSettings.format];
 
+                    // panoramas from the shot cameras: one image per camera
+                    // or key, named <project>_<camera>_f<frame>(_TB)
+                    const jobs = events.invoke('render.panoramaJobs', imageSettings.source) as PanoramaJob[];
+                    const tb = imageSettings.projection === 'stereo' ? '_TB' : '';
+                    const base = events.invoke('render.baseFilename');
+                    if (imageSettings.source && imageSettings.source.mode !== 'view') {
+                        if (jobs.length === 0) {
+                            await events.invoke('showPopup', {
+                                type: 'error',
+                                header: i18n.t('panel.render.failed'),
+                                message: 'Die gewählte Kamera hat keine Keys.'
+                            });
+                            return;
+                        }
+                        const directory = jobs.length > 1 && window.showDirectoryPicker ?
+                            await window.showDirectoryPicker({ id: 'SplatmaniaPanoramaFolderExport', mode: 'readwrite' }) :
+                            null;
+                        for (const job of jobs) {
+                            const name = `${base}${job.suffix}${tb}`;
+                            let handle: FileSystemFileHandle | null = null;
+                            if (directory) {
+                                handle = await directory.getFileHandle(`${name}${imageFileType.extension}`, { create: true });
+                            } else if (jobs.length === 1 && window.showSaveFilePicker) {
+                                handle = await window.showSaveFilePicker({
+                                    id: 'SuperSplatImageFileExport',
+                                    types: [{ description: imageFileType.description, accept: imageFileType.accept }],
+                                    suggestedName: `${name}${imageFileType.extension}`
+                                });
+                            }
+                            const stream = handle ? await handle.createWritable() : undefined;
+                            const ok = await events.invoke('render.image', { ...imageSettings, job, filename: name }, stream);
+                            if (!ok) {
+                                if (handle?.remove) await handle.remove();
+                                break;
+                            }
+                        }
+                        return;
+                    }
+
                     if (window.showSaveFilePicker) {
                         fileHandle = await window.showSaveFilePicker({
                             id: 'SuperSplatImageFileExport',
@@ -281,7 +321,7 @@ class EditorUI {
                                 description: imageFileType.description,
                                 accept: imageFileType.accept
                             }],
-                            suggestedName: `${events.invoke('render.baseFilename')}${imageFileType.extension}`
+                            suggestedName: `${base}${tb}${imageFileType.extension}`
                         });
 
                         writable = await fileHandle.createWritable();
@@ -364,7 +404,7 @@ class EditorUI {
                             null;
 
                         for (const camera of cameras) {
-                            const suffix = `_${safe(camera.name)}`;
+                            const suffix = `_${safe(camera.name)}${videoSettings.projection === 'stereo' ? '_TB' : ''}`;
                             const settings = { ...videoSettings, shot: { mode: 'camera' as const, cameraId: camera.id }, filenameSuffix: suffix };
                             const handle = directory ? await directory.getFileHandle(`${base}${suffix}${fileExtension}`, { create: true }) : null;
                             const stream = handle ? await handle.createWritable() : undefined;
@@ -377,7 +417,7 @@ class EditorUI {
                         return;
                     }
 
-                    const suggested = `${events.invoke('render.baseFilename')}${fileExtension}`;
+                    const suggested = `${events.invoke('render.baseFilename')}${videoSettings.projection === 'stereo' ? '_TB' : ''}${fileExtension}`;
 
                     let writable;
                     let fileHandle: FileSystemFileHandle | undefined;

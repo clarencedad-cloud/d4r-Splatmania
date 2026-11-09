@@ -527,6 +527,65 @@ Starten mit **X** oder über den Knopf „✎ Pfad bearbeiten (X)“ in der Kame
 ### Idee (nicht gebaut)
 - Bild-im-Bild-Vorschau (z. B. 240×135) der Sicht durch die Kamera am gezogenen Key. Bräuchte einen zweiten Render-Target-Pass für die Splats und ist deshalb ein größerer Umbau.
 
+## Neu: Stereo-360 (VR) und Panoramen aus den Kameras
+
+### Bedienung
+- **Rendern → Bild/Video → Projektion „360° Stereo (oben/unten)“**: oben linkes Auge, unten rechtes Auge, Gesamtbild 1:1, jedes Auge 2:1 equirect. Presets im Bild 2048² bis 8192², im Video 1024² bis 8192²; was der Encoder oder die Textur-Grenze nicht schafft, wird wie bisher ausgegraut.
+- Regler (nur bei Stereo):
+  - **Augenabstand**: Standard 0,064 Szeneneinheiten, also 6,4 cm in einer Szene in Metern. Eine unskalierte PLY kann andere Einheiten haben, der Tooltip weist darauf hin.
+  - **Pol-Überblendung ab**: Standard 50°.
+  - **Stereo-Qualität**: 48, 96, 112 oder 160 Segmente pro Auge.
+  - Horizont-Ausrichtung wie bei Mono-360.
+- **Quelle** (Bild, Mono und Stereo):
+  - Aktuelle Ansicht
+  - Kamera am aktuellen Frame
+  - Alle Keyframes einer Kamera
+  - Alle Kameras am aktuellen Frame
+  - Alle Keyframes aller Kameras
+- **Ausrichtung bei Kamera-Quellen:** Die Panoramamitte folgt der Blickrichtung der Kamera bzw. des Keys, optional „Nord = Welt -Z“. Der Horizont ist immer gerade: nur der Yaw zählt, Pitch und Roll werden ignoriert.
+- **Mehrere Panoramen** landen per Ordner-Dialog als `<Projekt>_<Kamera>_f<Frame>.jpg`, bei Stereo mit `_TB`. Ohne File-System-API gibt es Einzel-Downloads mit denselben Namen. Stereo-Videos bekommen ebenfalls `_TB`, auch bei „Alle Kameras einzeln“.
+- **Video:** Mono- und Stereo-360 gelten für Schnitt, eine Kamera und alle Kameras, die Kamerapfade fahren als 360-Video.
+- Stereo-Bilder und -Videos zeigen einen Fortschritt mit Abbrechen.
+
+### Verfahren: omnidirektionales Stereo (ODS) aus Streifen (`src/ods-renderer.ts`, `src/shaders/ods-shader.ts`)
+- **Warum ODS:** Zwei verschobene Würfelkameras liefern nur vorne die richtige Disparität. Seitlich fällt sie auf 0, hinten ist sie vertauscht.
+- **Streifen:** Pro Auge und Azimut-Segment k wird eine schmale, hohe Perspektivkamera gerendert. Sie blickt mit Yaw θk und Pitch 0 und sitzt tangential auf dem Kreis mit Radius IPD/2 um den Aufnahmepunkt: linkes Auge links der Blickrichtung, rechtes Auge rechts davon. So hat jede Blickrichtung die Disparität, die ein Kopf hätte, der dorthin schaut.
+- **Abdeckung:** Die Streifenkamera deckt ±72° Höhe ab. Im Equirect wird nur das Band θk ± Schrittweite geschrieben, mit Dreiecksgewichten. Benachbarte Streifen überlappen zu 100 % und ihre Gewichte summieren sich genau zu 1: eine weiche Überblendung ohne Nähte und ohne Normalisierungs-Pass, additiv geblendet.
+- **Pole:** Zusätzlich werden die 6 Mono-Würfelflächen (IPD 0) gerendert. Ab der Pol-Überblendung (Standard 50°) blendet jeder Streifen über 15° (spätestens bis 70°) weich ins Mono-Panorama. Oben und unten entstehen so keine Doppelbilder. Ehrlicher Kompromiss: Das ist eine Bild-Überblendung, keine geometrisch abnehmende IPD; bei 50–65° ist die Disparität aber ohnehin klein.
+- **Aufwand:** Ein Stereo-Frame braucht 6 + 2 × Segmente Render-Durchgänge. Im Test dauerte ein Bild 2048² mit 112 Segmenten ca. 4 s; ein 2-s-Video 1024² mit 48 Segmenten und 60 Frames ca. 90 s.
+- **Strip-Format:** Der Splat-Renderer zieht nahe Objekte auf sehr schmalen, hohen Targets zu dünnen Nadeln aus (98 × 2006 px: deutlich, 600 × 2006: sauber). Die Streifen werden deshalb mindestens Höhe / 3,4 breit gerendert und nur ihre Mitte verwendet.
+- **Weitere Änderungen dafür:**
+  - Der Projector klemmt die Off-Axis-Steigung jetzt wie die 3DGS-Referenz auf 1,3 × halbe FOV. Das betrifft nur Splats außerhalb des Bildes.
+  - 360-Bilder laufen jetzt im `lockedRenderMode` (sortierter Pfad), wie Videos schon immer. Sonst kann beim Springen der Kamera zwischen Flächen bzw. Streifen der adaptive stochastische Modus anspringen.
+
+### Metadaten (`src/spherical-metadata.ts`)
+- **Video Mono:** wie bisher Spherical Video V1 (uuid + GSpherical-XML).
+- **Video Stereo:**
+  - V1 mit zusätzlichem `<GSpherical:StereoMode>top-bottom`.
+  - Spherical Video **V2**: `st3d` (stereo_mode 1 = top-bottom) und `sv3d` (svhd + proj/prhd/equi) am Ende des Sample-Entry (avc1/hvc1). Alle Vorfahren-Boxen wachsen mit, stco/co64 werden bei Fast-Start-Layout verschoben.
+  - ffprobe meldet `stereo3d: top and bottom` und `spherical: equirectangular`.
+- **Bilder Mono:** GPano-XMP. JPEG bekommt ein APP1-Segment nach JFIF, PNG einen iTXt-Chunk `XML:com.adobe.xmp`.
+- **Bilder Stereo:** kein GPano. GPano kennt kein Top-Bottom, ein Tag würde Viewer das gestapelte Bild als verzerrtes Mono-Pano zeigen lassen. Erkennung über den Namenszusatz `_TB`, den Quest-, Skybox- und DeoVR-Player auswerten.
+- WebM/MKV bekommen weiterhin keine Spherical-Tags (wie bisher bei Mono).
+
+### Verifiziert
+- **Disparität:** Synthetische Szene `test-data/make-stereo-test.py`: Wandzylinder r = 10, farbige Marker in 1,5 Einheiten Abstand vorne, hinten, links und rechts, ein weißer Marker direkt unter dem Aufnahmepunkt. Stereo-Bild 2048², IPD 0,064, ausgewertet mit `test-data/measure-disparity.py`.
+  - Erwartet 2·asin(IPD/2/d) = 13,91 px, gemessen vorne +13,99, hinten +13,76, links +14,00, rechts +14,03 px.
+  - Das Vorzeichen ist überall gleich, das linke Auge liegt weiter rechts. Hinten ist die Disparität also nicht vertauscht.
+  - Der Pol-Marker ist in beiden Augen pixelgleich (0 px), es gibt kein Doppelbild.
+- **Haus-Szene:** Mono-360 und Stereo-360 aus Kamera 1, Frame 0. Das Haus liegt mittig, die Panoramamitte folgt der Kamera.
+- **Batch über den echten Dialog:** Ordner-Dialog als Stub, „Alle Keyframes aller Kameras“, 2 Kameras à 3 Keys. Ergebnis sind 6 Dateien `house_Kamera 1_f0_TB.jpg` … `house_Kamera 2_f90_TB.jpg`, alle mit dem Haus mittig.
+- **Stereo-360-MP4:** 1024², 2 s, Kamera 1 fährt ihren Pfad; st3d, sv3d und StereoMode sind im File, ffprobe erkennt Stereo und Equirect. Mono-360-MP4 als Regressionstest: weiterhin `spherical: equirectangular`.
+- Testdateien in `test-data/out/`:
+  - Bilder: `stereo_test_TB.png`, `house_stereo_TB.jpg`, `house_mono.jpg`
+  - Video: `stereo360_TB.mp4`
+  - Kontaktabzüge: `batch_sheet.jpg`, `stereo360_sheet.png`
+
+### Offen / Ideen
+- Echte geometrisch abnehmende IPD zu den Polen (statt Bildüberblendung): bräuchte Streifen auch in der Höhe, also Kacheln statt Streifen.
+- Die Nadel-Artefakte des Renderers bei extremen Seitenverhältnissen sind nur umgangen, nicht behoben. Vermutlich ein Problem im Raster-Pfad.
+- Stereo-Bilder mit Google-Cardboard-XMP (GImage) wären möglich, sind aber kaum noch verbreitet.
+
 ## Nachbesserungen nach dem Klicktest der Hauptsession
 
 1. **Keine Startfehler „function not found 'selection'“ mehr**: Track-Manager, Layer-Animator, Layer-Animator-Panel und Zeitleisten-Zeilen fragen die Auswahl erst ab, wenn sie registriert ist (`events.functions.has('selection')`). Geprüft: Nach frischem Laden kamen keine neuen Meldungen hinzu.

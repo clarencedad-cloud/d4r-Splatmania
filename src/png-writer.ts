@@ -67,4 +67,4 @@ const encodePng = async (rgba: Uint8Array, width: number, height: number): Promi
     return result;
 };
 
-export { encodePng };
+export { encodePng, chunk as pngChunk };
