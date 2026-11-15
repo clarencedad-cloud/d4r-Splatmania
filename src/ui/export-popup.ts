@@ -192,9 +192,9 @@ class ExportPopup extends Container {
         });
 
         const layerLabel = new Label({
-            class: 'label',
-            text: 'Nur aktiver Layer'
+            class: 'label'
         });
+        i18n.bindText(layerLabel, 'sm.export.active-layer');
 
         const layerBoolean = new BooleanInput({
             class: 'boolean',

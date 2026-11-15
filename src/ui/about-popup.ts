@@ -61,7 +61,7 @@ class AboutPopup extends Container {
         const logoMarkup = decodeURIComponent(logoSvg.substring('data:image/svg+xml,'.length));
         logoContainer.dom.appendChild(new DOMParser().parseFromString(logoMarkup, 'image/svg+xml').documentElement);
         logoContainer.dom.addEventListener('click', () => {
-            window.open('https://github.com/clarencedad-cloud/d4r-Splatmania', '_blank')?.focus();
+            window.open('https://github.com/clarencedad-cloud/d4r-Splatmania', '_blank', 'noopener,noreferrer');
         });
 
         // App name and version
@@ -69,7 +69,7 @@ class AboutPopup extends Container {
             id: 'about-app-info'
         });
         appInfo.dom.addEventListener('click', () => {
-            window.open('https://github.com/clarencedad-cloud/d4r-Splatmania', '_blank')?.focus();
+            window.open('https://github.com/clarencedad-cloud/d4r-Splatmania', '_blank', 'noopener,noreferrer');
         });
 
         const appName = new Label({
@@ -95,7 +95,7 @@ class AboutPopup extends Container {
             class: 'about-dep-row'
         });
         pcuiRow.dom.addEventListener('click', () => {
-            window.open('https://github.com/playcanvas/pcui', '_blank')?.focus();
+            window.open('https://github.com/playcanvas/pcui', '_blank', 'noopener,noreferrer');
         });
         const pcuiName = new Label({ class: 'about-dep-name', text: 'PCUI' });
         const pcuiVersionL = new Label({ class: 'about-dep-version', text: `v${pcuiVersion}` });
@@ -107,7 +107,7 @@ class AboutPopup extends Container {
             class: 'about-dep-row'
         });
         engineRow.dom.addEventListener('click', () => {
-            window.open('https://github.com/playcanvas/engine', '_blank')?.focus();
+            window.open('https://github.com/playcanvas/engine', '_blank', 'noopener,noreferrer');
         });
         const engineName = new Label({ class: 'about-dep-name', text: 'Engine' });
         const engineVer = new Label({ class: 'about-dep-version', text: `v${engineVersion}` });
@@ -119,7 +119,7 @@ class AboutPopup extends Container {
             class: 'about-dep-row'
         });
         stRow.dom.addEventListener('click', () => {
-            window.open('https://github.com/playcanvas/splat-transform', '_blank')?.focus();
+            window.open('https://github.com/playcanvas/splat-transform', '_blank', 'noopener,noreferrer');
         });
         const stName = new Label({ class: 'about-dep-name', text: 'Splat Transform' });
         const stVer = new Label({ class: 'about-dep-version', text: `v${stVersion}` });
@@ -131,7 +131,7 @@ class AboutPopup extends Container {
             class: 'about-dep-row'
         });
         baseRow.dom.addEventListener('click', () => {
-            window.open('https://github.com/playcanvas/supersplat', '_blank')?.focus();
+            window.open('https://github.com/playcanvas/supersplat', '_blank', 'noopener,noreferrer');
         });
         baseRow.append(new Label({ class: 'about-dep-name', text: 'based on SuperSplat' }));
         baseRow.append(new Label({ class: 'about-dep-version', text: 'PlayCanvas, MIT' }));

@@ -2,6 +2,8 @@
 // One job at a time; abort terminates the worker (the cores run tight loops
 // and cannot poll for messages), the next job starts a fresh one.
 
+import { buildQuery } from '../build-query';
+
 type Job = {
     resolve: (value: any) => void,
     reject: (reason: any) => void,
@@ -20,7 +22,7 @@ const jobs = new Map<number, Job>();
 
 const getWorker = () => {
     if (!worker) {
-        worker = new Worker(new URL('analysis-worker.js', document.baseURI), { type: 'module' });
+        worker = new Worker(new URL(`analysis-worker.js${buildQuery}`, document.baseURI), { type: 'module' });
         worker.onmessage = (event: MessageEvent) => {
             const { id, progress, result, error } = event.data;
             const job = jobs.get(id);
@@ -37,7 +39,7 @@ const getWorker = () => {
             }
         };
         worker.onerror = (event: ErrorEvent) => {
-            const message = event.message || 'Analyse-Worker konnte nicht geladen werden';
+            const message = event.message || 'Could not load the analysis worker';
             jobs.forEach(job => job.reject(new Error(message)));
             jobs.clear();
             worker?.terminate();

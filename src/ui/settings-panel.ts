@@ -1,5 +1,6 @@
-import { BooleanInput, Container, Label, SelectInput, SliderInput } from '@playcanvas/pcui';
+import { BooleanInput, Button, Container, Label, SelectInput, SliderInput, TextInput } from '@playcanvas/pcui';
 
+import { keyStore, testKey } from '../ai-shots/claude-client';
 import { Events } from '../events';
 import { i18n } from './localization';
 import resetSvg from './svg/reset.svg';
@@ -8,6 +9,17 @@ import { Tooltips } from './tooltips';
 const createSvg = (svgString: string) => {
     const decodedStr = decodeURIComponent(svgString.substring('data:image/svg+xml,'.length));
     return new DOMParser().parseFromString(decodedStr, 'image/svg+xml').documentElement;
+};
+
+// i18next echoes unknown keys; show a generic text instead
+const translate = (key: string, fallbackKey: string) => {
+    const text = i18n.t(key);
+    return text === key ? i18n.t(fallbackKey) : text;
+};
+
+const errorCode = (error: unknown) => {
+    const code = (error as { code?: unknown } | null)?.code;
+    return typeof code === 'string' && code.startsWith('sm.aishots.') ? code : 'sm.aishots.err.api';
 };
 
 // application preferences: set-and-forget options, as opposed to the viewport
@@ -110,7 +122,7 @@ class SettingsPanel extends Container {
         ]);
 
         // switch language live (no reload). a stored choice persists across
-        // sessions; 'auto' clears it and reverts to the browser locale.
+        // sessions; 'auto' clears it and reverts to the default (English).
         languageSelection.on('change', (value: string) => {
             i18n.setLanguage(value === 'auto' ? null : value);
         });
@@ -255,7 +267,86 @@ class SettingsPanel extends Container {
         stochasticRow.append(stochasticLabel);
         stochasticRow.append(stochasticSelection);
 
+        // ai (claude): the user's own anthropic key, never shown again once saved
+
+        const aiKeyRow = new Container({
+            class: 'settings-panel-row'
+        });
+
+        const aiKeyLabel = new Label({
+            class: 'settings-panel-row-label'
+        });
+        i18n.bindText(aiKeyLabel, 'sm.aishots.settings.key');
+
+        const aiKeyInput = new TextInput({
+            class: 'settings-panel-row-text',
+            placeholder: 'sk-ant-…',
+            blurOnEnter: false
+        });
+        aiKeyInput.input.type = 'password';
+        aiKeyInput.input.autocomplete = 'off';
+        aiKeyInput.input.spellcheck = false;
+        i18n.onChange(() => aiKeyInput.input.setAttribute('aria-label', i18n.t('sm.aishots.settings.key')), aiKeyInput);
+
+        aiKeyRow.append(aiKeyLabel);
+        aiKeyRow.append(aiKeyInput);
+
+        const aiRememberRow = new Container({
+            class: 'settings-panel-row'
+        });
+
+        const aiRememberLabel = new Label({
+            class: 'settings-panel-row-label'
+        });
+        i18n.bindText(aiRememberLabel, 'sm.aishots.settings.remember');
+
+        const aiRememberToggle = new BooleanInput({
+            type: 'toggle',
+            class: 'settings-panel-row-toggle',
+            value: keyStore.remembered()
+        });
+
+        aiRememberRow.append(aiRememberLabel);
+        aiRememberRow.append(aiRememberToggle);
+
+        const aiRememberHint = new Label({
+            class: 'ai-settings-note'
+        });
+        i18n.bindText(aiRememberHint, 'sm.aishots.settings.remember-hint');
+
+        const aiButtonsRow = new Container({
+            class: ['settings-panel-row', 'ai-settings-buttons']
+        });
+
+        const aiSaveButton = new Button();
+        i18n.bindText(aiSaveButton, 'sm.aishots.settings.save-test');
+
+        const aiClearButton = new Button();
+        i18n.bindText(aiClearButton, 'sm.aishots.settings.clear');
+
+        aiButtonsRow.append(aiSaveButton);
+        aiButtonsRow.append(aiClearButton);
+
+        const aiStatus = new Label({
+            class: 'ai-settings-note'
+        });
+
+        const aiHint = new Label({
+            class: 'ai-settings-note'
+        });
+        i18n.bindText(aiHint, 'sm.aishots.settings.hint');
+
+        const aiLink = document.createElement('div');
+        aiLink.className = 'ai-settings-note';
+        const aiLinkAnchor = document.createElement('a');
+        aiLinkAnchor.href = 'https://console.anthropic.com/settings/keys';
+        aiLinkAnchor.target = '_blank';
+        aiLinkAnchor.rel = 'noopener noreferrer';
+        i18n.bindDom(aiLinkAnchor, 'sm.aishots.settings.get-key');
+        aiLink.appendChild(aiLinkAnchor);
+
         rowToggles(fovDollyRow, fovDollyToggle);
+        rowToggles(aiRememberRow, aiRememberToggle);
 
         this.append(header);
         this.append(languageRow);
@@ -267,6 +358,14 @@ class SettingsPanel extends Container {
         this.append(cameraFlySpeedRow);
         this.append(fovRow);
         this.append(fovDollyRow);
+        this.append(sectionHeader('sm.aishots.settings.section'));
+        this.append(aiKeyRow);
+        this.append(aiRememberRow);
+        this.append(aiRememberHint);
+        this.append(aiButtonsRow);
+        this.append(aiStatus);
+        this.append(aiHint);
+        this.dom.appendChild(aiLink);
 
         // handle panel visibility
 
@@ -359,6 +458,123 @@ class SettingsPanel extends Container {
 
         tonemappingSelection.on('change', (value: string) => {
             events.fire('camera.setTonemapping', value);
+        });
+
+        // ai key: 'testing', 'ok' or the error code of the last test.
+        // A newly entered key is tested first and only saved when it works;
+        // aiRejected holds the error of an entered key that was not saved
+
+        let aiTest: string | null = null;
+        let aiRejected: string | null = null;
+        let aiTestRun = 0;
+
+        const renderAiStatus = () => {
+            const key = keyStore.get();
+            const last4 = key ? key.slice(-4) : '';
+            let state: 'ok' | 'error' | null = null;
+            if (aiTest === 'testing') {
+                aiStatus.text = i18n.t('sm.aishots.settings.status-testing');
+            } else if (aiRejected) {
+                aiStatus.text = i18n.t('sm.aishots.settings.status-not-saved', { error: translate(aiRejected, 'sm.aishots.err.api') });
+                state = 'error';
+            } else if (!key) {
+                aiStatus.text = i18n.t('sm.aishots.settings.status-none');
+            } else if (aiTest === 'ok') {
+                aiStatus.text = i18n.t('sm.aishots.settings.status-ok', { last4 });
+                state = 'ok';
+            } else if (aiTest) {
+                aiStatus.text = i18n.t('sm.aishots.settings.status-error', { error: translate(aiTest, 'sm.aishots.err.api'), last4 });
+                state = 'error';
+            } else {
+                aiStatus.text = i18n.t('sm.aishots.settings.status-saved', { last4 });
+            }
+            aiStatus.class[state === 'ok' ? 'add' : 'remove']('ai-settings-ok');
+            aiStatus.class[state === 'error' ? 'add' : 'remove']('ai-settings-error');
+            aiClearButton.enabled = !!key;
+        };
+        i18n.onChange(renderAiStatus, aiStatus);
+
+        const saveAndTestKey = async () => {
+            const entered = aiKeyInput.value.trim();
+            // a new key is tested before it is stored; without input the
+            // stored key is re-tested
+            const key = entered || keyStore.get();
+            const run = ++aiTestRun;
+            aiRejected = null;
+            aiTest = key ? 'testing' : null;
+            renderAiStatus();
+            if (!key) {
+                return;
+            }
+            aiSaveButton.enabled = false;
+            let error: string | null = null;
+            try {
+                await testKey(key);
+            } catch (err) {
+                error = errorCode(err);
+            }
+            if (run !== aiTestRun) {
+                return;
+            }
+            if (!entered) {
+                aiTest = error ?? 'ok';
+            } else if (error) {
+                // nothing stored (also on network errors): the entry stays in
+                // the field so it can be corrected or tried again
+                aiTest = null;
+                aiRejected = error;
+            } else {
+                keyStore.set(entered, aiRememberToggle.value);
+                if (aiKeyInput.value.trim() === entered) aiKeyInput.value = '';
+                aiTest = 'ok';
+            }
+            aiSaveButton.enabled = true;
+            renderAiStatus();
+            events.fire('aiShots.keyChanged');
+        };
+
+        aiSaveButton.on('click', () => saveAndTestKey());
+
+        aiKeyInput.input.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                saveAndTestKey();
+            }
+        });
+
+        aiClearButton.on('click', () => {
+            keyStore.clear();
+            aiKeyInput.value = '';
+            aiTestRun++;
+            aiTest = null;
+            aiRejected = null;
+            aiSaveButton.enabled = true;
+            renderAiStatus();
+            events.fire('aiShots.keyChanged');
+        });
+
+        aiRememberToggle.on('change', (value: boolean) => {
+            const key = keyStore.get();
+            if (key && value !== keyStore.remembered()) {
+                keyStore.set(key, value);
+            }
+        });
+
+        // the key was removed or replaced in another tab
+        keyStore.onChange(() => {
+            aiTestRun++;
+            aiTest = null;
+            aiSaveButton.enabled = true;
+            aiRememberToggle.value = keyStore.remembered();
+            renderAiStatus();
+            events.fire('aiShots.keyChanged');
+        });
+
+        events.on('settingsPanel.visible', (visible: boolean) => {
+            if (visible) {
+                aiRememberToggle.value = keyStore.remembered();
+                renderAiStatus();
+            }
         });
 
         // reset preferences

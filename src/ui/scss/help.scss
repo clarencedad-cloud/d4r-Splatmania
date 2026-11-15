@@ -1,0 +1,173 @@
+@use 'colors.scss' as *;
+
+// "?" button in tool panel headers
+.help-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin: 0 4px;
+    border-radius: 50%;
+    border: 1px solid rgba(194, 14, 126, 0.6);
+
+    color: $clr-hilight;
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 1;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+        color: $text-primary;
+        background-color: $clr-hilight;
+        border-color: $clr-hilight;
+        outline: none;
+    }
+}
+
+#help-popup {
+    width: 100%;
+    height: 100%;
+    background-color: $bcg-darken;
+    pointer-events: all;
+
+    .help-dialog {
+        position: absolute;
+        width: 520px;
+        max-width: calc(100% - 32px);
+        max-height: 80vh;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+
+        border-radius: 8px;
+        background-color: $bcg-primary;
+        filter: drop-shadow(5px 5px 10px rgba(0, 0, 0, 0.8));
+        will-change: transform;
+    }
+
+    .help-header {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        min-height: 36px;
+        padding: 0 8px 0 12px;
+        background-color: $bcg-darker;
+
+        .help-back {
+            margin: 0;
+            color: $clr-hilight;
+            cursor: pointer;
+            white-space: nowrap;
+
+            &:hover {
+                color: $text-primary;
+            }
+        }
+
+        .help-title {
+            flex-grow: 1;
+            margin: 0;
+            color: $text-primary;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .help-close {
+            margin: 0;
+            padding: 4px 6px;
+            color: $text-secondary;
+            cursor: pointer;
+
+            &:hover {
+                color: $text-primary;
+            }
+        }
+    }
+
+    .help-body {
+        padding: 14px 16px 18px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        user-select: text;
+
+        * {
+            user-select: text;
+        }
+    }
+
+    .help-intro {
+        display: block;
+        margin: 0 0 12px;
+        color: $text-primary;
+        line-height: 1.5;
+        white-space: normal;
+    }
+
+    .help-heading {
+        display: block;
+        margin: 14px 0 6px;
+        color: $clr-hilight;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+    }
+
+    .help-steps,
+    .help-tips {
+        margin: 0;
+        padding-left: 20px;
+        color: $text-primary;
+
+        li {
+            margin: 0 0 6px;
+            line-height: 1.5;
+        }
+    }
+
+    .help-tips li {
+        color: $text-secondary;
+    }
+
+    .help-topics {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .help-topic {
+        padding: 8px 10px;
+        border-radius: 6px;
+        background-color: rgba(255, 255, 255, 0.03);
+        cursor: pointer;
+
+        &:hover,
+        &:focus-visible {
+            background-color: rgba(194, 14, 126, 0.16);
+            outline: none;
+        }
+
+        .help-topic-title {
+            display: block;
+            margin: 0 0 2px;
+            color: $text-primary;
+            font-weight: bold;
+        }
+
+        .help-topic-intro {
+            display: block;
+            margin: 0;
+            color: $text-secondary;
+            white-space: normal;
+            line-height: 1.4;
+        }
+    }
+}

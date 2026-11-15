@@ -1,6 +1,7 @@
 import { WebPCodec, WorkerQueue } from '@playcanvas/splat-transform';
 import { Color, createGraphicsDevice } from 'playcanvas';
 
+import { registerAiShotsEvents } from './ai-shots/ai-shots';
 import { AlignTool } from './align/align-tool';
 import { registerCameraPosesEvents } from './camera-poses';
 import { registerCleanupEvents } from './cleanup';
@@ -14,6 +15,9 @@ import { Events } from './events';
 import { initFileHandler } from './file-handler';
 import { registerIframeApi } from './iframe-api';
 import { registerLayerAnimEvents } from './layer-anim';
+import { registerLightEvents } from './light/light';
+import { LightPanel } from './light/light-panel';
+import { registerLookEvents } from './look/look';
 import { registerPreferences } from './preferences';
 import { registerPublishEvents } from './publish';
 import { QualityTool } from './quality/quality-tool';
@@ -25,6 +29,7 @@ import { registerSelectionEvents } from './selection';
 import { registerSequenceEvents } from './sequence';
 import { ShortcutManager } from './shortcut-manager';
 import { registerTimelineEvents } from './timeline';
+import { registerTitleEvents } from './titles';
 import { BoxSelection } from './tools/box-selection';
 import { BrushSelection } from './tools/brush-selection';
 import { CameraPathTool } from './tools/camera-path-tool';
@@ -33,6 +38,7 @@ import { FloodSelection } from './tools/flood-selection';
 import { LassoSelection } from './tools/lasso-selection';
 import { MeasureTool } from './tools/measure-tool';
 import { MoveTool } from './tools/move-tool';
+import { registerObjectGizmo } from './tools/object-gizmo';
 import { OrientTool } from './tools/orient-tool';
 import { PolygonSelection } from './tools/polygon-selection';
 import { RectSelection } from './tools/rect-selection';
@@ -280,6 +286,12 @@ const main = async () => {
     toolManager.register('section', new SectionTool(events, scene, editorUI.canvasContainer));
     toolManager.register('cameraPath', new CameraPathTool(events, scene, editorUI.canvasContainer));
     registerDofEvents(events, scene, editorUI.canvasContainer);
+    registerLookEvents(events, scene);
+    registerLightEvents(events, scene);
+    registerObjectGizmo(events, scene);
+    editorUI.canvasContainer.append(new LightPanel(events, editorUI.tooltips));
+    registerTitleEvents(events);
+    registerAiShotsEvents(events, scene);
     toolManager.register('orient', new OrientTool(events, scene, editorUI.toolsContainer.dom, editorUI.canvasContainer, editorUI.annotationContainer.dom));
 
     const boundDimensionsOverlay = new BoundDimensionsOverlay(events, scene, editorUI.canvasContainer, editorUI.annotationContainer.dom);

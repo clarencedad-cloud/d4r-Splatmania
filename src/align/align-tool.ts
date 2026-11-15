@@ -13,6 +13,8 @@ import type { Scene } from '../scene';
 import type { Splat } from '../splat';
 import { Transform } from '../transform';
 import { makeFloating } from '../ui/floating-panel';
+import { helpButton } from '../ui/help';
+import { i18n } from '../ui/localization';
 
 // Anchor-point alignment of splat layers (Splatterline style). One layer is
 // the reference and stays put. On every other layer, anchor n pairs with
@@ -95,13 +97,17 @@ class AlignTool {
         });
         canvasContainer.append(panel);
 
-        makeFloating(panel, { key: 'align', title: 'Ausrichten (Ankerpunkte)' });
-        panel.append(new Label({ text: 'Aktiven Layer im Szenen-Manager wählen und auf seine Oberfläche klicken. Punkt n gehört zu Punkt n der Referenz. Ziehen = verschieben, Rechtsklick = löschen.', class: 'align-help' }));
+        makeFloating(panel, { key: 'align', title: 'sm.align.title', extras: [helpButton(events, 'align')] });
+        const help = new Label({ class: 'align-help' });
+        i18n.bindText(help, 'sm.align.help');
+        panel.append(help);
         const layerList = new Container({ class: 'align-layers' });
         panel.append(layerList);
 
         const scaleRow = new Container({ class: 'align-row' });
-        scaleRow.append(new Label({ text: 'Skalierung mitrechnen', class: 'align-label' }));
+        const scaleLabel = new Label({ class: 'align-label' });
+        i18n.bindText(scaleLabel, 'sm.align.scale');
+        scaleRow.append(scaleLabel);
         const scaleInput = new BooleanInput({ value: true });
         scaleInput.on('change', (v: boolean) => {
             useScale = v;
@@ -114,13 +120,13 @@ class AlignTool {
         const button = (text: string, title: string, onClick: () => void) => {
             const b = document.createElement('span');
             b.classList.add('align-button');
-            b.textContent = text;
-            b.title = title;
+            i18n.bindDom(b, text);
+            i18n.bindDom(b, title, 'title');
             b.addEventListener('click', onClick);
             buttons.dom.appendChild(b);
         };
-        button('Align', 'Alle Layer mit mindestens 3 Punktpaaren auf die Referenz ausrichten', () => events.invoke('align.run'));
-        button('Punkte löschen', 'Alle Ankerpunkte des aktiven Layers löschen', () => {
+        button('sm.align.align', 'sm.align.align-tip', () => events.invoke('align.run'));
+        button('sm.align.clear', 'sm.align.clear-tip', () => {
             const splat = events.invoke('selection') as Splat;
             if (splat && anchorsOf(splat).length) editAnchors(splat, list => list.splice(0));
         });
@@ -128,9 +134,11 @@ class AlignTool {
         // fine alignment ("Präzisieren"): robust ICP on the splat centres
         const refineRow = new Container({ class: 'align-row' });
         panel.append(refineRow);
-        refineRow.append(new Label({ text: 'Suchradius', class: 'align-label' }));
+        const radiusLabel = new Label({ class: 'align-label' });
+        i18n.bindText(radiusLabel, 'sm.align.radius');
+        refineRow.append(radiusLabel);
         const radiusSlider = new SliderInput({ min: 0, max: 2, sliderMin: 0, sliderMax: 0.5, precision: 3, step: 0.005, value: 0 });
-        radiusSlider.dom.title = 'Größte erwartete Restabweichung nach den Ankerpunkten (Welteinheiten). 0 = automatisch';
+        i18n.bindDom(radiusSlider.dom, 'sm.align.radius-tip', 'title');
         // 0 means automatic (overlap diagonal / 50, decided by the core)
         const radiusHint = new Label({ text: 'auto', class: 'align-radius-hint' });
         radiusSlider.on('change', (v: number) => {
@@ -143,8 +151,8 @@ class AlignTool {
         panel.append(refineButtons);
         const refineButton = document.createElement('span');
         refineButton.classList.add('align-button', 'align-refine');
-        refineButton.textContent = 'Präzisieren';
-        refineButton.title = 'Feinausrichtung per ICP auf den Splat-Mitten (nach der Ankerpunkt-Ausrichtung)';
+        i18n.bindDom(refineButton, 'sm.align.refine');
+        i18n.bindDom(refineButton, 'sm.align.refine-tip', 'title');
         refineButton.addEventListener('click', () => events.invoke('align.refine'));
         refineButtons.dom.appendChild(refineButton);
 
@@ -163,7 +171,7 @@ class AlignTool {
                 radio.type = 'radio';
                 radio.name = 'align-reference';
                 radio.checked = splat === reference;
-                radio.title = 'Referenz (bleibt fest)';
+                radio.title = i18n.t('sm.align.reference-tip');
                 radio.addEventListener('change', () => {
                     events.fire('align.setReference', splat);
                 });
@@ -172,7 +180,7 @@ class AlignTool {
                 swatch.style.backgroundColor = colorOf(splat);
                 const name = document.createElement('span');
                 name.classList.add('align-name');
-                name.textContent = `${splat.name}${splat === reference ? ' (Referenz)' : ''}`;
+                name.textContent = `${splat.name}${splat === reference ? ` (${i18n.t('sm.align.reference')})` : ''}`;
                 name.addEventListener('click', () => events.fire('selection', splat));
                 const info = document.createElement('span');
                 info.classList.add('align-info');
@@ -180,10 +188,10 @@ class AlignTool {
                 const count = anchorsOf(splat).length;
                 const fine = refined.get(splat);
                 info.textContent = typeof fine === 'object' ?
-                    `Median ${fine.before.median.toFixed(4)} → ${fine.after.median.toFixed(4)} · Überlappung ${(fine.after.overlap * 100).toFixed(0)} %` :
+                    i18n.t('sm.align.refined', { before: fine.before.median.toFixed(4), after: fine.after.median.toFixed(4), overlap: (fine.after.overlap * 100).toFixed(0) }) :
                     typeof result === 'object' ?
-                        `${count} Pkt · RMS ${result.rms.toFixed(3)} · ${result.residuals.map(r => r.toFixed(3)).join(' / ')}` :
-                        `${count} Pkt`;
+                        `${i18n.t('sm.align.points', { count })} · RMS ${result.rms.toFixed(3)} · ${result.residuals.map(r => r.toFixed(3)).join(' / ')}` :
+                        i18n.t('sm.align.points', { count });
                 row.append(radio, swatch, name, info);
                 layerList.dom.appendChild(row);
             }
@@ -289,7 +297,7 @@ class AlignTool {
             if (moved) return;
             const hit = await pick(start.x, start.y);
             if (!hit) {
-                message = 'Kein Treffer auf dem aktiven Layer.';
+                message = i18n.t('sm.align.no-hit');
                 rebuildPanel();
                 return;
             }
@@ -361,7 +369,7 @@ class AlignTool {
             const reference = ref();
             message = '';
             if (!reference) {
-                message = 'Kein Layer vorhanden.';
+                message = i18n.t('sm.align.no-layer');
                 rebuildPanel();
                 return null;
             }
@@ -372,8 +380,8 @@ class AlignTool {
                 if (splat === reference || anchorsOf(splat).length === 0) continue;
                 const n = Math.min(anchorsOf(splat).length, dst.length);
                 if (n < 3) {
-                    results.set(splat, `mindestens 3 Punktpaare nötig (${n})`);
-                    message = `${splat.name}: mindestens 3 Punktpaare nötig (vorhanden: ${n}).`;
+                    results.set(splat, i18n.t('sm.align.need-three-short', { n }));
+                    message = `${splat.name}: ${i18n.t('sm.align.need-three', { n })}`;
                     continue;
                 }
                 const src = anchorsOf(splat).slice(0, n).map(p => toWorld(splat, p));
@@ -383,7 +391,7 @@ class AlignTool {
                 } catch (error) {
                     const text = `${(error as Error).message ?? error}`;
                     results.set(splat, text);
-                    message = `${splat.name}: ${text.includes('triangle') ? 'Punkte liegen auf einer Linie oder aufeinander – bitte als Dreieck verteilen.' : text}`;
+                    message = `${splat.name}: ${text.includes('triangle') ? i18n.t('sm.align.degenerate') : text}`;
                     continue;
                 }
 
@@ -399,7 +407,7 @@ class AlignTool {
             if (ops.length) {
                 events.fire('edit.add', new MultiOp(ops));
             } else if (!message) {
-                message = 'Keine Layer mit Ankerpunkten zum Ausrichten.';
+                message = i18n.t('sm.align.no-anchors');
             }
             rebuildPanel();
             return summary;
@@ -415,14 +423,14 @@ class AlignTool {
             if (refining || !reference) return null;
             const moving = splats().filter(s => s !== reference && s.visible);
             if (moving.length === 0) {
-                message = 'Kein weiterer sichtbarer Layer zum Präzisieren.';
+                message = i18n.t('sm.align.no-other');
                 rebuildPanel();
                 return null;
             }
             refining = true;
             message = '';
             const summary: Record<string, unknown> = {};
-            events.fire('progressStart', 'Präzisieren', true);
+            events.fire('progressStart', i18n.t('sm.align.refine'), true);
             const cancel = events.on('progressCancel', () => abortAnalysis());
             try {
                 const read = (splat: Splat) => readLayerData(splat, {
@@ -440,12 +448,12 @@ class AlignTool {
                         reference: refData.positions,
                         options: { scale: useScale, maxError: searchRadius > 0 ? searchRadius : undefined }
                     }, [], (p) => {
-                        events.fire('progressUpdate', { text: `Präzisieren: ${splat.name}`, progress: 100 * (base + p / moving.length) });
+                        events.fire('progressUpdate', { text: `${i18n.t('sm.align.refine')}: ${splat.name}`, progress: 100 * (base + p / moving.length) });
                     });
                     refined.set(splat, result);
                     summary[splat.name] = { before: result.before, after: result.after, improved: result.improved, angleDeg: result.angleDeg, scale: result.scale, translation: result.translation, iterations: result.iterations };
                     if (!result.improved) {
-                        message = `${splat.name}: keine Verbesserung, nichts angewendet.`;
+                        message = `${splat.name}: ${i18n.t('sm.align.no-improvement')}`;
                         continue;
                     }
                     const m = new Mat4();
@@ -463,11 +471,11 @@ class AlignTool {
                 if (ops.length) events.fire('edit.add', new MultiOp(ops));
             } catch (error) {
                 if (error instanceof AbortedError) {
-                    message = 'Präzisieren abgebrochen.';
+                    message = i18n.t('sm.align.cancelled');
                 } else {
                     const text = `${(error as Error).message ?? error}`;
-                    message = text.includes('do not overlap') ? 'Die Layer überlappen nicht – erst per Ankerpunkten grob ausrichten.' :
-                        text.includes('too few points') ? 'Zu wenige Punkte im Überlappungsbereich.' : `Präzisieren fehlgeschlagen: ${text}`;
+                    message = text.includes('do not overlap') ? i18n.t('sm.align.no-overlap') :
+                        text.includes('too few points') ? i18n.t('sm.align.too-few') : i18n.t('sm.common.failed', { title: i18n.t('sm.align.refine'), error: text });
                 }
             } finally {
                 cancel.off();

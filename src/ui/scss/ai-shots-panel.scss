@@ -1,0 +1,362 @@
+@use 'colors.scss' as *;
+
+// shot suggestions (src/ui/ai-shots-panel.ts)
+#ai-shots-panel {
+    max-height: calc(100% - 32px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+
+    > * {
+        flex-shrink: 0;
+    }
+
+    .ai-shots-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 28px;
+        padding: 2px 10px;
+
+        > .ai-shots-info {
+            flex: 1 1 auto;
+            min-width: 0;
+            margin: 0;
+            font-size: 11px;
+            white-space: normal;
+        }
+    }
+
+    .ai-shots-hint {
+        opacity: 0.75;
+    }
+
+    .ai-shots-small {
+        flex: 0 0 auto;
+        margin: 0;
+        height: 22px;
+        line-height: 20px;
+        padding: 0 8px;
+        font-size: 11px;
+        min-width: 0;
+    }
+
+    .ai-shots-wish {
+        display: block;
+        width: calc(100% - 20px);
+        box-sizing: border-box;
+        resize: vertical;
+        min-height: 48px;
+        margin: 6px 10px 2px;
+        padding: 4px 6px;
+        border: 1px solid $bcg-light;
+        border-radius: 3px;
+        background-color: $bcg-darkest;
+        color: #e8e4f0;
+        font: 12px sans-serif;
+        user-select: text;
+
+        &:focus {
+            outline: none;
+            border-color: $clr-hilight;
+        }
+
+        &:disabled {
+            opacity: 0.45;
+        }
+    }
+
+    .ai-shots-actions {
+        display: flex;
+        gap: 4px;
+        margin: 8px 10px 2px;
+
+        > .pcui-button {
+            margin: 0;
+        }
+    }
+
+    .ai-shots-generate {
+        flex: 1 1 auto;
+        margin: 8px 10px 2px;
+        background-color: $clr-hilight;
+        border-color: $clr-hilight;
+        color: $clr-active;
+
+        &.pcui-disabled {
+            opacity: 0.5;
+        }
+    }
+
+    .ai-shots-actions > .ai-shots-generate {
+        margin: 0;
+    }
+
+    .ai-shots-cancel {
+        flex: 0 0 auto;
+    }
+
+    .ai-shots-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 4px 10px 0;
+
+        > .ai-shots-status-label {
+            flex: 1 1 auto;
+            min-width: 0;
+            margin: 0;
+            font-size: 11px;
+            white-space: normal;
+        }
+
+        &.ai-shots-error > .ai-shots-status-label {
+            color: #ff8a8a;
+        }
+
+        &.ai-shots-warn > .ai-shots-status-label {
+            color: #ffb840;
+        }
+    }
+
+    .ai-shots-spinner {
+        flex: 0 0 auto;
+        width: 12px;
+        height: 12px;
+        box-sizing: border-box;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        border-top-color: $clr-hilight;
+        border-radius: 50%;
+        animation: ai-shots-spin 0.8s linear infinite;
+
+        &[hidden] {
+            display: none;
+        }
+    }
+
+    @keyframes ai-shots-spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .ai-shots-empty {
+        margin: 8px 12px 4px;
+        font-size: 11px;
+        white-space: normal;
+        opacity: 0.7;
+    }
+
+    .ai-shots-list {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .ai-shots-card {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin: 8px 8px 0;
+        padding: 6px;
+        border-radius: 4px;
+        background-color: rgba(255, 255, 255, 0.04);
+
+        &.applied {
+            outline: 1px solid rgba(120, 220, 140, 0.45);
+        }
+
+        > .ai-shots-small {
+            align-self: flex-end;
+            margin-top: 2px;
+        }
+    }
+
+    .ai-shots-thumb {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border-radius: 3px;
+        overflow: hidden;
+        background-color: $bcg-darkest;
+
+        > img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    }
+
+    .ai-shots-card-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+
+        > .ai-shots-check {
+            margin: 0;
+        }
+
+        > .ai-shots-card-title {
+            flex: 1 1 auto;
+            min-width: 0;
+            margin: 0;
+            font-weight: bold;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        > .ai-shots-badge {
+            margin: 0;
+            padding: 0 6px;
+            border-radius: 8px;
+            background-color: rgba(120, 220, 140, 0.2);
+            color: #9be6ad;
+            font-size: 10px;
+        }
+    }
+
+    .ai-shots-card-meta,
+    .ai-shots-ai-score,
+    .ai-shots-comment,
+    .ai-shots-warning {
+        margin: 0;
+        font-size: 11px;
+        white-space: normal;
+    }
+
+    .ai-shots-card-meta {
+        opacity: 0.7;
+    }
+
+    .ai-shots-ai-score {
+        color: $clr-icon-hilight;
+        font-weight: bold;
+    }
+
+    .ai-shots-comment {
+        opacity: 0.85;
+        user-select: text;
+    }
+
+    .ai-shots-warning {
+        color: #ffb840;
+    }
+
+    .ai-shots-score {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+
+        > .ai-shots-score-label {
+            flex: 0 0 auto;
+            margin: 0;
+            font-size: 11px;
+        }
+
+        > .ai-shots-bar {
+            flex: 1 1 auto;
+            height: 4px;
+            border-radius: 2px;
+            background-color: $bcg-dark;
+            overflow: hidden;
+
+            > div {
+                height: 100%;
+                background-color: $clr-hilight;
+            }
+        }
+    }
+
+    .ai-shots-footer {
+        display: flex;
+        flex-direction: column;
+        margin-top: 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        padding-top: 4px;
+
+        > .settings-panel-row {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            padding: 2px 10px;
+            height: 28px;
+
+            > .settings-panel-row-label {
+                flex-grow: 1;
+                margin: 0;
+            }
+
+            > .settings-panel-row-toggle {
+                margin: 6px 0 6px 6px;
+                background-color: $bcg-dark;
+
+                &::after {
+                    background-color: $clr-default;
+                }
+
+                &.pcui-boolean-input-ticked {
+                    background-color: $clr-hilight;
+
+                    &::after {
+                        background-color: $clr-active;
+                    }
+                }
+            }
+        }
+
+        > .ai-shots-hint {
+            margin: 0 10px 2px;
+            font-size: 11px;
+            white-space: normal;
+        }
+    }
+
+    // the flex rules above outrank pcui's own hidden rule; some of them are
+    // more specific than this one (e.g. '.ai-shots-footer > .settings-panel-row',
+    // the focus-pull toggle row), so hidden has to win regardless
+    .pcui-hidden {
+        display: none !important;
+    }
+}
+
+// AI section of the settings panel (src/ui/settings-panel.ts)
+#settings-panel {
+    > .settings-panel-row > .settings-panel-row-text {
+        flex: 0 0 187px;
+        width: 187px;
+        margin: 0;
+    }
+
+    > .settings-panel-row.ai-settings-buttons {
+        justify-content: flex-end;
+        gap: 4px;
+
+        > .pcui-button {
+            margin: 0;
+            height: 22px;
+            line-height: 20px;
+            padding: 0 8px;
+            font-size: 11px;
+        }
+    }
+
+    > .ai-settings-note {
+        margin: 2px 10px 4px;
+        font-size: 11px;
+        white-space: normal;
+        opacity: 0.75;
+
+        &.ai-settings-ok {
+            color: #9be6ad;
+            opacity: 1;
+        }
+
+        &.ai-settings-error {
+            color: #ff8a8a;
+            opacity: 1;
+        }
+
+        a {
+            color: $clr-icon-hilight;
+        }
+    }
+}

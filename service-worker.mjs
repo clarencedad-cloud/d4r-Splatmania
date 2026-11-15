@@ -26,7 +26,9 @@ export default function serviceWorker({ src, extra = [] }) {
             const precache = ['./', ...files.filter(name => name !== 'index.html'), ...extra];
             const source = fs.readFileSync(src, 'utf8')
             .replace('__VERSION__', hash.digest('hex').slice(0, 12))
-            .replace('__PRECACHE__', JSON.stringify(precache.map(name => (name === './' ? name : `./${name}`)), null, 4));
+            // target the assignment: the bare placeholder also appears in the
+            // file's eslint globals comment, which comes first
+            .replace('= __PRECACHE__', `= ${JSON.stringify(precache.map(name => (name === './' ? name : `./${name}`)), null, 4)}`);
 
             this.emitFile({ type: 'asset', fileName: 'sw.js', source });
         }

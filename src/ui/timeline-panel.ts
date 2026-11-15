@@ -352,34 +352,38 @@ class TimelinePanel extends Container {
         // what a key goes to (src/track-manager.ts) and auto key
         const keyTarget = new Label({ id: 'key-target', text: '' });
         const autoKeyButton = new Button({ id: 'auto-key', text: '●' });
-        autoKeyButton.dom.title = 'Auto-Key: Transform- und Deckkraft-Änderungen am gewählten Splat setzen automatisch einen Key';
+        i18n.bindDom(autoKeyButton.dom, 'sm.timeline.auto-key-tip', 'title');
         autoKeyButton.on('click', () => events.fire('track.setAutoKey', !events.invoke('track.autoKey')));
         events.on('track.autoKey', (value: boolean) => autoKeyButton.class[value ? 'add' : 'remove']('active'));
 
         const syncKeyTarget = () => {
             const t = events.invoke('track.target');
             if (!t) return;
-            keyTarget.text = t.kind === 'layer' ? `Key → Splat: ${t.name}` : t.kind === 'section' ? 'Key → Schnitt' : t.kind === 'dof' ? 'Key → Fokus' : `Key → ${t.name}`;
+            const who = t.kind === 'layer' ? `Splat ${t.name}` : t.name;
+            const channels = (t.channels ?? []) as string[];
+            keyTarget.text = channels.length > 0 ? `◆ ${who}: ${channels.join(', ')}` : `◆ ${who}`;
             keyTarget.dom.style.color = `rgb(${t.color[0]}, ${t.color[1]}, ${t.color[2]})`;
 
             // changed but unkeyed values elsewhere get keyed along
             const trackName = (track: any) => {
                 if (track.splat) return track.splat.name;
-                if (events.functions.has('section.track') && track === events.invoke('section.track')) return 'Schnitt';
-                if (events.functions.has('dof.track') && track === events.invoke('dof.track')) return 'Fokus';
-                return 'Kamera';
+                if (events.functions.has('section.track') && track === events.invoke('section.track')) return i18n.t('sm.section.title');
+                const camera = (events.invoke('shotCameras.list') ?? []).find((c: any) => c.track === track);
+                return camera?.name ?? i18n.t('sm.cameras.camera');
             };
-            const targetName = t.kind === 'layer' ? t.name : t.kind === 'section' ? 'Schnitt' : t.kind === 'dof' ? 'Fokus' : null;
             const extra = (events.functions.has('track.pending') ? events.invoke('track.pending') as any[] : [])
             .map(trackName)
-            .filter((name: string) => name !== targetName);
-            if (extra.length > 0) keyTarget.text += ` + ${extra.length} geändert`;
-            keyTarget.dom.title = extra.length > 0 ?
-                `Der Key-Button keyt das Ziel und alle geänderten, noch nicht gekeyten Werte: ${extra.join(', ')}` :
-                'Der Key-Button keyt das Ziel und alle geänderten, noch nicht gekeyten Werte';
+            .filter((name: string) => name !== t.name);
+            if (extra.length > 0) keyTarget.text += ` ${i18n.t('sm.timeline.changed', { count: extra.length })}`;
+            keyTarget.dom.title = `${i18n.t('sm.timeline.key-tip')}${extra.length > 0 ? `
++ ${extra.join(', ')}` : ''}`;
         };
         events.on('track.target', syncKeyTarget);
+        events.on('track.targetLabel', syncKeyTarget);
         events.on('track.pending', syncKeyTarget);
+        i18n.onChange(() => {
+            if (events.functions.has('track.target')) syncKeyTarget();
+        });
         // the target functions are registered before the ui; sync once ready
         setTimeout(syncKeyTarget);
 

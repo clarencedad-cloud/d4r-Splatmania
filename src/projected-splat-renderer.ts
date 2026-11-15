@@ -525,7 +525,13 @@ class ProjectedSplatRenderer {
             new UniformFormat('quality', UNIFORMTYPE_VEC4),
             new UniformFormat('sectionPlane', UNIFORMTYPE_VEC4),
             new UniformFormat('sectionEdge', UNIFORMTYPE_VEC4),
-            new UniformFormat('dofParams', UNIFORMTYPE_VEC4)
+            new UniformFormat('dofParams', UNIFORMTYPE_VEC4),
+            new UniformFormat('splatParams', UNIFORMTYPE_VEC4),
+            new UniformFormat('fogParams', UNIFORMTYPE_VEC4),
+            new UniformFormat('fogColor', UNIFORMTYPE_VEC4),
+            new UniformFormat('lightParams', UNIFORMTYPE_VEC4),
+            new UniformFormat('lightAmbient', UNIFORMTYPE_VEC4),
+            ...[0, 1, 2, 3].flatMap(i => ['A', 'B', 'C'].map(k => new UniformFormat(`light${k}${i}`, UNIFORMTYPE_VEC4)))
         ]);
         const bindGroupFormat = new BindGroupFormat(this.device, [
             new BindStorageBufferFormat('sortKeys', SHADERSTAGE_COMPUTE),
@@ -1070,6 +1076,26 @@ class ProjectedSplatRenderer {
             // depth of field (src/dof/dof.ts); selection passes stay sharp
             const dof = forPick || !events.functions.has('dof.params') ? null : events.invoke('dof.params');
             compute.setParameter('dofParams', dof ? [1, 1 / Math.max(1e-4, dof.focus), dof.aperture, dof.maxBlur] : [0, 0, 0, 0]);
+            // splat display size and low-pass (src/layer-anim.ts); picking
+            // uses them too so selections match what is drawn
+            const display = events.functions.has('layerAnim.points') ? events.invoke('layerAnim.points') : null;
+            // the layer's own size wins over the global one
+            const layerScale = events.functions.has('layerAnim.renderParams') ? events.invoke('layerAnim.renderParams', splat)?.splatScale : undefined;
+            compute.setParameter('splatParams', [layerScale ?? display?.splatScale ?? 1, display?.splatFilter ?? 0.3, 0, 0]);
+            // distance fog (src/look/look.ts); selection passes see through it
+            const fog = forPick || !events.functions.has('look.fog') ? null : events.invoke('look.fog');
+            compute.setParameter('fogParams', fog ? [fog.start, fog.end, fog.strength, fog.mode === 'color' ? 1 : 0] : [0, 0, 0, 0]);
+            compute.setParameter('fogColor', fog ? [fog.color[0], fog.color[1], fog.color[2], 1] : [0, 0, 0, 0]);
+            // relighting (src/light/light.ts); selection passes use the
+            // scanned colour
+            const light = forPick || !events.functions.has('light.uniforms') ? null : events.invoke('light.uniforms');
+            compute.setParameter('lightParams', light ? light.params : [0, 1, 0, 0]);
+            compute.setParameter('lightAmbient', light ? light.ambient : [0, 0, 0, 0]);
+            for (let i = 0; i < 4; i++) {
+                compute.setParameter(`lightA${i}`, light ? light.lights[i * 3] : [0, 0, 0, 0]);
+                compute.setParameter(`lightB${i}`, light ? light.lights[i * 3 + 1] : [0, 0, 0, 0]);
+                compute.setParameter(`lightC${i}`, light ? light.lights[i * 3 + 2] : [0, 0, 0, 0]);
+            }
 
             const workgroups = Math.ceil(placement.entryCapacity / WORKGROUP_SIZE);
             Compute.calcDispatchSize(workgroups, this.dispatchSize);

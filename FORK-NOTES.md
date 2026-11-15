@@ -586,6 +586,14 @@ Starten mit **X** oder über den Knopf „✎ Pfad bearbeiten (X)“ in der Kame
 - Die Nadel-Artefakte des Renderers bei extremen Seitenverhältnissen sind nur umgangen, nicht behoben. Vermutlich ein Problem im Raster-Pfad.
 - Stereo-Bilder mit Google-Cardboard-XMP (GImage) wären möglich, sind aber kaum noch verbreitet.
 
+## Englisch als Standard, alle Fork-Texte über i18n
+
+- **Standardsprache Englisch:** `src/ui/localization.ts` erkennt die Sprache nur noch über `?lng=` und eine explizit gewählte Sprache (localStorage `i18nextLng`). Browsersprache (`navigator`) und `htmlTag` werden nicht mehr ausgewertet; ohne Wahl gilt fallbackLng `en`. „Automatisch“ in den Einstellungen heißt jetzt „English (default)“ / „Englisch (Standard)“ und setzt auf Englisch zurück.
+- **Alle Splatmania-Texte** laufen über i18n, Schlüssel-Präfix `sm.*` (rund 300 Schlüssel, vollständig in `en.json` und `de.json`; die übrigen 7 Sprachen fallen auf Englisch zurück). Betroffen sind u. a. Kameras, Tiefenschärfe, Layer-Animation, Transitions, Punktwolke, Bereinigen (auch Fehlermeldungen in cleanup.ts), Tiefenfilter, Schnitt, Qualität, Ausrichten, Pfad bearbeiten, Timeline-Zeilen und Key-Ziel, Bild-/Video-Dialog (Stereo, Quelle) und die schwebenden Panels.
+- **Live-Umschaltung:** Feste Texte hängen per `bindText` / `bindOptions` und dem neuen `i18n.bindDom(el, key, 'textContent' | 'title')` an der Sprache. Zusammengesetzte Texte (Kurzinfos in Sektionsköpfen, Kameraliste, Timeline-Zeilen, Key-Ziel) werden über `i18n.onChange` neu aufgebaut. `CollapsibleSection`- und `makeFloating`-Titel sind jetzt i18n-Schlüssel. Mengen nutzen i18next-Plural (`_one` / `_other`).
+- **Englische Begriffe:** Schnittspur = „Cut“, Schnitt-Werkzeug = „Section“, Ausrichten = „Align“, Bereinigen = „Clean up“. Neue Kameras heißen „Camera n“ (bzw. „Kamera n“, wenn Deutsch gewählt ist), Duplikate „… copy“. Exportierte Dateinamen übernehmen den Kameranamen, also z. B. `_Camera 1_f60_TB.jpg`.
+- **Geprüft:** Skript-Suche nach deutschen String-Literalen außerhalb von Kommentaren (keine Treffer mehr); Schlüssel-Abgleich (alle 305 verwendeten Schlüssel in en und de vorhanden, keine deutschen Wörter in en.json). Im Browser mit Browsersprache Deutsch und ohne gespeicherte Sprache: alle Sektionen aufgeklappt, Ausrichten, Qualität, Schnitt, Pfad bearbeiten, Messen, Bild- und Video-Dialog mit Stereo-Optionen geöffnet: 666 sichtbare Texte, keiner deutsch. Mit explizit Deutsch: 663 Texte, kein englischer Splatmania-Text übrig. Live-Umschaltung Englisch → Deutsch ohne Neuladen funktioniert.
+
 ## Nachbesserungen nach dem Klicktest der Hauptsession
 
 1. **Keine Startfehler „function not found 'selection'“ mehr**: Track-Manager, Layer-Animator, Layer-Animator-Panel und Zeitleisten-Zeilen fragen die Auswahl erst ab, wenn sie registriert ist (`events.functions.has('selection')`). Geprüft: Nach frischem Laden kamen keine neuen Meldungen hinzu.
@@ -733,6 +741,20 @@ Hinzufügen, Duplizieren, Löschen und Umbenennen von Kameras ist jetzt je ein U
 
 **Fazit:** Layer, Keyframe-Timeline und MP4-Export waren als Grundgerüst vorhanden. Mehrere Kameraspuren mit Schnitt, Layer-Animation und ein Punktwolken-Modus sind inzwischen ergänzt (siehe oben). Offline-Betrieb und Installation als App laufen über die PWA (siehe „Offline und als App installieren“), eine Desktop-Hülle wie Electron oder Tauri ist dafür nicht nötig.
 
+## Keyframes pro Eigenschaft, Kamera-Objektiv, Schnittspur (09.11.2026)
+
+- **Kamera-Kanäle** (`src/camera-poses.ts`, `CameraAnimTrack`): `position`, `target` (als Rotation angezeigt: Neigung/Schwenk), `fov` (Objektiv, im Panel als mm Kleinbild + Grad), `focus`, `aperture`. Jeder Kanal hat eigene Keys und einen eigenen Spline; ohne Keys gilt der Grundwert `base`. Ungekeyte Änderungen an animierten Kanälen sind ein Override bis zum Frame-Wechsel (Key-Knopf orange).
+- **Schärfentiefe gehört zur Kamera**: `dof.ts` hat keine eigene Spur mehr; der Kamera-Rig schiebt Fokus/Blende der gefolgten (sonst gewählten) Kamera per `dof.lens`. An/Aus und Max-Blur bleiben global. Alte Projekte: `docDeserialize.dof` verschiebt die Fokus-Keys auf Kamera 1 (`shotCameras.importFocus`).
+- **Key-Knöpfe** (`src/ui/key-button.ts`) an jeder Eigenschaft: Kamera-Panel, Transform (Splat), Deckkraft/Punkt-Mix, Schnitt-Regler, Kanal-Zeilen der Timeline. ◇ grau = nicht animiert, ◇ magenta = animiert, ◆ = Key hier (Klick löscht), orange = geändert, nicht gekeyt.
+- **Auto-Key** keyt genau die geänderten Kanäle (Pivot-Vorher/Nachher-Vergleich bei Splats, Panel-Werte, Navigation im Durchblick-Modus, Schnitt-Regler). Der Haupt-◆ keyt die im Label gelisteten Kanäle (Transform + bereits animierte/geänderte).
+- Das Schnitt-Werkzeug macht die Section **nicht** mehr heimlich zum Key-Ziel; nur Klick auf ihre Zeile.
+- **Viewport-Navigation im Modus „Durchblick“/„Schnitt“ bewegt die Kamera** (nach 450 ms Ruhe übernommen). Im freien Modus nicht. Das freie FOV wird beim Verlassen wiederhergestellt.
+- **Timeline**: ▸ klappt Kamera/Splat in Kanal-Zeilen auf (Keys einzeln ziehen/Rechtsklick löschen). ● = Kamera ist am Playhead im Schnitt live, ✂ = ab Playhead auf diese Kamera schneiden.
+- **Schnittspur**: Klick auf Shot = hinspringen (überschreibt nicht mehr), Kante ziehen = Trim bzw. Roll-Edit mit angrenzendem Shot (`CutTrack.trim`), Rechtsklick = Menü Kamera wechseln/löschen, Ziehen im Leeren = neuer Shot.
+- **Projektion pro Kamera** (`ShotCamera.projection`: standard / equirect / stereo, `ipd`): im Kamera-Panel umschaltbar (Objektiv-Zeile verschwindet bei 360°), Badge in der Kameraliste, undo-fähig über den Rig-Snapshot, gespeichert in `poseSets[i].projection/ipd`. Video-Dialog übernimmt Projektion + Augenabstand der gewählten Kamera (bei „Schnitt“, wenn alle Kameras im Schnitt gleich sind); „Alle Kameras“ rendert jede in ihrer eigenen Projektion (`VideoSettings.perProjection`, Auflösung des Dialogs für die gewählte Projektion, sonst 1080p / 360-4K / TB-2048). Bild-Dialog wählt bei einer Panorama-Kamera Quelle „Kamera“ + deren Projektion vor. Beim Durchblicken (Modus Kamera/Schnitt) zeigt `src/ui/panorama-preview.ts` über dem 3D-Canvas live das Equirect (mono, 512–2048 px, aus der Viewport-Pose, horizontal ausgerichtet); es rendert neu bei Frame-, Kamera-, Szenen- und Navigationsänderungen und solange die Ansicht nachschwingt. `render.panoramaPreview` in render.ts; Exporte warten auf eine laufende Vorschau (`beginExport`).
+- **Splat-Größe / Weichheit** (Panel „Darstellung“, vormals „Point cloud“): `PointCloudSettings.splatScale` skaliert die projizierte Kovarianz (×s²), `splatFilter` ersetzt den festen 3DGS-Low-Pass +0.3 px² im Projector (`splatParams`-Uniform). Nur Anzeige/Render, Pick nutzt dieselben Werte; Splat-Daten und Exporte unverändert. Die Punktgröße heißt jetzt „Punktgröße“ und gilt nur für den Punktwolken-Modus. Pro Objekt: `LayerState.splatScale` (null = global), Häkchen + Regler unter Layer-Animation, undo-fähig, gespeichert in `layerAnim.serialize`; `layerAnim.renderParams(splat).splatScale` liefert den wirksamen Wert.
+- Speicherformat: `poseSets[i].channels = { base, keys }` zusätzlich zu den alten `poses` (für ältere Leser).
+
 ## Offene Punkte (Stand 26.10.2026)
 
 Erledigt in dieser Runde: Offline/PWA, Undo der Kameraliste, Überblendung am Schnitt, „Veröffentlichen“ nur auf playcanvas.com.
@@ -749,3 +771,211 @@ Nach Wichtigkeit für den Offline-Film-Editor:
 9. **Bild-im-Bild-Vorschau** der Kamera beim Ziehen eines Keys (zweiter Render-Pass).
 10. **Nicht per Klick getestet**: Schnitt-Werkzeug (Boden-Pipette, Achse „Layer“, nur aktiver Layer, harte Kante), „Alle Kameras“-Export über den Ordner-Dialog und die PWA-Installation über das Browser-Symbol. Der Service Worker und der Offline-Start sind geprüft.
 11. Kleinkram: Das Hilfe-Menü verlinkt PlayCanvas-Tutorials, Discord und Forum, nur als Links und ohne den Namen im Text. `package.json` heißt noch `supersplat`, und Rollup meldet beim Build „Building SuperSplat“. Beides ist nicht in der Oberfläche sichtbar.
+
+## Caching auf SiteGround (09.11.2026)
+
+SiteGround liefert statische Dateien (js, css, json) über nginx mit `max-age` von einem Jahr aus. Die `.htaccess` gilt dort nur für Anfragen, die Apache beantwortet, etwa `/apps/splatmania/`. Ein Browser, der die App einmal geöffnet hatte, behielt deshalb die alte `index.js`, obwohl auf dem Server schon der neue Build lag.
+
+Die Lösung:
+- Jeder Build bekommt eine eigene Kennung (`BUILD_ID` in `rollup.config.mjs`). Sie hängt als `?v=` an `index.js` und `index.css` in der `index.html`.
+- Die Sprachdateien und der Analyse-Worker übernehmen dieselbe Kennung über `src/build-query.ts`.
+- Der Service Worker holt beim Installieren mit `cache: 'reload'`. Später fragt er mit `cache: 'no-cache'` beim Server nach. Offline sucht er mit `ignoreSearch`.
+
+Der Dev-Server (`rollup -w`) muss nach Änderungen an `service-worker.mjs` neu gestartet werden, sonst schreibt er eine kaputte `sw.js`.
+
+## Look, Nebel, Player/VR, Bewegungsunschärfe, Titel (10.11.2026)
+
+**Look** (`src/look/`, Panel `src/ui/look-panel.ts`, Knopf mit Sonnen-Symbol in der rechten Leiste):
+- Inhalt: Glow (Bloom mit Schwelle, Radius, Farbe), Farbkorrektur (Belichtung, Kontrast, Sättigung, Farbtemperatur), Objektiv (Vignette, Filmkorn, chromatische Aberration) und eine 3D-LUT (.cube).
+- Es gibt einen globalen Look pro Projekt. Er wird im Projekt gespeichert, auch die LUT-Daten.
+- Der Look ist noch nicht keyframebar.
+- Ablauf: `LookRenderer` rendert die Bloom-Kette (Dual-Filter) und einen Composite-Pass. Die Kamera ruft ihn über einen ziellosen `lookPass` auf, nach den Splats und vor den Gizmos. So leuchten Gitter und Gizmos nicht mit.
+- Im Viewport wird der Seitenhintergrund (`bgClr`) mit einbezogen, damit Viewport und Export gleich aussehen.
+- 360-Panoramen: Die Würfelflächen rendern ohne Look. Der Look läuft danach einmal auf dem fertigen Equirect-Bild bzw. pro Auge, mit horizontalem Wrap. So gibt es keine Nähte. Vignette und Aberration entfallen bei 360°.
+- Die Effektgrößen sind auf 1080p abgestimmt und skalieren mit der Ausgabehöhe.
+
+**Nebel** (auch im Look-Panel) wirkt pro Splat im Projektor-Shader (`fogParams`, `fogColor`):
+- Gemessen wird die Entfernung, nicht die View-Tiefe. Dadurch passen die Würfelflächen eines Panoramas zusammen.
+- Modus „fade“ senkt die Deckkraft. Das wirkt wie Ausblenden in den Hintergrund und klappt auch bei transparentem Export.
+- Modus „color“ mischt zur Nebelfarbe.
+- Picking sieht durch den Nebel hindurch.
+
+**Player / VR:**
+- Render → „Im Player / in VR öffnen“ baut den Viewer-Export im Speicher (`viewer.preview` in `src/file-handler.ts`) und öffnet ihn als Blob-URL in einem neuen Tab.
+- Der Viewer von splat-transform hat WebXR (VR/AR) eingebaut, mit Controllern und dem Umweg WebGPU → WebGL.
+- Mit PC-VR (Quest Link/Air Link, SteamVR) erscheint im Player der VR-Knopf. Für eine Standalone-Quest den HTML-Export auf das Gerät oder einen eigenen Server legen.
+- Der Look wird näherungsweise in die `postEffectSettings` des Viewers übertragen (`lookPostEffects` in `src/export-options.ts`). Korn, LUT und Nebel kann der Viewer nicht.
+
+**Bewegungsunschärfe** im Video-Export (nur Standard-Projektion, `videoSettings.motionBlur`):
+- Pro Bild werden 4, 8 oder 16 Zwischenbilder über den Verschluss gerendert und auf der CPU gemittelt.
+
+**Titel** (`src/titles.ts`, Panel `src/ui/titles-panel.ts`, Vorschau `src/ui/titles-overlay.ts`, Knopf „T“):
+- Text pro Bildbereich mit Blende, Position, Ausrichtung, Größe (Anteil der Bildhöhe), Schrift, Farbe, fett und Box.
+- Eine einzige Zeichenfunktion dient der Viewport-Vorschau und den Bild- und Video-Exporten (nicht 360°). Gespeichert wird im Projekt.
+- Bewusst ohne vorbelegtes design4real-Branding: Die App bleibt gratis, ohne Wasserzeichen.
+
+Reveal-/Dissolve-Effekte gab es schon vorher, als Übergänge der Layer-Animation (Sweep, Radial, Dissolve, Grow, Fly-in, Wave).
+
+## Look keyframebar (10.11.2026)
+
+`src/look/look.ts` hat jetzt eine `LookTrack` (AnimTrack wie die Schnitt-Spur). Ein Key speichert den ganzen Look: alle Regler, Glow-Farbe, Nebelfarbe und Nebel-Modus. Nicht gekeyt werden der Ein/Aus-Schalter und die LUT-Datei; nur die LUT-Stärke wird gekeyt.
+
+- **Zwischen Keys** wird weich überblendet (Smoothstep). Der Nebel-Modus springt auf halber Strecke um. Vor dem ersten und nach dem letzten Key gilt der jeweilige Randwert.
+- **Bedienung:**
+  - Key-Knopf ◇/◆ im Kopf des Look-Panels: setzt oder entfernt den Key am aktuellen Bild und macht den Look zum Key-Ziel.
+  - Timeline-Zeile „Look“ (erscheint ab dem ersten Key): Klick macht sie zum Key-Ziel, Key ziehen verschiebt ihn, Rechtsklick löscht ihn.
+  - Der globale Key-Knopf keyt den Look, wenn er Key-Ziel ist.
+- **Auto-Key / Pending:** greift nur, wenn der Look schon Keys hat. Ein statischer Look erzeugt also nie ungefragt Keys.
+- **Undo, Projekt und Export:**
+  - Alle Key-Änderungen sind über `AnimTrackEditOp` rückgängig zu machen.
+  - Die Keys werden im Projekt unter `look.keys` gespeichert.
+  - Der Video-Export bewegt `timeline.time` Bild für Bild weiter, deshalb folgt der Look automatisch. Bei Motion Blur geschieht das auch in den Zwischenbildern.
+- **Nicht abgedeckt:** Der Player/VR-Export übernimmt nur den Look am aktuellen Bild. Die Post-Effekte des Viewers sind statisch.
+- **Release:** Rollup legt im Release-Build auch `.map`-Dateien ab. Vor dem Packen `release/*.map` löschen, ebenso die `sourceMappingURL`-Zeilen. Dann sind es 20 Dateien, ca. 2,4 MB.
+
+## EXR mit Tiefe, Alpha im Video, QuickTime PNG (10.11.2026)
+
+- **EXR (Bild und Sequenz):** Der Writer steht in `src/exr-writer.ts`.
+  - Format: Scanline, ZIP-Kompression mit 16 Zeilen pro Block.
+  - Kanäle: R, G, B, A als Half, dazu optional Z als 32-bit Float.
+  - Farbe: Sie kommt aus dem 8-bit-Render, also mit Look, Titeln und Blenden. Sie wird in lineares Licht umgerechnet und premultiplied geschrieben. Werte über 1 (HDR) bleiben nicht erhalten.
+  - Z: Kameraabstand in Szeneneinheiten aus dem Tiefen-Pass des Pickers (`captureDepth` in `render.ts`). Pro sichtbarem Layer läuft ein Pass, der nächste Wert gewinnt. Leere Pixel bekommen 1e10 wie in Blender. Z gibt es nur in der Standardprojektion.
+  - Der Tiefen-Pass überschreibt das Kamera-Farbtarget. Deshalb läuft er erst, nachdem die Farbe gelesen ist.
+- **Video-Formate:**
+  - **MOV + Codec PNG** (`src/mov-writer.ts`): Eigener QuickTime-Muxer (ftyp, mdat mit 64-bit-Größe, moov am Ende, co64). Verlustfrei, mit Alpha, für Premiere, AE, Resolve und Final Cut. Streamt per Positions-Writes in die Datei, ohne Dateiauswahl landet er im Speicher.
+  - **WebM VP9/AV1 mit Alpha:** Ein zweiter VideoEncoder läuft in Reihe, wie bei mediabunny. Er kodiert Alpha als graues I420-Bild und setzt Keyframes synchron. Die Daten gehen als `sideData.alpha` an den Muxer, der daraus BlockAdditions und AlphaMode macht.
+  - **PNG-Sequenz / EXR-Sequenz** (`src/sequence-writer.ts`): Schreibt per Ordnerauswahl in einen Ordner, sonst als unkomprimiertes ZIP64 zum Download.
+- **Alpha-Handhabung:** PNG (Bild und Video) und WebM bekommen gerade (un-premultiplied) Farbe, EXR bleibt premultiplied. Beim PNG-Bild mit transparentem Hintergrund war die Farbe vorher premultiplied, das ergab dunkle Säume. Das ist damit behoben.
+- **Dialog:**
+  - Die Zeile „Transparent Background“ ist nur bei WebM, MOV/PNG und den Sequenzen sichtbar. „Depth (Z)“ erscheint nur bei EXR in der Standardprojektion.
+  - Codec und Bitrate sind bei Sequenzen ausgeblendet, die Bitrate auch bei PNG.
+  - Die Encoder-Prüfung entfällt für diese Formate.
+- **Geprüft:** Unabhängig mit ffmpeg 6, außerdem mit einem eigenen Python-EXR-Leser (scratchpad).
+  - Das WebM liest sich als `yuva420p`.
+  - Das MOV liest sich als `png rgba`, 11 Frames.
+  - Die Alpha-Masken von WebM und MOV sind identisch.
+  - Das EXR hat Z zwischen 32 und 37 bei einer Außenansicht, leere Pixel stehen auf 1e10.
+- **Offen:** Der Player spielt die Schnittspur (mehrere Kameras hintereinander) nicht ab. Der Viewer kennt nur `spline` und `step`, damit verwischt ein harter Schnitt oder die Kamera überschwingt. Jede Kamera ist dort weiter eine eigene Spur, Objektivänderungen pro Key spielt der Player schon ab.
+
+## Licht / Relighting (10.11.2026)
+
+`src/light/light.ts` (Zustand, Uniforms, Keyframe-Spur, Platzieren, Gizmos) und `src/light/light-panel.ts`. Das Panel öffnet die Glühbirne in der rechten Leiste. Es wird aus `main.ts` eingehängt, nicht aus `editor.ts`.
+
+- **Prinzip:** Das Licht eines Scans ist in die Splat-Farben eingebacken. Zurückrechnen geht nicht ohne neues Training. Stattdessen:
+  - „Scan-Licht“ dimmt die gebackene Beleuchtung (1 = wie gescannt).
+  - „Umgebung“ addiert ein farbiges Grundlicht.
+  - Bis zu 4 Lichter (Sonne, Lampe, Spot) multiplizieren die Splat-Farbe als Albedo-Ersatz.
+- **Shader** (`projected-splat-projector-shader.ts`, `shadeLight`): Als Normale dient die kürzeste Splat-Achse in Weltkoordinaten, zur Kamera gedreht. Runde Splats haben keine definierte Normale und werden je nach Flachheit zur Blickrichtung geblendet.
+  - Diffus mit Wrap („Weichheit“) gegen verrauschte Normalen.
+  - Lampe/Spot mit weichem Fenster-Abfall bis zur Reichweite, Spot mit weicher Kante.
+  - Keine Schatten, kein Glanz.
+  - Pick-Pässe sehen kein Licht.
+- **Uniforms:** `lightParams`, `lightAmbient`, `lightA/B/C0..3`, gesetzt im Renderer aus `light.uniforms`.
+- **Bedienung:**
+  - Lampe/Spot werden über „Setzen“ (Klick ins Modell, das Licht landet knapp davor) oder „An Kamera“ platziert. Ein Spot an der Kamera wirkt wie ein Kopflicht.
+  - Spot „Ausrichten“: Klick ins Modell = Zielpunkt.
+  - Esc bricht das Platzieren ab.
+  - Gizmos (Kreuz, beim Spot zusätzlich ein Strahl) sind nur bei offenem Panel sichtbar.
+  - Das Loslassen der Maus wird auf `window` abgefangen, weil die Kamerasteuerung den Zeiger einfängt.
+- **Keyframes:** wie beim Look; ein Key speichert das ganze Rig.
+  - Zahlen und Farben werden weich überblendet. Ändert sich die Lichterliste zwischen zwei Keys, springt sie auf halber Strecke um.
+  - Timeline-Zeile „Licht“, Key-Knopf im Panel-Kopf. Auto-Key und Pending greifen nur bei schon animiertem Rig.
+- **Projekt:** gespeichert unter `light` (mit `keys`).
+- **Nicht im Player/VR-Export:** Der Viewer kennt die Lichter nicht.
+- **Getestet** am Testhaus:
+  - Sonne vor bzw. hinter dem Haus.
+  - Nachtszene mit Lampe und Spot.
+  - Keys, Undo/Redo, Speichern/Laden.
+  - Setzen per Klick.
+- **Noch nicht getestet:** echte, verrauschte Scans.
+
+## Szene-Panel neu geordnet, Menü „Ansicht“ (10.11.2026)
+
+- **Szenen-Liste** (Abschnitt „Szene“, Key `objects`): Splats und Kameras stehen in einer Liste, jeweils mit eigener Gruppenzeile, Anzahl und, bei den Kameras, den Knöpfen + und ⧉.
+  - `CameraList` liefert dafür `rows` und `actions`.
+  - Der Container selbst enthält nur noch die Kamera-Einstellungen.
+- **Eigenschaften:** Unter der Liste sitzt ein deutlicher Balken „Eigenschaften · Name“. Darunter steht nur, was zum gewählten Objekt gehört:
+  - Splat: Transform, Layer-Animation, Übergänge, Darstellung, Aufräumen, Farben.
+  - Kamera: „Ansicht & Schnitt“ (Viewport-Modus, Überblendung, Pfad, Frustums) und „Gewählte Kamera“.
+  - Kontextwechsel:
+    - `selection` / `selection.changed` schaltet auf Splat.
+    - `shotCameras.select`, `add` und `duplicate` schalten auf Kamera.
+    - Ohne Splat gilt die Kamera.
+  - Das gewählte Objekt der anderen Art bleibt gedimmt markiert.
+- **Menü „Ansicht“** (zwischen Render und Hilfe):
+  - Jeder Hauptabschnitt lässt sich mit ☑/☐ abschalten, dazu gibt es „Alle Bereiche einblenden“.
+  - Umsetzung: Registry in `collapsible.ts` (`sectionShown` / `setSectionShown`), gespeichert in `localStorage` unter `splatmania.ui.sections-off`, CSS-Klasse `section-off`.
+- **Optik:**
+  - Hauptabschnitte haben einen dunklen Kopfbalken mit Akzentkante links; offen ist sie magenta.
+  - Zwischen den Abschnitten sitzt ein kleiner Abstand.
+  - Splat-Zeilen sind gleich hoch wie Kamera-Zeilen, ohne reservierten Leerraum.
+  - Die Kamera-Stile sind auf `#scene-panel` umgehängt, weil die Zeilen jetzt außerhalb von `#camera-list` liegen.
+
+## Kamera löschen, Bézier-Griffe am Kamerapfad (11.11.2026)
+
+- **Kamera löschen:** In der Kamerazeile der Szenen-Liste steht jetzt + − ⧉. Das „−“ löscht die gewählte Kamera.
+  - Die letzte Kamera bleibt erhalten, weil die Ansicht eine braucht. „−“ bzw. das ✕ der Zeile entfernt dann ihre Keys, rückgängig zu machen über `AnimTrackEditOp`.
+  - Vorher passierte beim Löschen der letzten Kamera einfach nichts.
+- **Bézier-Griffe** (`CameraKey.handleIn` / `handleOut`, Offsets in Weltkoordinaten):
+  - In `rebuildSpline` überschreibt `applyHandles` die Hermite-Tangenten des Positions-Splines: out = 3·handleOut, in = −3·handleIn. Beim Looping-Spline bekommen die duplizierten Rand-Keys dieselben Griffe.
+  - Ohne eigene Griffe zeigt `getHandles` die automatischen Tangenten. Das erste Ziehen übernimmt sie, die Kurve springt also nicht.
+  - Geprüft: Automatische Griffe als eigene gesetzt ergeben exakt die alte Kurve.
+- **Bedienung im Pfad-Werkzeug:** Der gewählte Positions-Key zeigt zwei Griffe mit gestrichelten Linien.
+  - Ziehen spiegelt die Richtung des anderen Griffs, dessen Länge bleibt. Mit Alt wird der Griff einzeln bewegt (Ecke).
+  - Doppelklick stellt die automatische Kurve wieder her.
+  - Gefüllte Griffe sind eigene, hohle automatische. Jeder Zug ist ein Undo-Schritt.
+- **Speichern und Player:**
+  - Die Griffe werden im Projekt gespeichert (`channels.keys[].handleIn/handleOut`).
+  - Der HTML-Player bekommt eine Kamera mit Griffen als ein Pose pro Frame (`viewerPoses` in `export-options.ts`), weil sein eigener Spline die Griffe nicht kennt.
+  - Der Video-Export rechnet ohnehin mit der Editor-Kurve.
+- **Nicht abgedeckt:** Griffe gibt es nur für die Kameraposition, nicht für das Ziel (Target).
+
+## Ansichts-Anzeige neben dem Achsenkreuz (11.11.2026)
+
+- `src/ui/viewport-label.ts`: Die Pille oben rechts, links vom View-Cube, zeigt, was der Viewport gerade zeigt:
+  - „Freie Ansicht“
+  - beim Durchblick der Kameraname mit Farbfeld
+  - beim Schnitt „Schnitt · Kameraname“ der aktuellen Kamera am Abspielkopf
+- Ein Klick wechselt Frei → Kamera → Schnitt.
+- Quellen: `camera.viewMode` und `shotCameras.followed`. Aktualisiert wird bei Moduswechsel, Kamera-, Schnitt- und Frame-Änderungen.
+- Die Anzeige ist HTML über dem Canvas und landet deshalb nie in einem Render.
+
+## Lichter in der Szenenliste (15.11.2026)
+
+- **Szenenliste:** Gruppe „Lichter“ unter den Kameras, eine Zeile pro Licht (Farbpunkt, Typ, an/aus, ✕). `+` öffnet das Licht-Panel.
+- **Auswahl:** Klick auf eine Zeile setzt `light.select` und zeigt die Eigenschaften „Licht“. Wer einen Splat oder eine Kamera wählt, hebt die Licht-Auswahl auf.
+- **Verschieben:** `TranslateGizmo` am gewählten Licht, auch bei geschlossenem Licht-Panel. Lampe/Spot: Position. Sonne: Griff im Abstand 1,3 × Szenenradius vom Szenenmittelpunkt, seine Richtung setzt Azimut und Höhe. Ein Zug = ein Undo-Schritt (`LightRigOp`).
+- **Löschen:** ✕ in der Zeile oder Entf/Backspace bei gewähltem Licht (Capture-Listener vor den globalen Shortcuts, löscht also keine Splats). `light.remove` ist jetzt rückgängig machbar.
+- **Grenze:** Ist das Licht-Rig animiert, überschreibt die Keyframe-Spur beim nächsten Frame-Wechsel eine Verschiebung ohne Key, wie bei Änderungen im Licht-Panel.
+
+## Verschieben/Drehen wirkt auf das gewählte Objekt (15.11.2026)
+
+- **Bug:** Mit gewählter Kamera oder gewähltem Licht hängten sich die Werkzeuge Verschieben/Drehen der unteren Leiste trotzdem an den Splat.
+- **Lösung:** Das Szenen-Panel meldet das gewählte Objekt mit `transform.setTarget` ('splat' | 'camera' | 'light'). `transform-tool.ts` greift nur bei 'splat'; `src/tools/object-gizmo.ts` übernimmt Kamera und Licht.
+  - Kamera, Verschieben: Position, das Blickziel wandert mit. Drehen: Blickrichtung um die Kameraposition (nicht über ±89°). Über `shotCameras.setValue`, also mit Auto-Key/Pending; ein Zug = ein Undo-Schritt (`shotCameras.gestureStart/End`).
+  - Licht, Verschieben: das eigene Gizmo des Lichts. Drehen: Spot-Richtung bzw. Sonnenrichtung (Griff), Lampen haben keine. Ein Zug = ein Undo-Schritt (`light.editStart/End`).
+  - Skalieren wirkt nur auf Splats.
+
+## Kamera-Darstellung und Blickziel als Objekt (16.11.2026)
+
+- **Gizmos** (`camera-pose-gizmos.ts`): an der aktuellen Pose eine stilisierte Kamera (Body, Objektiv in Blickrichtung, zwei Filmrollen) statt Frustum; Keys als kleine Rauten; Pfad gestrichelt (Strichlänge in Welteinheiten).
+- **Ziel sichtbar** (nur gewählte Kamera): Kugel aus drei Ringen am aktuellen Ziel, gestrichelte Linie Kamera → Ziel; ist der Kanal `target` animiert, zusätzlich Zielpfad (gestrichelt) und Ziel-Keys. Gewähltes Ziel wird weiß.
+- **Ziel als Objekt:** Unter der gewählten Kamera steht in der Szenenliste die Zeile „Ziel“ (`cameraTarget.select`). Kontext `cameraTarget` zeigt die Kamera-Eigenschaften mit dem neuen Feld „Ziel“ (XYZ + Key-Knopf für den Kanal `target`). Das Verschieben-Werkzeug bewegt dann nur das Ziel (`object-gizmo.ts`).
+- Ist `target` animiert, ist eine Verschiebung wie im Panel „ausstehend“, bis ein Key gesetzt wird (Auto-Key setzt ihn sofort).
+
+## Kamerafahrt-Vorschläge mit optionaler Claude-Anbindung (14.–15.11.2026)
+
+Panel „Kamerafahrt-Vorschläge“ (rechte Leiste). Code in `src/ai-shots/` (`shot-types.ts`, `coverage.ts`, `shot-generator.ts`, `claude-client.ts`, `ai-shots.ts`), UI in `src/ui/ai-shots-panel.ts`, Key-Feld im Einstellungen-Panel (Abschnitt „KI (Claude)“).
+
+- **Ablauf:** Objekt übernehmen (aktive Box/Kugel, sonst Selektion, sonst Szene), bis zu 3 Lieblingswinkel merken, Dauer und Abstand wählen, „Kamerafahrten vorschlagen“. Ergebnis: 6 Karten mit Vorschaubild, Abdeckungs-Balken und Warnungen; „Übernehmen“ legt eine Shot-Kamera mit Keys an (ein Undo-Schritt, `shotCameras.addWithKeys`).
+- **Generator (offline, deterministisch):** Orbit, Reveal, Kran, Seitwärtsfahrt, Push-in (optional Fokuszug), Überflug. Trapezförmiges Tempo, Kollisions- und Sichtprüfung über ein Dichte-Voxelgitter der Splats, Spline wird abgetastet: Elevation nie über 80° (Überflug 75°). Test: `node scripts/test-shot-generator.mjs` (rund 130 000 Prüfungen, inkl. Fuzz über 3000 Anfragen).
+- **Abstand:** Regler 0,5–3 (1 = automatische Bildgröße), wirkt auch auf Claude-Vorschläge und Lieblingswinkel (`distanceScale`).
+- **Vorschaubilder:** `render.posePreview` rendert offscreen (Warm-up-Frame, teilt die Sperre mit der Panorama-Vorschau und `render.offscreen`), wartet in Hintergrund-Tabs auf Sichtbarkeit (Status „Wartet, bis der Tab sichtbar ist…“).
+- **Claude (optional, nur Anthropic):** offizielles SDK `@anthropic-ai/sdk` im Browser (`dangerouslyAllowBrowser`), Modell `claude-opus-5-5`, Server-Fallback aktiv, strukturierte JSON-Antworten. Ein Textwunsch wählt Vorlagen und Parameter (`planShots`), danach bewertet Claude je 3 Bilder pro Fahrt (`rankShots`). Ohne Key oder offline: nur Generator.
+- **API-Key:** wird erst nach erfolgreichem Test gespeichert; Standard sessionStorage, nur mit „Key merken“ localStorage. Löschen wirkt tabübergreifend. Der Key geht nur an api.anthropic.com. Externe Links öffnen mit `noopener,noreferrer`, damit sessionStorage nicht in neue Fenster kopiert wird.
+- **Rollup:** `anthropicBrowserStubs` ersetzt die Node-Teile des SDK; das SDK liegt in einem eigenen, nachgeladenen Chunk.
+
+## Hilfe pro Werkzeug (15.11.2026)
+
+- `src/ui/help.ts` + `src/ui/scss/help.scss`: „?“-Knopf im Kopf jedes Splatmania-Panels (13 Stück) öffnet eine kurze Anleitung; Menü Hilfe → „Splatmania-Werkzeuge erklärt“ zeigt alle 14 Themen.
+- Texte in den Locales unter `sm.help.<thema>.{title,intro,steps,tips}` (Schritte/Tipps zeilenweise), Deutsch und Englisch; andere Sprachen fallen auf Englisch zurück.

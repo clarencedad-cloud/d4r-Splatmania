@@ -1,20 +1,36 @@
 import { WebPCodec } from '@playcanvas/splat-transform';
 import { BufferTarget, EncodedPacket, EncodedVideoPacketSource, MkvOutputFormat, MovOutputFormat, Mp4OutputFormat, Output, StreamTarget, WebMOutputFormat } from 'mediabunny';
-import { Color, path, Quat, Vec3 } from 'playcanvas';
+import { Color, path, Quat, RenderTarget, Vec3 } from 'playcanvas';
 
 import type { CutFade } from './camera-poses';
 import { ElementType } from './element';
 import { EquirectRenderer } from './equirect-renderer';
 import { Events } from './events';
+import { encodeExr } from './exr-writer';
+import { MovPngWriter } from './mov-writer';
 import { OdsRenderer } from './ods-renderer';
 import { encodePng } from './png-writer';
 import { Scene } from './scene';
+import { SequenceWriter } from './sequence-writer';
 import { injectGPanoJpeg, injectGPanoPng, injectSphericalMetadata } from './spherical-metadata';
 import { Splat } from './splat';
 import { i18n } from './ui/localization';
 import { buildVideoEncoderConfig, getVideoCodecType, VideoSettings } from './video-config';
 
 const nullClr = new Color(0, 0, 0, 0);
+
+// half float -> float
+const halfF32 = new Float32Array(1);
+const halfU32 = new Uint32Array(halfF32.buffer);
+const halfToFloat = (h: number) => {
+    const exp = (h >> 10) & 0x1f;
+    const mant = h & 0x3ff;
+    const sign = h & 0x8000 ? -1 : 1;
+    if (exp === 0) return sign * mant * Math.pow(2, -24);
+    if (exp === 31) return mant ? NaN : sign * Infinity;
+    halfU32[0] = ((h & 0x8000) << 16) | ((exp + 112) << 23) | (mant << 13);
+    return halfF32[0];
+};
 
 // Lookup maps for video output format and codec configuration
 const FORMAT_CONFIG: Record<string, { create: (streaming: boolean) => Mp4OutputFormat | MovOutputFormat | MkvOutputFormat | WebMOutputFormat; extension: string }> = {
@@ -32,8 +48,10 @@ type ImageSettings = {
     height: number;
     transparentBg: boolean;
     showDebug: boolean;
-    format: 'png' | 'jpeg' | 'webp';
+    format: 'png' | 'jpeg' | 'webp' | 'exr';
     quality?: number;           // 0..1, jpeg only
+    // exr: add a Z channel (camera depth), standard projection only
+    depth?: boolean;
     // 'stereo': omnidirectional stereo, top-bottom (left eye on top), 1:1
     projection?: 'standard' | 'equirect' | 'stereo';
     levelHorizon?: boolean;
@@ -103,7 +121,7 @@ const getImportedFilename = (filename: string) => {
 // sorting is submitted on the GPU immediately before each render
 const sortSplatsAndWait = (_scene: Scene, _splats: Splat[]) => Promise.resolve();
 
-const downloadFile = (data: ArrayBuffer | Uint8Array<ArrayBuffer>, filename: string, type = 'application/octet-stream') => {
+const downloadFile = (data: ArrayBuffer | Uint8Array<ArrayBuffer> | Blob, filename: string, type = 'application/octet-stream') => {
     const blob = new Blob([data], { type });
     const url = window.URL.createObjectURL(blob);
     const el = document.createElement('a');
@@ -145,6 +163,52 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
         });
     };
 
+    // camera depth per pixel (rows top-down) of the current offscreen frame,
+    // for the EXR Z channel: the picker's depth pass per visible layer, the
+    // nearest wins. Empty pixels get 1e10 (as Blender writes them). Uses the
+    // camera colour target, so call it after the colour has been read
+    const EMPTY_DEPTH = 1e10;
+    const captureDepth = async (width: number, height: number) => {
+        const depth = new Float32Array(width * height).fill(EMPTY_DEPTH);
+        const halves = new Uint16Array(width * height * 4);
+        const { camera } = scene;
+        const near = camera.near;
+        const far = camera.far;
+        const target = camera.colorTarget;
+        const splats = (scene.getElementsByType(ElementType.splat) as Splat[]).filter(splat => splat.visible);
+        for (const splat of splats) {
+            scene.projectedSplatRenderer.renderSortedForPick();
+            camera.picker.prepareDepth(splat);
+            await target.colorBuffer.read(0, 0, width, height, { renderTarget: target, data: halves, immediate: true });
+            for (let i = 0; i < depth.length; i++) {
+                const alpha = 1 - halfToFloat(halves[i * 4 + 3]);
+                if (alpha < 0.02) continue;
+                const d = halfToFloat(halves[i * 4]) / alpha * (far - near) + near;
+                if (d < depth[i]) depth[i] = d;
+            }
+        }
+        return depth;
+    };
+
+    // premultiplied -> straight alpha (png, webm alpha)
+    const unpremultiply = (src: Uint8Array, dst: Uint8Array) => {
+        for (let i = 0; i < src.length; i += 4) {
+            const a = src[i + 3];
+            if (a === 0 || a === 255) {
+                dst[i] = src[i];
+                dst[i + 1] = src[i + 1];
+                dst[i + 2] = src[i + 2];
+            } else {
+                const k = 255 / a;
+                dst[i] = Math.min(255, src[i] * k + 0.5);
+                dst[i + 1] = Math.min(255, src[i + 1] * k + 0.5);
+                dst[i + 2] = Math.min(255, src[i + 2] * k + 0.5);
+            }
+            dst[i + 3] = a;
+        }
+        return dst;
+    };
+
     // direction-independent clipping planes around a capture point, shared
     // by all faces / strips so near-plane culling cannot differ at a seam
     const panoramaClip = (position: Vec3, margin = 0) => {
@@ -163,14 +227,19 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
     // capture a 360 panorama at position with the capture-space rotation
     // into data: mono (equirect, 6 cube faces) or omnidirectional stereo
     // (ods: 6 mono faces for the poles plus 2 x N strips, top-bottom output)
-    const capturePanorama = async (p: {
+    // the look (src/look/look.ts) runs on the finished equirect image, not
+    // per cube face or strip, so its glow and grain have no seams
+    const lookPanorama = (target: RenderTarget) => {
+        if (events.functions.has('look.applyPanorama')) events.invoke('look.applyPanorama', target);
+    };
+
+    const capturePanoramaImpl = async (p: {
         position: Vec3,
         rotation: Quat,
         equirect: EquirectRenderer | null,
         ods: OdsRenderer | null,
         faceSize: number,
         data: Uint8Array,
-        // trigger a render and wait for it
         render: () => Promise<void>,
         cancelled: () => boolean,
         progress: (fraction: number) => void
@@ -194,6 +263,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
         if (!ods) {
             equirect.project();
+            lookPanorama(equirect.equirectTarget);
             await equirect.read(data);
             return true;
         }
@@ -222,12 +292,297 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             }
         }
 
+        ods.eyeTargets.forEach(lookPanorama);
+
         // top: left eye, bottom: right eye
         const half = ods.eyeWidth * ods.eyeHeight * 4;
         await ods.read(0, data.subarray(0, half));
         await ods.read(1, data.subarray(half, 2 * half));
         return true;
     };
+
+    const capturePanorama = async (p: {
+        position: Vec3,
+        rotation: Quat,
+        equirect: EquirectRenderer | null,
+        ods: OdsRenderer | null,
+        faceSize: number,
+        data: Uint8Array,
+        // trigger a render and wait for it
+        render: () => Promise<void>,
+        cancelled: () => boolean,
+        progress: (fraction: number) => void
+    }) => {
+        const suppress = events.functions.has('look.suppress');
+        if (suppress) events.invoke('look.suppress', true);
+        try {
+            return await capturePanoramaImpl(p);
+        } finally {
+            if (suppress) events.invoke('look.suppress', false);
+        }
+    };
+
+    // live viewport preview of a 360 camera (src/ui/panorama-preview.ts): a
+    // small mono equirect at position, level, centred on heading yaw (deg).
+    // Exports wait for a running preview; a preview skips while exporting.
+    // previewing is the offscreen lock shared by render.panoramaPreview,
+    // render.posePreview and render.offscreen
+    let exporting = false;
+    let previewing = false;
+    let previewEquirect: EquirectRenderer | null = null;
+    events.function('render.exporting', () => exporting);
+
+    const beginExport = async () => {
+        exporting = true;
+        // the flag is cleared by the running preview's finally block
+        // eslint-disable-next-line no-unmodified-loop-condition
+        while (previewing) await postRender();
+    };
+
+    events.function('render.panoramaPreview', async (position: Vec3, yaw: number, width: number): Promise<Uint8Array | null> => {
+        if (exporting || previewing || !scene.bound) return null;
+        previewing = true;
+        const height = Math.floor(width / 2);
+        const faceSize = Math.min(height, scene.graphicsDevice.maxTextureSize);
+        if (!previewEquirect || previewEquirect.equirectTarget.width !== width) {
+            previewEquirect?.destroy();
+            previewEquirect = new EquirectRenderer(scene.graphicsDevice, faceSize, width, height);
+        }
+        const savedFov = scene.camera.fov;
+        const savedOrtho = scene.camera.ortho;
+        const data = new Uint8Array(width * height * 4);
+        try {
+            scene.camera.startOffscreenMode(faceSize, faceSize);
+            scene.camera.renderOverlays = false;
+            scene.gizmoLayer.enabled = false;
+            scene.centersLayer.enabled = false;
+            scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
+            scene.camera.ortho = false;
+            scene.lockedRenderMode = true;
+            const ok = await capturePanorama({
+                position,
+                rotation: new Quat().setFromEulerAngles(0, yaw, 0),
+                equirect: previewEquirect,
+                ods: null,
+                faceSize,
+                data,
+                render: async () => {
+                    scene.lockedRender = true;
+                    await postRender();
+                },
+                cancelled: () => false,
+                progress: () => {}
+            });
+            return ok ? data : null;
+        } finally {
+            scene.camera.setPoseOverride(null);
+            scene.camera.fov = savedFov;
+            scene.camera.ortho = savedOrtho;
+            scene.lockedRenderMode = false;
+            scene.camera.endOffscreenMode();
+            scene.camera.renderOverlays = true;
+            scene.gizmoLayer.enabled = true;
+            scene.centersLayer.enabled = true;
+            scene.camera.clearPass.setClearColor(nullClr);
+            scene.forceRender = true;
+            previewing = false;
+        }
+    });
+
+    const sleep = (ms: number) => new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+    });
+
+    // resolves once the page is visible: the browser stops
+    // requestAnimationFrame in a hidden tab, so no frame (and no postrender)
+    // comes until then. false when aborted first
+    const whenVisible = (signal?: AbortSignal) => new Promise<boolean>((resolve) => {
+        if (signal?.aborted) {
+            resolve(false);
+            return;
+        }
+        if (!document.hidden) {
+            resolve(true);
+            return;
+        }
+        const cleanup: (() => void)[] = [];
+        const done = (value: boolean) => {
+            cleanup.forEach(fn => fn());
+            resolve(value);
+        };
+        const onChange = () => {
+            if (!document.hidden) done(true);
+        };
+        const onAbort = () => done(false);
+        document.addEventListener('visibilitychange', onChange);
+        signal?.addEventListener('abort', onAbort);
+        cleanup.push(
+            () => document.removeEventListener('visibilitychange', onChange),
+            () => signal?.removeEventListener('abort', onAbort)
+        );
+    });
+
+    // the next rendered frame like postRender, but false (and no dangling
+    // listener) when aborted first
+    const renderedFrame = (signal?: AbortSignal) => new Promise<boolean>((resolve) => {
+        if (signal?.aborted) {
+            resolve(false);
+            return;
+        }
+        const cleanup: (() => void)[] = [];
+        const done = (value: boolean) => {
+            cleanup.forEach(fn => fn());
+            resolve(value);
+        };
+        const onAbort = () => done(false);
+        const handle = scene.events.on('postrender', () => done(true));
+        signal?.addEventListener('abort', onAbort);
+        cleanup.push(
+            () => handle.off(),
+            () => signal?.removeEventListener('abort', onAbort)
+        );
+    });
+
+    // a still of an arbitrary camera pose (shot suggestions, src/ai-shots)
+    // without moving the viewport: fov is the longer image axis like a shot
+    // camera, focus / aperture override the rendered lens for this frame.
+    // Waits for a hidden tab to become visible and briefly for another
+    // offscreen user (360 preview, flood selection); null when busy,
+    // exporting or aborted (signal)
+    const previewPos = new Vec3();
+    const previewFwd = new Vec3();
+    const previewRot = new Quat();
+    events.function('render.posePreview', async (pose: { position: Vec3, target: Vec3, fov: number, focus?: number, aperture?: number }, width: number, height: number, signal?: AbortSignal): Promise<HTMLCanvasElement | null> => {
+        // not while hidden: the lock would be held until the tab shows again
+        if (!await whenVisible(signal)) return null;
+        const deadline = performance.now() + 2000;
+        // eslint-disable-next-line no-unmodified-loop-condition
+        while (previewing && !exporting && performance.now() < deadline) {
+            if (signal?.aborted) return null;
+            await sleep(16);
+        }
+        if (signal?.aborted || exporting || previewing || scene.suspendRender || !scene.bound) return null;
+
+        const maxSize = scene.graphicsDevice.maxTextureSize;
+        const w = Math.max(1, Math.min(maxSize, Math.round(width)));
+        const h = Math.max(1, Math.min(maxSize, Math.round(height)));
+        previewPos.set(pose.position.x, pose.position.y, pose.position.z);
+        previewFwd.set(pose.target.x - previewPos.x, pose.target.y - previewPos.y, pose.target.z - previewPos.z);
+        const l = previewFwd.length();
+        if (!(l > 1e-9) || !(pose.fov > 0)) return null;
+        previewFwd.mulScalar(1 / l);
+        const azim = Math.atan2(-previewFwd.x, -previewFwd.z) * 180 / Math.PI;
+        const elev = Math.asin(Math.max(-1, Math.min(1, previewFwd.y))) * 180 / Math.PI;
+        previewRot.setFromEulerAngles(elev, azim, 0);
+
+        // clipping planes as the viewport fits them (camera.fitClippingPlanes)
+        const bound = scene.bound;
+        const boundRadius = bound.halfExtents.length();
+        const dist = new Vec3().sub2(bound.center, previewPos).dot(previewFwd);
+        const far = Math.max(dist + boundRadius, 1e-2);
+        const near = Math.min(1, Math.max(dist - boundRadius, far / (1024 * 16)));
+
+        previewing = true;
+        const savedFov = scene.camera.fov;
+        const savedOrtho = scene.camera.ortho;
+        const dof = events.functions.has('dof.state') ? events.invoke('dof.state') : null;
+        const savedLens = dof ? { focus: dof.focus as number, aperture: dof.aperture as number } : null;
+        const lensChanged = savedLens && (pose.focus !== undefined || pose.aperture !== undefined);
+
+        // The camera rig may change the viewport lens while this still
+        // renders (timeline playback, a focus slider, camera.setPose): restore
+        // only what this preview changed itself and keep what the rig set in
+        // the meantime. Its changes arrive as camera.fov / camera.ortho /
+        // dof.lens events. Re-running the rig (camera.applyView) instead would
+        // snap the viewport onto the followed camera and so throw away a
+        // navigation in progress while looking through it.
+        let rigFov: number | null = null;
+        let rigOrtho: boolean | null = null;
+        let rigLens = false;
+        let ownLens = false;
+        const fireLens = (value: { focus: number, aperture: number }) => {
+            ownLens = true;
+            try {
+                events.fire('dof.lens', value);
+            } finally {
+                ownLens = false;
+            }
+        };
+        const handles: { off: () => void }[] = [
+            events.on('camera.fov', (value: number) => {
+                rigFov = value;
+            }),
+            events.on('dof.lens', () => {
+                if (!ownLens) rigLens = true;
+            })
+        ];
+        try {
+            if (lensChanged) {
+                fireLens({
+                    focus: pose.focus !== undefined ? Math.max(0.01, pose.focus) : savedLens.focus,
+                    aperture: pose.aperture !== undefined ? Math.max(0, pose.aperture) : savedLens.aperture
+                });
+            }
+            scene.camera.startOffscreenMode(w, h);
+            scene.camera.renderOverlays = false;
+            scene.gizmoLayer.enabled = false;
+            scene.centersLayer.enabled = false;
+            scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
+            scene.camera.ortho = false;
+            handles.push(events.on('camera.ortho', (value: boolean) => {
+                rigOrtho = value;
+            }));
+            scene.lockedRenderMode = true;
+
+            // two frames, the first one discarded: the first frame after the
+            // switch to the small offscreen target and the jump to the
+            // override pose may still carry per-frame state of the viewport
+            // (renderer caches sized and keyed on the previous frame, the
+            // projection / view matrices the camera system only re-evaluates
+            // in its prerender). The second frame is fully settled. Both get
+            // the override applied right before (setPoseOverride runs
+            // camera.onUpdate, which refreshes the projection)
+            for (let pass = 0; pass < 2; pass++) {
+                scene.camera.setPoseOverride({ position: previewPos, rotation: previewRot, fov: pose.fov, near, far });
+                scene.lockedRender = true;
+                // a tab hidden meanwhile renders nothing until it shows again;
+                // the signal (cancel) still ends the wait
+                if (!await renderedFrame(signal)) return null;
+            }
+
+            const data = new Uint8Array(w * h * 4);
+            const { mainTarget, workTarget } = scene.camera;
+            scene.dataProcessor.copyRt(mainTarget, workTarget);
+            // immediate: see render.offscreen
+            await workTarget.colorBuffer.read(0, 0, w, h, { renderTarget: workTarget, data, immediate: true });
+            for (let i = 3; i < data.length; i += 4) data[i] = 255;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const context = canvas.getContext('2d');
+            if (!context) return null;
+            context.putImageData(new ImageData(new Uint8ClampedArray(data.buffer, data.byteOffset, data.length), w, h), 0, 0);
+            return canvas;
+        } finally {
+            handles.forEach(handle => handle.off());
+            scene.camera.setPoseOverride(null);
+            // the override wrote its fov each frame over whatever the rig set
+            scene.camera.fov = rigFov ?? savedFov;
+            scene.camera.ortho = rigOrtho ?? savedOrtho;
+            scene.lockedRender = false;
+            scene.lockedRenderMode = false;
+            scene.camera.endOffscreenMode();
+            scene.camera.renderOverlays = true;
+            scene.gizmoLayer.enabled = true;
+            scene.centersLayer.enabled = true;
+            scene.camera.clearPass.setClearColor(nullClr);
+            // a lens the rig pushed meanwhile is already the current one
+            if (lensChanged && !rigLens) fireLens(savedLens);
+            scene.forceRender = true;
+            previewing = false;
+        }
+    });
 
     // the panoramas a source asks for: capture point and heading per camera
     // (or key); the horizon is always level, only the camera's yaw is used
@@ -261,7 +616,15 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
         return jobs;
     });
 
+    // the viewport camera into an offscreen buffer (flood selection). Shares
+    // the offscreen lock (previewing) with the pose / 360 previews: the
+    // camera has one target size override and one pose override, so it waits
+    // for a running preview (a few frames) and then holds the lock itself,
+    // which makes previews skip / wait and exports wait in turn
     events.function('render.offscreen', async (width: number, height: number): Promise<Uint8Array> => {
+        // eslint-disable-next-line no-unmodified-loop-condition
+        while (previewing) await sleep(16);
+        previewing = true;
         try {
             // start rendering to offscreen buffer only
             scene.camera.startOffscreenMode(width, height);
@@ -297,10 +660,12 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.centersLayer.enabled = true;
             scene.camera.camera.clearColor.set(0, 0, 0, 0);
             scene.forceRender = true;       // repaint the viewport with normal rendering
+            previewing = false;
         }
     });
 
     events.function('render.image', async (imageSettings: ImageSettings, fileStream?: FileSystemWritableFileStream) => {
+        await beginExport();
         const isStereo = imageSettings.projection === 'stereo';
 
         // stereo renders take a while: progress with cancel instead of the spinner
@@ -309,7 +674,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             cancelled = true;
         }) : null;
         if (isStereo) {
-            events.fire('progressStart', 'Stereo-360 rendern', true);
+            events.fire('progressStart', i18n.t('sm.render.stereo-progress'), true);
         } else {
             events.fire('startSpinner');
         }
@@ -320,7 +685,8 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
         let savedOrtho = false;
 
         try {
-            const { width, height, transparentBg, showDebug, format, quality, projection, levelHorizon, job } = imageSettings;
+            const { width, height, transparentBg, showDebug, format, quality, projection, levelHorizon, job, depth: withDepth } = imageSettings;
+            let depthData: Float32Array | null = null;
             const is360 = projection === 'equirect' || isStereo;
 
             // stereo output is top-bottom: each eye is width x height / 2
@@ -411,14 +777,25 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
                 // read the rendered frame (immediate: see render.offscreen)
                 await workTarget.colorBuffer.read(0, 0, width, height, { renderTarget: workTarget, data, immediate: true });
+
+                if (format === 'exr' && withDepth) depthData = await captureDepth(width, height);
+
+                // titles (src/titles.ts) at the current frame
+                if (events.functions.has('titles.drawOnPixels')) {
+                    events.invoke('titles.drawOnPixels', data, width, height, events.invoke('timeline.frame') ?? 0);
+                }
             }
 
             let bytes: Uint8Array<ArrayBuffer>;
             let extension: string;
             let mimeType: string;
 
-            if (format === 'png') {
-                bytes = await encodePng(data, width, height);
+            if (format === 'exr') {
+                bytes = await encodeExr(data, width, height, depthData) as Uint8Array<ArrayBuffer>;
+                extension = 'exr';
+                mimeType = 'image/x-exr';
+            } else if (format === 'png') {
+                bytes = await encodePng(transparentBg ? unpremultiply(data, new Uint8Array(data.length)) : data, width, height);
                 extension = 'png';
                 mimeType = 'image/png';
             } else if (format === 'jpeg') {
@@ -524,6 +901,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.centersLayer.enabled = true;
             scene.camera.clearPass.setClearColor(nullClr);
             scene.forceRender = true;       // repaint the viewport with normal rendering
+            exporting = false;
 
             if (isStereo) {
                 cancelHandler.off();
@@ -536,6 +914,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
     events.function('render.video', (videoSettings: VideoSettings, fileStream: FileSystemWritableFileStream) => {
         const renderImpl = async () => {
+            await beginExport();
             events.fire('progressStart', i18n.t('panel.render.render-video'), true);
 
             let cancelled = false;
@@ -550,9 +929,18 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             let savedOrtho = false;
             let output: Output | null = null;
             let muxerWrites = Promise.resolve();
+            // closes alpha frames left over by a failed or cancelled render
+            let alphaFramesCleanup = () => {};
 
             try {
                 const { startFrame, endFrame, frameRate, width, height, bitrate, transparentBg, showDebug, format, codec: codecChoice, projection, levelHorizon } = videoSettings;
+
+                // frames written by us instead of a WebCodecs encoder:
+                // QuickTime with PNG frames, PNG / EXR image sequences
+                const rawFormat = format === 'png-seq' || format === 'exr-seq' || (format === 'mov' && codecChoice === 'png') ? format : null;
+                // WebM with an alpha channel (VP9 / AV1, encoded as a second
+                // stream in series, like mediabunny does)
+                const alphaVideo = !rawFormat && transparentBg && format === 'webm';
 
                 const isStereo = projection === 'stereo';
                 const is360 = projection === 'equirect' || isStereo;
@@ -568,63 +956,118 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 // 360 mp4/mov exports have spherical metadata patched into the
                 // finished buffer, so they render to memory with moov written
                 // last (fastStart false) instead of streaming to disk
-                const taggable = is360 && (format === 'mp4' || format === 'mov');
+                const taggable = !rawFormat && is360 && (format === 'mp4' || format === 'mov');
 
-                const target = (fileStream && !taggable) ? new StreamTarget(fileStream) : new BufferTarget();
+                const target = rawFormat ? null : ((fileStream && !taggable) ? new StreamTarget(fileStream) : new BufferTarget());
 
                 // Configure output format and codec from lookup maps (default to mp4/h264)
                 const formatConfig = FORMAT_CONFIG[format] ?? FORMAT_CONFIG.mp4;
-                const outputFormat = formatConfig.create(taggable || !!fileStream);
-                const fileExtension = formatConfig.extension;
+                const outputFormat = rawFormat ? null : formatConfig.create(taggable || !!fileStream);
+                const fileExtension = rawFormat === 'mov' ? 'mov' : (rawFormat ? 'zip' : formatConfig.extension);
 
-                const encoderConfig = buildVideoEncoderConfig(videoSettings);
-                const codecType = getVideoCodecType(codecChoice);
+                const encoderConfig = rawFormat ? null : buildVideoEncoderConfig(videoSettings);
+                const codecType = rawFormat ? null : getVideoCodecType(codecChoice);
 
-                output = new Output({
-                    format: outputFormat,
-                    target
-                });
+                let videoSource: EncodedVideoPacketSource | null = null;
+                if (!rawFormat) {
+                    output = new Output({
+                        format: outputFormat,
+                        target
+                    });
 
-                const videoSource = new EncodedVideoPacketSource(codecType);
-                output.addVideoTrack(videoSource, {
-                    rotation: 0,
-                    frameRate
-                });
+                    videoSource = new EncodedVideoPacketSource(codecType);
+                    output.addVideoTrack(videoSource, {
+                        rotation: 0,
+                        frameRate
+                    });
 
-                await output.start();
+                    await output.start();
+                }
+
+                // raw outputs
+                const movWriter = rawFormat === 'mov' ? new MovPngWriter(fileStream ?? null, width, height, frameRate, transparentBg) : null;
+                await movWriter?.start();
+                const sequence = rawFormat === 'png-seq' || rawFormat === 'exr-seq' ? new SequenceWriter(videoSettings.directory ?? null) : null;
+                const straight = (rawFormat === 'png-seq' || rawFormat === 'mov' || alphaVideo) && transparentBg ? new Uint8Array(width * height * 4) : null;
+                let rawIndex = 0;
 
                 let encoderError: Error | null = null;
                 let muxerError: Error | null = null;
                 let muxerQueueSize = 0;
 
+                // alpha video: alpha frames waiting for their colour chunk,
+                // colour chunks waiting for their alpha chunk
+                let alphaEncoder: VideoEncoder | null = null;
+                const alphaFrames: VideoFrame[] = [];
+                alphaFramesCleanup = () => {
+                    alphaFrames.forEach(frame => frame.close());
+                    alphaFrames.length = 0;
+                    if (alphaEncoder && alphaEncoder.state !== 'closed') alphaEncoder.close();
+                };
+                const colorChunks: { chunk: EncodedVideoChunk, meta: any }[] = [];
+
                 // helper to create and configure a VideoEncoder instance
                 const createEncoder = () => {
                     encoderError = null;
+                    const writePacket = (chunk: EncodedVideoChunk, meta: any, alphaChunk: EncodedVideoChunk | null) => {
+                        let sideData;
+                        if (alphaChunk) {
+                            const alpha = new Uint8Array(alphaChunk.byteLength);
+                            alphaChunk.copyTo(alpha);
+                            sideData = { alpha };
+                        }
+                        const encodedPacket = EncodedPacket.fromEncodedChunk(chunk, sideData);
+                        muxerQueueSize++;
+
+                        // WebCodecs ignores a Promise returned by its output
+                        // callback: awaiting the muxer here provides no
+                        // backpressure, and a rejected write becomes an
+                        // unhandled rejection that silently drops packets
+                        // from the finished file. Chain the writes instead
+                        // so failures surface via muxerError, muxerQueueSize
+                        // drives backpressure in the encode loop, and every
+                        // write has settled before output.finalize().
+                        muxerWrites = muxerWrites
+                        .then(async () => {
+                            if (!muxerError) {
+                                await videoSource.add(encodedPacket, meta);
+                            }
+                        })
+                        .catch((error) => {
+                            muxerError = error instanceof Error ? error : new Error(String(error));
+                        })
+                        .finally(() => {
+                            muxerQueueSize--;
+                        });
+                    };
+                    if (alphaVideo) {
+                        if (alphaEncoder && alphaEncoder.state !== 'closed') alphaEncoder.close();
+                        alphaFrames.forEach(frame => frame.close());
+                        alphaFrames.length = 0;
+                        colorChunks.length = 0;
+                        alphaEncoder = new VideoEncoder({
+                            output: (chunk) => {
+                                const color = colorChunks.shift();
+                                if (color) writePacket(color.chunk, color.meta, chunk);
+                            },
+                            error: (error) => {
+                                encoderError = error;
+                            }
+                        });
+                        alphaEncoder.configure(encoderConfig);
+                    }
                     const enc = new VideoEncoder({
                         output: (chunk, meta) => {
-                            const encodedPacket = EncodedPacket.fromEncodedChunk(chunk);
-                            muxerQueueSize++;
-
-                            // WebCodecs ignores a Promise returned by its output
-                            // callback: awaiting the muxer here provides no
-                            // backpressure, and a rejected write becomes an
-                            // unhandled rejection that silently drops packets
-                            // from the finished file. Chain the writes instead
-                            // so failures surface via muxerError, muxerQueueSize
-                            // drives backpressure in the encode loop, and every
-                            // write has settled before output.finalize().
-                            muxerWrites = muxerWrites
-                            .then(async () => {
-                                if (!muxerError) {
-                                    await videoSource.add(encodedPacket, meta);
-                                }
-                            })
-                            .catch((error) => {
-                                muxerError = error instanceof Error ? error : new Error(String(error));
-                            })
-                            .finally(() => {
-                                muxerQueueSize--;
-                            });
+                            if (!alphaEncoder) {
+                                writePacket(chunk, meta, null);
+                                return;
+                            }
+                            // the alpha frame is a key frame whenever the
+                            // colour frame is (players glitch otherwise)
+                            const alphaFrame = alphaFrames.shift();
+                            colorChunks.push({ chunk, meta });
+                            alphaEncoder.encode(alphaFrame, { keyFrame: chunk.type === 'key' });
+                            alphaFrame.close();
                         },
                         error: (error) => {
                             encoderError = error;
@@ -636,12 +1079,14 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
                 // fail fast on unsupported configurations (e.g. encoder
                 // dimension limits) instead of erroring mid-render
-                const support = await VideoEncoder.isConfigSupported(encoderConfig);
-                if (!support.supported) {
-                    throw new Error(`Unsupported video configuration (${codecChoice} @ ${width}x${height})`);
-                }
+                if (!rawFormat) {
+                    const support = await VideoEncoder.isConfigSupported(encoderConfig);
+                    if (!support.supported) {
+                        throw new Error(`Unsupported video configuration (${codecChoice} @ ${width}x${height})`);
+                    }
 
-                encoder = createEncoder();
+                    encoder = createEncoder();
+                }
 
                 // in 360 mode the offscreen target is a square cube face; the
                 // equirect target holds the output-sized frame
@@ -717,19 +1162,55 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     return newSplat;
                 };
 
+                // write the pixels in the data buffer as a png / exr frame
+                const writeRawFrame = async () => {
+                    const index = rawIndex++;
+                    const name = `${baseFilename()}${videoSettings.filenameSuffix ?? ''}_${String(index).padStart(5, '0')}`;
+                    if (rawFormat === 'exr-seq') {
+                        const depth = videoSettings.depth && !is360 ? await captureDepth(width, height) : null;
+                        await sequence.add(`${name}.exr`, await encodeExr(data, width, height, depth));
+                        return;
+                    }
+                    const png = await encodePng(straight ? unpremultiply(data, straight) : data, width, height);
+                    if (movWriter) {
+                        await movWriter.addFrame(png);
+                    } else {
+                        await sequence.add(`${name}.png`, png);
+                    }
+                };
+
                 // wrap and submit the pixels currently in the data buffer
                 const encodeFrame = async (frameTime: number) => {
-                    // construct the video frame
-                    const videoFrame = new VideoFrame(data, {
-                        format: 'RGBA',
+                    if (rawFormat) {
+                        await writeRawFrame();
+                        return;
+                    }
+
+                    const timing = {
                         codedWidth: width,
                         codedHeight: height,
                         timestamp: Math.floor(1e6 * frameTime),
                         duration: Math.floor(1e6 / frameRate)
-                    });
+                    };
+
+                    // construct the video frame (alpha video: straight colour
+                    // without alpha, plus the alpha as a grey I420 frame)
+                    let videoFrame: VideoFrame;
+                    if (alphaVideo) {
+                        videoFrame = new VideoFrame(unpremultiply(data, straight), { format: 'RGBX', ...timing });
+                        const pixels = width * height;
+                        const chroma = Math.ceil(width / 2) * Math.ceil(height / 2);
+                        const alphaBuffer = new Uint8Array(pixels + chroma * 2);
+                        for (let i = 0, j = 3; i < pixels; i++, j += 4) alphaBuffer[i] = data[j];
+                        alphaBuffer.fill(128, pixels);
+                        alphaFrames.push(new VideoFrame(alphaBuffer, { format: 'I420', ...timing }));
+                    } else {
+                        videoFrame = new VideoFrame(data, { format: 'RGBA', ...timing });
+                    }
 
                     // wait for encoder queue to drain if necessary (backpressure handling)
-                    while (encoder.encodeQueueSize > MAX_QUEUE_SIZE) {
+                    const queueFull = () => encoder.encodeQueueSize > MAX_QUEUE_SIZE || (alphaEncoder?.encodeQueueSize ?? 0) > MAX_QUEUE_SIZE;
+                    while (queueFull()) {
                         await new Promise<void>((resolve) => {
                             setTimeout(resolve, 1);
                         });
@@ -768,12 +1249,6 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     await workTarget.colorBuffer.read(0, 0, width, height, { renderTarget: workTarget, data: buffer, immediate: true });
                 };
 
-                // capture the current video frame
-                const captureFrame = async (frameTime: number) => {
-                    await readFrame(data);
-                    await encodeFrame(frameTime);
-                };
-
                 // render the outgoing camera of a cut cross-fade into fadeData;
                 // returns the incoming camera's weight, or null outside a fade
                 const renderFadeFrom = async (animTime: number): Promise<number | null> => {
@@ -797,6 +1272,18 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
                 const animFrameRate = events.invoke('timeline.frameRate');
                 const duration = (endFrame - startFrame) / animFrameRate;
+
+                // titles (src/titles.ts) over a finished standard frame
+                const overlayTitles = (animTime: number) => {
+                    if (events.functions.has('titles.drawOnPixels')) {
+                        events.invoke('titles.drawOnPixels', data, width, height, animTime);
+                    }
+                };
+
+                // motion blur (standard projection): sub-frames per frame
+                const blurSamples = !is360 && videoSettings.motionBlur ? Math.max(1, Math.round(videoSettings.motionBlur.samples)) : 1;
+                const blurShutter = Math.min(1, Math.max(0.01, videoSettings.motionBlur?.shutter ?? 0.5));
+                const blurAccum = blurSamples > 1 ? new Float32Array(width * height * 4) : null;
                 const totalFrames = Math.floor(duration * frameRate) + 1;
 
                 // work objects for 360 capture
@@ -861,6 +1348,30 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                         const animTime = startFrame + frameTime * animFrameRate;
                         const fadeAlpha = await renderFadeFrom(animTime);
 
+                        if (blurSamples > 1) {
+                            // motion blur: sub-frames spread over the shutter
+                            // around this frame's time, averaged
+                            blurAccum.fill(0);
+                            for (let s = 0; s < blurSamples; s++) {
+                                const offset = ((s + 0.5) / blurSamples - 0.5) * blurShutter;
+                                await prepareFrame(animTime + offset * animFrameRate / frameRate);
+                                scene.lockedRender = true;
+                                await postRender();
+                                await readFrame(data);
+                                for (let i = 0; i < data.length; i++) blurAccum[i] += data[i];
+                            }
+                            const inv = 1 / blurSamples;
+                            for (let i = 0; i < data.length; i++) data[i] = blurAccum[i] * inv + 0.5;
+                            if (fadeAlpha !== null) mixFade(fadeAlpha);
+                            overlayTitles(animTime);
+                            await encodeFrame(frameTime);
+                            events.fire('progressUpdate', {
+                                text: i18n.t('panel.render.rendering', { ellipsis: true }),
+                                progress: 100 * frameTime / duration
+                            });
+                            continue;
+                        }
+
                         // prepare the frame (loads PLY if needed, updates camera, sorts)
                         await prepareFrame(animTime);
 
@@ -871,13 +1382,10 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                         await postRender();
 
                         // wait for capture
-                        if (fadeAlpha === null) {
-                            await captureFrame(frameTime);
-                        } else {
-                            await readFrame(data);
-                            mixFade(fadeAlpha);
-                            await encodeFrame(frameTime);
-                        }
+                        await readFrame(data);
+                        if (fadeAlpha !== null) mixFade(fadeAlpha);
+                        overlayTitles(animTime);
+                        await encodeFrame(frameTime);
 
                         events.fire('progressUpdate', {
                             text: i18n.t('panel.render.rendering', { ellipsis: true }),
@@ -886,15 +1394,28 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     }
                 }
 
+                const filename = () => `${baseFilename()}${videoSettings.filenameSuffix ?? (isStereo ? '_TB' : '')}.${fileExtension}`;
+
+                if (rawFormat) {
+                    if (movWriter) {
+                        const blob = await movWriter.finish();
+                        if (fileStream) await fileStream.close();
+                        else if (!cancelled) downloadFile(blob, filename());
+                    } else {
+                        const zip = sequence.finish();
+                        if (zip && !cancelled) downloadFile(zip, filename());
+                    }
+                    return !cancelled;
+                }
+
                 // Flush and finalize output
                 await encoder.flush();
+                if (alphaEncoder) await alphaEncoder.flush();
                 await muxerWrites;
                 if (muxerError) {
                     throw muxerError;
                 }
                 await output.finalize();
-
-                const filename = () => `${baseFilename()}${videoSettings.filenameSuffix ?? (isStereo ? '_TB' : '')}.${fileExtension}`;
 
                 if (taggable) {
                     // patch spherical metadata into the finished buffer so
@@ -966,6 +1487,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     encoder.close();
                 }
                 cancelHandler.off();
+                alphaFramesCleanup();
 
                 // back to the interactive view mode
                 events.invoke('camera.setRenderOverride', null);
@@ -988,6 +1510,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.clearPass.setClearColor(nullClr);
                 scene.lockedRenderMode = false;
                 scene.forceRender = true;       // camera likely moved, finish with normal render
+                exporting = false;
 
                 events.fire('progressEnd');
             }

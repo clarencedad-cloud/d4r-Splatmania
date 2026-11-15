@@ -1,5 +1,7 @@
 import { Container } from '@playcanvas/pcui';
 
+import { i18n } from './localization';
+
 // position and minimized state of the floating viewport panels, per user
 const storageKey = 'splatmania.ui.floating';
 
@@ -25,6 +27,7 @@ const saveState = (key: string, state: FloatingState) => {
 
 type FloatingOptions = {
     key: string,
+    // i18n key of the title
     title: string,
     // controls kept in the title bar (stay visible when minimized)
     extras?: HTMLElement[]
@@ -45,10 +48,10 @@ const makeFloating = (panel: Container, options: FloatingOptions) => {
     header.classList.add('floating-header');
     const toggle = document.createElement('span');
     toggle.classList.add('floating-toggle');
-    toggle.title = 'Minimieren / aufklappen';
+    i18n.bindDom(toggle, 'sm.floating.toggle', 'title');
     const title = document.createElement('span');
     title.classList.add('floating-title');
-    title.textContent = options.title;
+    i18n.bindDom(title, options.title);
     const info = document.createElement('span');
     info.classList.add('floating-info');
     header.append(toggle, title, info);
@@ -56,7 +59,7 @@ const makeFloating = (panel: Container, options: FloatingOptions) => {
         extra.classList.add('floating-extra');
         header.appendChild(extra);
     });
-    header.title = 'Ziehen = verschieben, Doppelklick = zurück an die Standardposition';
+    i18n.bindDom(header, 'sm.floating.header', 'title');
     dom.classList.add('floating-panel');
     dom.insertBefore(header, dom.firstChild);
 

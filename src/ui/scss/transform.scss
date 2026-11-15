@@ -74,3 +74,18 @@ $height: 22px;
     width: calc((215px - 20px) / 3);
     margin-right: calc(215px - (215px - 20px) / 3);
 }
+
+// preset buttons under the rotation (XGrids)
+#transform > .transform-preset-row {
+    height: 26px;
+    line-height: 26px;
+
+    > .transform-preset {
+        flex: 0 0 auto;
+        width: 215px;
+        height: 22px;
+        line-height: 20px;
+        margin: 0;
+        font-size: 12px;
+    }
+}

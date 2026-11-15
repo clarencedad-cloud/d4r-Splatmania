@@ -6,6 +6,7 @@
 @use 'menu.scss';
 @use 'scene-panel.scss';
 @use 'settings-panel.scss';
+@use 'ai-shots-panel.scss';
 @use 'color-panel.scss';
 @use 'splat-list.scss';
 @use 'transform.scss';
@@ -28,6 +29,7 @@
 @use 'export-popup.scss';
 @use 'shortcuts-popup.scss';
 @use 'about-popup.scss';
+@use 'help.scss';
 @use 'timeline-panel.scss';
 @use 'status-bar.scss';
 @use 'tool.scss';
@@ -376,4 +378,51 @@ body {
     font-family: 'Proxima Nova Bold', 'Helvetica Neue', Arial, Helvetica, sans-serif;
     font-weight: bold;
     font-style: normal;
+}
+
+// which view the viewport shows (src/ui/viewport-label.ts), left of the
+// view cube
+#viewport-label {
+    position: absolute;
+    top: 14px;
+    right: 146px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 260px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 12px;
+    background-color: rgba(21, 18, 30, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #bdb5c9;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+
+    &:hover {
+        border-color: rgba(255, 255, 255, 0.35);
+    }
+
+    &.through-camera {
+        color: #fff;
+        border-color: rgba(194, 14, 126, 0.8);
+    }
+
+    .viewport-label-swatch {
+        flex-shrink: 0;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+
+        &[hidden] {
+            display: none;
+        }
+    }
+
+    .viewport-label-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
 }

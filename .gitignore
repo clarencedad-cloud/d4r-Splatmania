@@ -9,3 +9,4 @@ node_modules
 
 # rendered test videos and frames
 test-data/out
+release

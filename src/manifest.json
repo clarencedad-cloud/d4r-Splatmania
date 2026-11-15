@@ -2,7 +2,7 @@
     "id": "./",
     "name": "Splatmania",
     "short_name": "Splatmania",
-    "description": "Splatmania – Gaussian-Splat-Editor von design4real: säubern, ausrichten, animieren und als Film ausgeben.",
+    "description": "Splatmania – free Gaussian splat editor by design4real: clean up, align, animate and render your splats to video and 360° panoramas.",
     "display": "standalone",
     "start_url": "./",
     "scope": "./",

@@ -181,7 +181,35 @@ struct ProjectorUniforms {
     sectionEdge: vec4f,
     // depth of field (src/dof/dof.ts): x enabled, y 1 / focus distance,
     // z aperture (lens radius, world units), w max blur diameter (px)
-    dofParams: vec4f
+    dofParams: vec4f,
+    // splat display (src/layer-anim.ts PointCloudSettings): x size factor
+    // (scales the gaussians, 1 = as trained), y screen-space low-pass filter
+    // in px^2 (the 3dgs reference adds 0.3; lower = crisper, aliasing)
+    splatParams: vec4f,
+    // distance fog (src/look/look.ts): x start, y end (camera distance,
+    // world units), z strength (0 = off), w mode (0 fade out, 1 colour)
+    fogParams: vec4f,
+    fogColor: vec4f,
+    // relighting (src/light/light.ts): x enabled, y baked light kept
+    // (1 = as scanned), z wrap (soft diffuse), w spot edge softness
+    lightParams: vec4f,
+    // ambient light added over the baked colour (rgb)
+    lightAmbient: vec4f,
+    // up to four lights: A xyz position (sun: direction to the light),
+    // w type (0 off, 1 sun, 2 point, 3 spot); B rgb colour * intensity,
+    // w range; C xyz spot direction, w cos of the half cone angle
+    lightA0: vec4f,
+    lightB0: vec4f,
+    lightC0: vec4f,
+    lightA1: vec4f,
+    lightB1: vec4f,
+    lightC1: vec4f,
+    lightA2: vec4f,
+    lightB2: vec4f,
+    lightC2: vec4f,
+    lightA3: vec4f,
+    lightB3: vec4f,
+    lightC3: vec4f
 }
 
 // compaction output: surviving splats are appended to a dense list, so the sort
@@ -443,6 +471,30 @@ fn buildTransition(world: vec3f, id: u32) -> BuildResult {
     return r;
 }
 
+// one light's diffuse contribution at p with normal n (src/light/light.ts)
+fn shadeLight(a: vec4f, b: vec4f, c: vec4f, p: vec3f, n: vec3f, wrap: f32, soft: f32) -> vec3f {
+    if (a.w < 0.5) {
+        return vec3f(0.0);
+    }
+    var l = normalize(a.xyz);
+    var atten = 1.0;
+    if (a.w > 1.5) {
+        let delta = a.xyz - p;
+        let dist = length(delta);
+        l = delta / max(dist, 1e-6);
+        // smooth window falloff: full at the light, zero at its range
+        let x = clamp(1.0 - dist / max(b.w, 1e-4), 0.0, 1.0);
+        atten = x * x;
+        if (a.w > 2.5) {
+            let cosAngle = dot(-l, normalize(c.xyz));
+            let cosInner = mix(c.w, 1.0, soft);
+            atten *= smoothstep(c.w, max(cosInner, c.w + 1e-4), cosAngle);
+        }
+    }
+    let diffuse = max(0.0, (dot(n, l) + wrap) / (1.0 + wrap));
+    return b.rgb * diffuse * atten;
+}
+
 fn rotationMatrix(qIn: vec4f) -> mat3x3f {
     let q = normalize(qIn);
     let x = q.x;
@@ -592,6 +644,13 @@ fn main(
         cov11 = u11 * jy1 + u12 * jy2;
     }
 
+    // display size: scaling the gaussian by s scales its covariance by s^2
+    let sizeScale2 = uniforms.splatParams.x * uniforms.splatParams.x;
+    cov00 *= sizeScale2;
+    cov01 *= sizeScale2;
+    cov11 *= sizeScale2;
+    let lowPass = uniforms.splatParams.y;
+
     // depth of field: widen the projected gaussian by the circle of
     // confusion of a thin lens focused at dofParams.y; alpha shrinks by the
     // area ratio so each splat keeps its energy (blur, not brighten)
@@ -599,15 +658,15 @@ fn main(
     if (uniforms.dofParams.x > 0.5) {
         let coc = min(uniforms.dofParams.z * focal.y * abs(uniforms.dofParams.y - 1.0 / max(depth, 0.001)), uniforms.dofParams.w);
         let blurVariance = 0.25 * coc * coc;
-        let detSharp = (cov00 + 0.3) * (cov11 + 0.3) - cov01 * cov01;
+        let detSharp = (cov00 + lowPass) * (cov11 + lowPass) - cov01 * cov01;
         cov00 += blurVariance;
         cov11 += blurVariance;
-        let detBlurred = (cov00 + 0.3) * (cov11 + 0.3) - cov01 * cov01;
+        let detBlurred = (cov00 + lowPass) * (cov11 + lowPass) - cov01 * cov01;
         dofAlpha = sqrt(max(detSharp, 1e-12) / max(detBlurred, 1e-12));
     }
 
-    cov00 += 0.3;
-    cov11 += 0.3;
+    cov00 += lowPass;
+    cov11 += lowPass;
     let determinant = cov00 * cov11 - cov01 * cov01;
     if (determinant <= 0.0) {
         return;
@@ -770,6 +829,34 @@ fn main(
     if (pointMix > 0.0 && uniforms.pointParams.w > 0.5) {
         graded = mix(graded, uniforms.pointColor.rgb, pointMix);
     }
+
+    // relighting: the scan's light is baked into the colour, so new light
+    // multiplies it (the colour stands in for the albedo). The normal is the
+    // splat's shortest axis (flat splats lie on the surface), facing the
+    // camera; round splats have no defined normal and lean to the view
+    if (uniforms.lightParams.x > 0.5) {
+        let rot = rotationMatrix(rotation);
+        let sMin = min(b.x, min(b.y, b.z));
+        let sMax = max(b.x, max(b.y, b.z));
+        let sMid = b.x + b.y + b.z - sMin - sMax;
+        let axis = select(select(rot[2], rot[1], b.y == sMin), rot[0], b.x == sMin);
+        let toCamera = normalize(uniforms.cameraPosition - worldCenter.xyz);
+        var normal = normalize(mat3x3f(model[0].xyz, model[1].xyz, model[2].xyz) * axis);
+        if (dot(normal, toCamera) < 0.0) {
+            normal = -normal;
+        }
+        let flatness = clamp(1.0 - sMin / max(sMid, 1e-8), 0.0, 1.0);
+        normal = normalize(mix(toCamera, normal, flatness));
+        let p = worldCenter.xyz;
+        let wrap = uniforms.lightParams.z;
+        let soft = uniforms.lightParams.w;
+        var light = uniforms.lightAmbient.rgb;
+        light += shadeLight(uniforms.lightA0, uniforms.lightB0, uniforms.lightC0, p, normal, wrap, soft);
+        light += shadeLight(uniforms.lightA1, uniforms.lightB1, uniforms.lightC1, p, normal, wrap, soft);
+        light += shadeLight(uniforms.lightA2, uniforms.lightB2, uniforms.lightC2, p, normal, wrap, soft);
+        light += shadeLight(uniforms.lightA3, uniforms.lightB3, uniforms.lightC3, p, normal, wrap, soft);
+        graded = graded * (uniforms.lightParams.y + light);
+    }
     // quality heatmap (display only): score ramp red -> yellow -> green, or
     // red where the score is under the threshold / the splat is flagged
     // worse than another scan (score byte 0 in mode 3)
@@ -788,6 +875,18 @@ fn main(
     graded = mix(graded, uniforms.transF.rgb, clamp(built.tint, 0.0, 1.0));
     graded += uniforms.transF.rgb * built.glow * 1.5;
     color = vec4f(graded, gradedAlpha);
+
+    // distance fog: by distance, not view depth, so a panorama's cube faces
+    // agree. Fading out equals blending to a solid background, and also
+    // works on transparent exports; colour mode blends to the fog colour
+    if (uniforms.fogParams.z > 0.0) {
+        let fog = uniforms.fogParams.z * smoothstep(uniforms.fogParams.x, max(uniforms.fogParams.y, uniforms.fogParams.x + 1e-4), length(viewCenter.xyz));
+        if (uniforms.fogParams.w > 0.5) {
+            color = vec4f(mix(color.rgb, uniforms.fogColor.rgb, fog), color.a);
+        } else {
+            color = vec4f(color.rgb, color.a * (1.0 - fog));
+        }
+    }
 
     let selected = (state & 1u) != 0u && uniforms.selectionEnabled != 0u;
     let locked = (state & 2u) != 0u;

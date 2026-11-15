@@ -1,24 +1,47 @@
+import { Quat, Vec3 } from 'playcanvas';
+
 import { AnimTrack } from './anim-track';
 import { AnimTrackEditOp, MultiOp } from './edit-ops';
 import { Events } from './events';
+import { i18n } from './ui/localization';
+
+// display names of the channels, for the key target label
+const CHANNEL_NAMES: Record<string, string> = {
+    position: 'sm.channel.position',
+    target: 'sm.channel.rotation',
+    rotation: 'sm.channel.rotation',
+    scale: 'sm.channel.scale',
+    fov: 'sm.channel.lens',
+    focus: 'sm.channel.focus',
+    aperture: 'sm.channel.aperture',
+    opacity: 'sm.channel.opacity',
+    mix: 'sm.channel.mix'
+};
 
 /**
- * Manages the active animation track and provides undo-wrapped
- * key operations. Resolves which track the user is interacting
- * with and ensures all mutations are undoable.
+ * Manages the key target of the timeline's key button and provides
+ * undo-wrapped key operations.
  *
- * The key target follows the last pick: a splat selected in the scene
- * manager (or its timeline row) targets that layer's track, a camera picked
- * in the camera list (or its row) targets that camera's track.
+ * The key target is the selected object: a splat selected in the scene
+ * manager (or its timeline row) targets that layer, a camera picked in the
+ * camera list (or its row) targets that camera. The section track is only
+ * the target after clicking its timeline row. Every property also has its
+ * own key button next to its value (cameras, transform, layer animation,
+ * section), which keys exactly that property.
+ *
+ * Auto key keys exactly the properties that changed, at the moment they
+ * change.
  */
 const registerTrackManagerEvents = (events: Events) => {
-    let target: 'camera' | 'layer' | 'section' | 'dof' = 'camera';
+    let target: 'camera' | 'layer' | 'section' | 'look' | 'light' = 'camera';
     let autoKey = false;
+
+    const selection = () => (events.functions.has('selection') ? events.invoke('selection') : null);
 
     // the selection is registered after the ui (which already asks for the
     // key target), so it is resolved lazily
     const layerTrack = () => {
-        const splat = (events.functions.has('selection') ? events.invoke('selection') : null);
+        const splat = selection();
         return splat ? events.invoke('layerAnim.state', splat)?.track ?? null : null;
     };
 
@@ -27,8 +50,11 @@ const registerTrackManagerEvents = (events: Events) => {
         if (target === 'section' && events.functions.has('section.track')) {
             return events.invoke('section.track');
         }
-        if (target === 'dof' && events.functions.has('dof.track')) {
-            return events.invoke('dof.track');
+        if (target === 'look' && events.functions.has('look.track')) {
+            return events.invoke('look.track');
+        }
+        if (target === 'light' && events.functions.has('light.track')) {
+            return events.invoke('light.track');
         }
         if (target === 'layer') {
             const track = layerTrack();
@@ -37,25 +63,47 @@ const registerTrackManagerEvents = (events: Events) => {
         return events.invoke('camera.animTrack') ?? null;
     };
 
+    const frameNow = () => Math.round(events.invoke('timeline.frame') ?? 0);
+
+    // which properties the key button keys on the target
+    const targetChannels = (): string[] => {
+        const track = getActiveTrack() as any;
+        if (!track) return [];
+        if (target === 'section' || target === 'look' || target === 'light') return [];
+        return track.addKeyChannels ? track.addKeyChannels(frameNow()) : [];
+    };
+
     // what a key goes to, for the timeline label and row highlight
     events.function('track.target', () => {
+        const channels = targetChannels()
+        // position + rotation of a camera read as one
+        .map(c => i18n.t(CHANNEL_NAMES[c] ?? c))
+        .filter((name, i, all) => all.indexOf(name) === i);
         if (target === 'section') {
-            return { kind: 'section', name: 'Schnitt', color: [194, 14, 126] };
+            return { kind: 'section', name: i18n.t('sm.section.title'), color: [194, 14, 126], channels };
         }
-        if (target === 'dof') {
-            return { kind: 'dof', name: 'Fokus', color: [90, 169, 230] };
+        if (target === 'look') {
+            return { kind: 'look', name: i18n.t('sm.look.title'), color: [255, 184, 64], channels };
         }
-        const splat = (events.functions.has('selection') ? events.invoke('selection') : null);
+        if (target === 'light') {
+            return { kind: 'light', name: i18n.t('sm.light.title'), color: [255, 226, 120], channels };
+        }
+        const splat = selection();
         if (target === 'layer' && splat) {
-            return { kind: 'layer', name: splat.name, color: [230, 18, 138], splat };
+            return { kind: 'layer', name: splat.name, color: [230, 18, 138], splat, channels };
         }
         const camera = events.invoke('shotCameras.selected');
-        return { kind: 'camera', name: camera?.name ?? 'Kamera', color: camera?.color ?? [0, 220, 255], camera };
+        return { kind: 'camera', name: camera?.name ?? i18n.t('sm.cameras.camera'), color: camera?.color ?? [0, 220, 255], camera, channels };
     });
 
-    const setTarget = (value: 'camera' | 'layer' | 'section' | 'dof') => {
+    const refreshTarget = () => events.fire('track.target', events.invoke('track.target'));
+    // the listed channels change with the frame and edits: only the label
+    // updates (track.target rebuilds the timeline rows)
+    const refreshLabel = () => events.fire('track.targetLabel', events.invoke('track.target'));
+
+    const setTarget = (value: 'camera' | 'layer' | 'section' | 'look' | 'light') => {
         target = value;
-        events.fire('track.target', events.invoke('track.target'));
+        refreshTarget();
         // the ruler and the key buttons show the active track's keys
         events.fire('track.keysLoaded');
     };
@@ -64,50 +112,43 @@ const registerTrackManagerEvents = (events: Events) => {
     // picking the already selected splat again changes nothing in the
     // selection but still makes it the key target
     events.on('selection', (splat: unknown) => {
-        if (splat && splat === (events.functions.has('selection') ? events.invoke('selection') : null) && target !== 'layer') setTarget('layer');
+        if (splat && splat === selection() && target !== 'layer') setTarget('layer');
     });
     events.on('shotCameras.select', () => setTarget('camera'));
-    // the section track: picked by opening the section tool or its row
-    events.on('tool.activated', (toolName: string) => {
-        if (toolName === 'section') setTarget('section');
-    });
+    // a new camera becomes the key target too
+    events.on('shotCameras.add', () => setTarget('camera'));
+    events.on('shotCameras.duplicate', () => setTarget('camera'));
     events.on('section.selectTrack', () => setTarget('section'));
     events.on('section.trackChanged', () => {
         if (target === 'section') events.fire('track.keysLoaded');
     });
-    // depth of field focus track (src/dof/dof.ts)
-    events.on('dof.selectTrack', () => setTarget('dof'));
-    events.on('dof.trackChanged', () => {
-        if (target === 'dof') events.fire('track.keysLoaded');
+    events.on('look.selectTrack', () => setTarget('look'));
+    events.on('look.trackChanged', () => {
+        if (target === 'look') events.fire('track.keysLoaded');
     });
-    events.on('shotCameras.changed', () => events.fire('track.target', events.invoke('track.target')));
-    events.on('splat.name', () => events.fire('track.target', events.invoke('track.target')));
+    events.on('light.selectTrack', () => setTarget('light'));
+    events.on('light.trackChanged', () => {
+        if (target === 'light') events.fire('track.keysLoaded');
+    });
+    events.on('shotCameras.changed', refreshTarget);
+    events.on('splat.name', refreshTarget);
+    // the listed channels depend on the frame and on what changed
+    events.on('timeline.frame', refreshLabel);
+    events.on('camera.valuesChanged', refreshLabel);
+    events.on('layerAnim.changed', refreshLabel);
+    events.on('track.keyAdded', refreshLabel);
+    events.on('track.keyRemoved', refreshLabel);
+    events.on('pivot.ended', () => queueMicrotask(refreshLabel));
 
     // a layer track edit refreshes the ruler when it is the active one
     events.on('layerAnim.trackChanged', (track: AnimTrack) => {
         if (track === getActiveTrack()) events.fire('track.keysLoaded');
     });
 
-    // auto key: transform edits (gizmo drag or transform panel, both end in
-    // pivot.ended) and opacity edits of the selected layer key the current
-    // frame. Playback moves layers without touching the pivot's edit cycle,
-    // so it never auto-keys
     events.function('track.autoKey', () => autoKey);
     events.on('track.setAutoKey', (value: boolean) => {
         autoKey = value;
         events.fire('track.autoKey', autoKey);
-    });
-
-    let opacityTimer = -1;
-    const autoKeyLayer = () => {
-        if (autoKey && target === 'layer' && layerTrack()) {
-            events.fire('track.addKey');
-        }
-    };
-    events.on('pivot.ended', () => autoKeyLayer());
-    events.on('layerAnim.opacityEdited', () => {
-        window.clearTimeout(opacityTimer);
-        opacityTimer = window.setTimeout(autoKeyLayer, 250);
     });
 
     // Helper: execute an edit on the active track wrapped in undo.
@@ -146,17 +187,95 @@ const registerTrackManagerEvents = (events: Events) => {
     events.on('timeline.frame', frameMoved);
     events.on('timeline.time', frameMoved);
     events.function('track.pending', () => Array.from(pending));
+    events.on('track.markPending', (track: AnimTrack) => markPending(track));
 
     const trackOf = (splat: unknown) => (splat ? events.invoke('layerAnim.state', splat)?.track ?? null : null);
-    events.on('pivot.ended', () => markPending(layerTrack()));
-    events.on('layerAnim.setOpacity', (splat: unknown) => markPending(trackOf(splat)));
-    events.on('layerAnim.setMix', (splat: unknown) => markPending(trackOf(splat)));
+
+    // layer transform edits (gizmo drag or transform panel, both a pivot
+    // start / end cycle): compare before and after, so auto key keys only
+    // what moved. Playback moves layers without the pivot, so it never keys
+    let pivotStart: { splat: any, position: Vec3, rotation: Quat, scale: Vec3 } | null = null;
+    events.on('pivot.started', () => {
+        const splat = selection();
+        pivotStart = splat ? {
+            splat,
+            position: splat.entity.getLocalPosition().clone(),
+            rotation: splat.entity.getLocalRotation().clone(),
+            scale: splat.entity.getLocalScale().clone()
+        } : null;
+    });
+    events.on('pivot.ended', () => {
+        const splat = selection();
+        const start = pivotStart;
+        pivotStart = null;
+        if (!splat || !start || start.splat !== splat) return;
+        const e = splat.entity;
+        const channels: string[] = [];
+        if (e.getLocalPosition().distance(start.position) > 1e-6) channels.push('position');
+        if (Math.abs(Math.abs(e.getLocalRotation().dot(start.rotation)) - 1) > 1e-7) channels.push('rotation');
+        if (e.getLocalScale().distance(start.scale) > 1e-6) channels.push('scale');
+        if (channels.length === 0) return;
+        if (autoKey) {
+            events.fire('layerAnim.keyChannels', splat, channels);
+        } else {
+            markPending(trackOf(splat));
+        }
+    });
+
+    // opacity / point mix edits of a layer (debounced: sliders fire often)
+    const layerTimers = new Map<string, number>();
+    const layerValueEdited = (splat: unknown, channel: string) => {
+        if (!splat) return;
+        if (!autoKey) {
+            markPending(trackOf(splat));
+            return;
+        }
+        window.clearTimeout(layerTimers.get(channel));
+        layerTimers.set(channel, window.setTimeout(() => events.fire('layerAnim.keyChannels', splat, [channel]), 250));
+    };
+    events.on('layerAnim.opacityEdited', (splat: unknown) => layerValueEdited(splat, 'opacity'));
+    events.on('layerAnim.mixEdited', (splat: unknown) => layerValueEdited(splat, 'mix'));
+
+    // section cut height
+    let sectionTimer = -1;
     events.on('section.set', (value: { value?: number }) => {
-        if (value.value !== undefined && events.functions.has('section.track')) markPending(events.invoke('section.track'));
+        if (value.value === undefined || !events.functions.has('section.track')) return;
+        if (!autoKey) {
+            markPending(events.invoke('section.track'));
+            return;
+        }
+        window.clearTimeout(sectionTimer);
+        sectionTimer = window.setTimeout(() => events.fire('section.addKey'), 250);
     });
-    events.on('dof.set', (value: { focus?: number, aperture?: number }) => {
-        if ((value.focus !== undefined || value.aperture !== undefined) && events.functions.has('dof.track')) markPending(events.invoke('dof.track'));
+
+    // look edits, once the look is animated (a static look needs no keys)
+    let lookTimer = -1;
+    events.on('look.set', () => {
+        if (!events.functions.has('look.track')) return;
+        const track = events.invoke('look.track') as AnimTrack;
+        if (track.keys.length === 0) return;
+        if (!autoKey) {
+            markPending(track);
+            return;
+        }
+        window.clearTimeout(lookTimer);
+        lookTimer = window.setTimeout(() => events.fire('look.addKey'), 250);
     });
+
+    // light edits, once the light rig is animated
+    let lightTimer = -1;
+    const lightEdited = () => {
+        if (!events.functions.has('light.track')) return;
+        const track = events.invoke('light.track') as AnimTrack;
+        if (track.keys.length === 0) return;
+        if (!autoKey) {
+            markPending(track);
+            return;
+        }
+        window.clearTimeout(lightTimer);
+        lightTimer = window.setTimeout(() => events.fire('light.addKey'), 250);
+    };
+    ['light.set', 'light.update', 'light.remove'].forEach(name => events.on(name, lightEdited));
 
     // Get keys from active track
     events.function('track.keys', () => {
@@ -209,6 +328,21 @@ const registerTrackManagerEvents = (events: Events) => {
 
     events.on('cut.removeAt', (frame: number) => {
         cutEdit('cutRemove', cut => cut.removeAt(frame));
+    });
+
+    // move one edge of the segment at frame (trim / roll)
+    events.on('cut.trim', (frame: number, edge: 'start' | 'end', to: number) => {
+        cutEdit('cutTrim', cut => cut.trim(frame, edge, to));
+    });
+
+    // another camera for the segment at frame
+    events.on('cut.setCamera', (frame: number, cameraId: number) => {
+        cutEdit('cutCamera', cut => cut.setCamera(frame, cameraId));
+    });
+
+    // cut to cameraId at frame, up to the next cut
+    events.on('cut.cutTo', (frame: number, cameraId: number) => {
+        cutEdit('cutTo', cut => cut.cutTo(frame, cameraId, events.invoke('timeline.frames')));
     });
 
     // cross-fade length (frames) of the cut the segment at frame starts with

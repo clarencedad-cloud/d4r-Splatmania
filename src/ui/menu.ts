@@ -5,6 +5,7 @@ import { ExportChoices } from '../export-options';
 import { requestNavigateHome } from '../iframe-api';
 import { recentFiles, recentImports, RecentStore } from '../recent-files';
 import { ShortcutManager } from '../shortcut-manager';
+import { sectionShown, setSectionShown } from './collapsible';
 import { i18n } from './localization';
 import { MenuPanel, MenuItem } from './menu-panel';
 import arrowSvg from './svg/arrow.svg';
@@ -104,6 +105,11 @@ class Menu extends Container {
         });
         i18n.bindText(selection, 'menu.select');
 
+        const view = new Label({
+            class: 'menu-option'
+        });
+        i18n.bindText(view, 'menu.view');
+
         const help = new Label({
             class: 'menu-option'
         });
@@ -166,6 +172,7 @@ class Menu extends Container {
         buttonsContainer.append(edit);
         buttonsContainer.append(selection);
         buttonsContainer.append(render);
+        buttonsContainer.append(view);
         buttonsContainer.append(help);
         buttonsContainer.append(collapse);
         buttonsContainer.append(arrow);
@@ -364,24 +371,73 @@ class Menu extends Container {
             text: () => i18n.t('menu.render.video', { ellipsis: true }),
             icon: createSvg(sceneExport),
             onSelect: async () => await events.invoke('show.videoSettingsDialog')
+        }, {
+            // the html player in a new tab, with its VR / AR buttons
+            // (src/file-handler.ts viewer.preview)
+            text: () => i18n.t('sm.player.open'),
+            icon: createSvg(sceneExport),
+            isEnabled: () => !events.invoke('scene.empty'),
+            onSelect: () => {
+                // opened inside the click so popup blockers allow it
+                const target = window.open('', '_blank');
+                target?.document.write(`<title>Splatmania</title><body style="background:#15121e;color:#ccc;font:14px sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">${i18n.t('sm.player.building')}</body>`);
+                return events.invoke('viewer.preview', target);
+            }
         }]);
+
+        // View: which sections the scene panel shows (src/ui/collapsible.ts).
+        // Grouped by what they belong to; a tick marks a shown section
+        const viewSections: ([string, string] | null)[] = [
+            ['objects', 'sm.objects.title'],
+            null,
+            ['transform', 'panel.scene.transform'],
+            ['layerAnim', 'sm.anim.title'],
+            ['transitions', 'sm.transitions.title'],
+            ['pointCloud', 'sm.display.title'],
+            ['cleanup', 'sm.cleanup.title'],
+            ['colors', 'panel.colors'],
+            null,
+            ['cameras', 'sm.cameras.view-section'],
+            ['cameras.props', 'sm.camera-props.title']
+        ];
+        const viewHeading = (key: string): MenuItem => ({ text: () => i18n.t(key), isEnabled: () => false });
+        const viewItems: MenuItem[] = [viewHeading('sm.view.scene-list')];
+        let group = 0;
+        viewSections.forEach((entry) => {
+            if (!entry) {
+                viewItems.push({});
+                viewItems.push(viewHeading(++group === 1 ? 'sm.view.splat-props' : 'sm.view.camera-props'));
+                return;
+            }
+            const [key, title] = entry;
+            viewItems.push({
+                text: () => `${sectionShown(key) ? '☑' : '☐'}  ${i18n.t(title)}`,
+                onSelect: () => setSectionShown(key, !sectionShown(key))
+            });
+        });
+        viewItems.push({});
+        viewItems.push({
+            text: () => i18n.t('sm.view.show-all'),
+            onSelect: () => viewSections.forEach(entry => entry && setSectionShown(entry[0], true))
+        });
+        const viewMenuPanel = new MenuPanel(viewItems);
 
         const videoTutorialsMenuPanel = new MenuPanel([{
             text: () => i18n.t('menu.help.video-tutorials.basics'),
             icon: 'E261',
-            onSelect: () => window.open('https://youtu.be/MwzaEM2I55I', '_blank')?.focus()
+            onSelect: () => window.open('https://youtu.be/MwzaEM2I55I', '_blank', 'noopener,noreferrer')
         }, {
             text: () => i18n.t('menu.help.video-tutorials.in-depth'),
             icon: 'E261',
-            onSelect: () => window.open('https://youtu.be/J37rTieKgJ8', '_blank')?.focus()
+            onSelect: () => window.open('https://youtu.be/J37rTieKgJ8', '_blank', 'noopener,noreferrer')
         }, {
             text: () => i18n.t('menu.help.video-tutorials.deleting-floaters'),
             icon: 'E261',
-            onSelect: () => window.open('https://youtu.be/8qaLfwkkSdU', '_blank')?.focus()
+            onSelect: () => window.open('https://youtu.be/8qaLfwkkSdU', '_blank', 'noopener,noreferrer')
         }, {
             text: () => i18n.t('menu.help.video-tutorials.scaling'),
             icon: 'E261',
-            onSelect: () => window.open('https://youtu.be/fRK1vVMg_EU', '_blank')?.focus()
+            onSelect: () => window.open('https://youtu.be/fRK1vVMg_EU', '_blank', 'noopener,noreferrer')
         }]);
 
         const helpMenuPanel = new MenuPanel([{
@@ -389,9 +445,13 @@ class Menu extends Container {
             icon: 'E261',
             subMenu: videoTutorialsMenuPanel
         }, {
+            text: () => i18n.t('sm.help.menu'),
+            icon: 'E232',
+            onSelect: () => events.fire('help.show')
+        }, {
             text: () => i18n.t('menu.help.user-guide'),
             icon: 'E232',
-            onSelect: () => window.open('https://developer.playcanvas.com/user-manual/gaussian-splatting/editing/supersplat/', '_blank')?.focus()
+            onSelect: () => window.open('https://developer.playcanvas.com/user-manual/gaussian-splatting/editing/supersplat/', '_blank', 'noopener,noreferrer')
         }, {
             text: () => i18n.t('menu.help.shortcuts'),
             icon: 'E136',
@@ -399,23 +459,27 @@ class Menu extends Container {
         }, {
             // separator
         }, {
-            text: () => i18n.t('menu.help.discord'),
-            icon: 'E233',
-            onSelect: () => window.open('https://discord.gg/T3pnhRTTAY', '_blank')?.focus()
-        }, {
-            text: () => i18n.t('menu.help.forum'),
-            icon: 'E432',
-            onSelect: () => window.open('https://forum.playcanvas.com', '_blank')?.focus()
-        }, {
-            // separator
-        }, {
             text: () => i18n.t('menu.help.github-repo'),
             icon: 'E259',
-            onSelect: () => window.open('https://github.com/playcanvas/supersplat', '_blank')?.focus()
+            onSelect: () => window.open('https://github.com/clarencedad-cloud/d4r-Splatmania', '_blank', 'noopener,noreferrer')
         }, {
             text: () => i18n.t('menu.help.log-issue'),
             icon: 'E336',
-            onSelect: () => window.open('https://github.com/playcanvas/supersplat/issues', '_blank')?.focus()
+            onSelect: () => window.open('https://design4real.de/kontakt/', '_blank', 'noopener,noreferrer')
+        }, {
+            // separator
+        }, {
+            text: () => i18n.t('menu.help.design4real'),
+            icon: 'E138',
+            onSelect: () => window.open('https://design4real.de/', '_blank', 'noopener,noreferrer')
+        }, {
+            text: () => i18n.t('menu.help.imprint'),
+            icon: 'E232',
+            onSelect: () => window.open('https://design4real.de/impressum/', '_blank', 'noopener,noreferrer')
+        }, {
+            text: () => i18n.t('menu.help.privacy'),
+            icon: 'E232',
+            onSelect: () => window.open('https://design4real.de/privacy-policy/', '_blank', 'noopener,noreferrer')
         }, {
             // separator
         }, {
@@ -432,6 +496,7 @@ class Menu extends Container {
         this.append(editMenuPanel);
         this.append(selectionMenuPanel);
         this.append(renderMenuPanel);
+        this.append(viewMenuPanel);
         this.append(videoTutorialsMenuPanel);
         this.append(helpMenuPanel);
 
@@ -447,6 +512,9 @@ class Menu extends Container {
         }, {
             dom: render.dom,
             menuPanel: renderMenuPanel
+        }, {
+            dom: view.dom,
+            menuPanel: viewMenuPanel
         }, {
             dom: help.dom,
             menuPanel: helpMenuPanel

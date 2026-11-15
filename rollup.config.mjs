@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 
 import alias from '@rollup/plugin-alias';
@@ -23,6 +24,12 @@ const BUILD_TYPE = process.env.BUILD_TYPE || 'release';
 const ENGINE_DIR = path.resolve(`node_modules/playcanvas/build/playcanvas${BUILD_TYPE === 'debug' ? '.dbg' : ''}/src/index.js`);
 const PCUI_DIR = path.resolve('node_modules/@playcanvas/pcui');
 const HREF = process.env.BASE_HREF || '';
+// build output folder; a release build can go to its own folder (e.g. OUT_DIR=release)
+const OUT_DIR = process.env.OUT_DIR || 'dist';
+// per-build id appended to the entry files in index.html (?v=...): hosts like
+// SiteGround serve js/css with a one-year cache that .htaccess cannot change,
+// so a new url is the only reliable way to make a new build reach visitors
+const BUILD_ID = Date.now().toString(36);
 
 const outputHeader = () => {
     const BLUE_OUT = '\x1b[34m';
@@ -39,10 +46,54 @@ const outputHeader = () => {
 
 outputHeader();
 
+// @anthropic-ai/sdk lists browser stubs for its node-only helpers (credential
+// files, tools) in its package.json "browser" field. Apply only that map here:
+// resolve({ browser: true }) would switch every other package as well. Its
+// webhook verifier needs the CommonJS package standardwebhooks, which this
+// build cannot bundle and the editor never uses, so that import gets a stub.
+const anthropicBrowserStubs = () => {
+    const root = path.resolve('node_modules/@anthropic-ai/sdk');
+    const webhookStub = '\0anthropic-webhook-stub';
+    const inside = (id) => {
+        const rel = id ? path.relative(root, id) : '..';
+        return !rel.startsWith('..') && !path.isAbsolute(rel);
+    };
+    let map = {};
+    try {
+        map = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).browser ?? {};
+    } catch {
+        // sdk not installed
+    }
+
+    return {
+        name: 'anthropic-browser-stubs',
+        async resolveId(source, importer, options) {
+            if (!inside(importer)) {
+                return null;
+            }
+            if (source === 'standardwebhooks') {
+                return webhookStub;
+            }
+            const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+            if (!resolved || resolved.external || !inside(resolved.id)) {
+                return resolved;
+            }
+            const stub = map[`./${path.relative(root, resolved.id).replace(/\\/g, '/')}`];
+            return stub ? { ...resolved, id: path.join(root, stub) } : resolved;
+        },
+        load(id) {
+            if (id !== webhookStub) {
+                return null;
+            }
+            return 'export class Webhook { constructor() { throw new Error("webhook verification is not available in this build"); } }';
+        }
+    };
+};
+
 const application = {
     input: 'src/index.ts',
     output: {
-        dir: 'dist',
+        dir: OUT_DIR,
         format: 'esm',
         sourcemap: true
     },
@@ -52,7 +103,7 @@ const application = {
                 {
                     src: 'src/index.html',
                     transform: (contents, filename) => {
-                        return contents.toString().replace('__BASE_HREF__', HREF);
+                        return contents.toString().replace('__BASE_HREF__', HREF).replace(/__BUILD__/g, BUILD_ID);
                     }
                 },
                 { src: 'src/manifest.json' },
@@ -74,6 +125,7 @@ const application = {
         typescript({
             tsconfig: './tsconfig.json'
         }),
+        anthropicBrowserStubs(),
         resolve(),
         image({ dom: false }),
         json(),
@@ -103,7 +155,7 @@ const application = {
 const analysisWorker = {
     input: 'src/analysis/analysis-worker.ts',
     output: {
-        file: 'dist/analysis-worker.js',
+        file: `${OUT_DIR}/analysis-worker.js`,
         format: 'esm',
         sourcemap: true
     },

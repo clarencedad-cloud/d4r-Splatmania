@@ -14,14 +14,18 @@
     }
 }
 
-// top-level sections: a thin divider between them, header as one button
+// top-level sections: a clear header bar (darker than the input fields,
+// with an accent edge) and a gap between them, header as one button
 .panel .collapsible-section:not(.collapsible-sub) {
-    border-top: 1px solid $bcg-lighter;
+    margin-top: 4px;
+    border-top: 1px solid $bcg-light;
 
     > .collapsible-header {
         cursor: pointer;
         gap: 2px;
         padding: 2px 6px 2px 2px;
+        background-color: $bcg-darkest;
+        border-left: 3px solid $bcg-light;
 
         &:hover {
             background-color: #221d30;
@@ -41,6 +45,7 @@
 
     &.open > .collapsible-header {
         border-bottom: 1px solid rgba(194, 14, 126, 0.35);
+        border-left-color: $clr-hilight;
     }
 
     > .collapsible-body {
@@ -161,4 +166,9 @@
         margin-bottom: -2px;
         border-bottom: none;
     }
+}
+
+// switched off in the View menu (src/ui/menu.ts)
+.collapsible-section.section-off {
+    display: none !important;
 }

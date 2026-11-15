@@ -26,6 +26,7 @@
         "node": ">=20.19.0"
     },
     "devDependencies": {
+        "@anthropic-ai/sdk": "1.8.0",
         "@playcanvas/eslint-config": "2.1.0",
         "@playcanvas/splat-transform": "3.9.0",
         "@playcanvas/pcui": "6.1.4",

@@ -1,14 +1,38 @@
 import { Container } from '@playcanvas/pcui';
 
-import type { CutSegment, CutTrack, ShotCamera } from '../camera-poses';
+import type { CameraChannel, CutSegment, CutTrack, ShotCamera } from '../camera-poses';
+import { AnimTrackEditOp } from '../edit-ops';
 import { Events } from '../events';
-import { TRANSITION_LABELS, type LayerState } from '../layer-anim';
+import { TRANSITION_LABELS, type LayerChannel, type LayerState } from '../layer-anim';
 import type { Splat } from '../splat';
+import { createKeyButton, KeyState } from './key-button';
+import { i18n } from './localization';
 
 // must match the Ticks strip in timeline-panel.ts so frames line up
 const PADDING = 20;
 
 const rgb = (c: number[], a = 1) => `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${a})`;
+
+// channel rows of an expanded camera / layer
+const CAMERA_ROWS: [CameraChannel, string][] = [
+    ['position', 'sm.channel.position'],
+    ['target', 'sm.channel.rotation'],
+    ['fov', 'sm.channel.lens'],
+    ['focus', 'sm.channel.focus'],
+    ['aperture', 'sm.channel.aperture']
+];
+
+const LAYER_ROWS: [LayerChannel, string][] = [
+    ['position', 'sm.channel.position'],
+    ['rotation', 'sm.channel.rotation'],
+    ['scale', 'sm.channel.scale'],
+    ['opacity', 'sm.channel.opacity'],
+    ['mix', 'sm.channel.mix']
+];
+
+// which cameras / layers show their channel rows (kept across rebuilds)
+const expandedCameras = new Set<number>();
+const expandedLayers = new WeakSet<Splat>();
 
 // per-camera key rows and the cut track row, below the timeline ruler
 class TimelineTracks extends Container {
@@ -26,14 +50,19 @@ class TimelineTracks extends Container {
         const frameFromOffset = (offset: number) => {
             return Math.max(0, Math.min(numFrames() - 1, Math.round((offset - PADDING) / width() * (numFrames() - 1))));
         };
+        const frameNow = () => Math.round(events.invoke('timeline.frame') ?? 0);
 
         const cursors: HTMLElement[] = [];
+        // camera labels that light up while their camera is live in the cut
+        let liveLabels: { el: HTMLElement, id: number }[] = [];
         const lastLayerClick: { splat: Splat | null, time: number } = { splat: null, time: 0 };
 
         // a drag holds pointer capture on an element a rebuild would destroy
         // (selecting a camera rebuilds), so rebuilds wait for the drag to end
         const drag = { busy: false, pending: false };
         let rebuild: () => void = null;
+        let requestRebuild: () => void = null;
+        let updateLive: (frame: number) => void = null;
         const endDrag = () => {
             drag.busy = false;
             if (drag.pending) {
@@ -45,23 +74,142 @@ class TimelineTracks extends Container {
         const addCursor = (row: HTMLElement) => {
             const cursor = document.createElement('div');
             cursor.classList.add('track-cursor');
-            cursor.style.left = `${offsetFromFrame(events.invoke('timeline.frame'))}px`;
+            cursor.style.left = `${offsetFromFrame(frameNow())}px`;
             row.appendChild(cursor);
             cursors.push(cursor);
         };
 
+        // a draggable key diamond: drag = move, click = jump there,
+        // right-click = delete
+        const addKeyMarker = (row: HTMLElement, frame: number, color: string, title: string,
+            onMove: (from: number, to: number) => void, onRemove: (frame: number) => void, onPick?: () => void) => {
+            const marker = document.createElement('div');
+            marker.classList.add('track-key');
+            marker.style.left = `${offsetFromFrame(frame)}px`;
+            marker.style.backgroundColor = color;
+            marker.title = title;
+            row.appendChild(marker);
+
+            let dragging = false;
+            let toFrame = frame;
+            marker.addEventListener('pointerdown', (event) => {
+                if (!event.isPrimary || event.button !== 0) return;
+                event.stopPropagation();
+                dragging = true;
+                drag.busy = true;
+                toFrame = frame;
+                marker.setPointerCapture(event.pointerId);
+                onPick?.();
+            });
+            marker.addEventListener('pointermove', (event) => {
+                if (!dragging) return;
+                toFrame = frameFromOffset(event.clientX - row.getBoundingClientRect().left);
+                marker.style.left = `${offsetFromFrame(toFrame)}px`;
+            });
+            marker.addEventListener('pointerup', (event) => {
+                if (!dragging) return;
+                dragging = false;
+                marker.releasePointerCapture(event.pointerId);
+                endDrag();
+                if (toFrame !== frame) {
+                    onMove(frame, toFrame);
+                } else {
+                    events.fire('timeline.setFrame', frame);
+                }
+            });
+            marker.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onRemove(frame);
+            });
+            return marker;
+        };
+
+        // the ▸ / ▾ toggle in a row label
+        const addExpander = (label: HTMLElement, expanded: boolean, toggle: () => void) => {
+            const exp = document.createElement('span');
+            exp.classList.add('track-expand');
+            exp.textContent = expanded ? '▾' : '▸';
+            i18n.bindDom(exp, 'sm.timeline.expand-tip', 'title');
+            exp.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                toggle();
+                requestRebuild();
+            });
+            label.prepend(exp);
+        };
+
+        // a channel row under an expanded camera / layer
+        const channelRow = (name: string, keyButton: HTMLElement, onPointerDown: (event: PointerEvent) => void) => {
+            const row = document.createElement('div');
+            row.classList.add('track-row', 'channel-track');
+            const label = document.createElement('div');
+            label.classList.add('track-label');
+            const text = document.createElement('span');
+            text.textContent = name;
+            label.append(keyButton, text);
+            row.appendChild(label);
+            row.addEventListener('pointerdown', (event) => {
+                if (!event.isPrimary || event.button !== 0) return;
+                onPointerDown(event);
+            });
+            row.addEventListener('contextmenu', event => event.preventDefault());
+            return row;
+        };
+
+        // small context menu (cut segments)
+        let menu: HTMLElement | null = null;
+        const closeMenu = () => {
+            menu?.remove();
+            menu = null;
+        };
+        const openMenu = (x: number, y: number, items: { text: string, color?: number[], action: () => void }[]) => {
+            closeMenu();
+            menu = document.createElement('div');
+            menu.classList.add('timeline-menu');
+            items.forEach((item) => {
+                const entry = document.createElement('div');
+                entry.classList.add('timeline-menu-item');
+                if (item.color) {
+                    const swatch = document.createElement('span');
+                    swatch.classList.add('timeline-menu-swatch');
+                    swatch.style.backgroundColor = rgb(item.color);
+                    entry.appendChild(swatch);
+                }
+                entry.appendChild(document.createTextNode(item.text));
+                entry.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    closeMenu();
+                    item.action();
+                });
+                menu.appendChild(entry);
+            });
+            document.body.appendChild(menu);
+            const rect = menu.getBoundingClientRect();
+            menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 4)}px`;
+            menu.style.top = `${Math.max(4, y - rect.height)}px`;
+        };
+        window.addEventListener('pointerdown', closeMenu);
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeMenu();
+        }, { capture: true });
+
         rebuild = () => {
             this.dom.innerHTML = '';
             cursors.length = 0;
+            liveLabels = [];
 
             const cameras = events.invoke('shotCameras.list') as ShotCamera[] ?? [];
             const selected = events.invoke('shotCameras.selected') as ShotCamera;
             const keyTarget = events.invoke('track.target') as { kind: string } | undefined;
             const frames = numFrames();
+            const segments = events.invoke('cut.segments') as CutSegment[] ?? [];
+            const cutTrack = events.invoke('cut.track') as CutTrack;
 
             // camera rows
 
             for (const camera of cameras) {
+                const expanded = expandedCameras.has(camera.id);
                 const row = document.createElement('div');
                 row.classList.add('track-row', 'camera-track');
                 if (camera === selected) row.classList.add('selected');
@@ -69,96 +217,178 @@ class TimelineTracks extends Container {
 
                 const label = document.createElement('div');
                 label.classList.add('track-label');
-                label.textContent = camera.name;
-                label.style.color = rgb(camera.color);
+                const name = document.createElement('span');
+                name.textContent = camera.name;
+                name.style.color = rgb(camera.color);
+                label.appendChild(name);
+                addExpander(label, expanded, () => {
+                    if (expanded) expandedCameras.delete(camera.id);
+                    else expandedCameras.add(camera.id);
+                });
+
+                // live in the cut at the playhead
+                const live = document.createElement('span');
+                live.classList.add('track-live');
+                live.textContent = '●';
+                i18n.bindDom(live, 'sm.timeline.live-tip', 'title');
+                label.appendChild(live);
+                liveLabels.push({ el: label, id: camera.id });
+
+                // cut to this camera at the playhead (like a vision mixer)
+                const cutHere = document.createElement('span');
+                cutHere.classList.add('track-cut-here');
+                cutHere.textContent = '✂';
+                i18n.bindDom(cutHere, 'sm.timeline.cut-here-tip', 'title');
+                cutHere.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    events.fire('cut.cutTo', frameNow(), camera.id);
+                });
+                label.appendChild(cutHere);
                 row.appendChild(label);
 
                 for (const key of camera.track.keys) {
                     if (key >= frames) continue;
-                    const marker = document.createElement('div');
-                    marker.classList.add('track-key');
-                    marker.style.left = `${offsetFromFrame(key)}px`;
-                    marker.style.backgroundColor = rgb(camera.color);
-                    marker.title = `${camera.name}: Key bei Frame ${key} (ziehen = verschieben)`;
-                    row.appendChild(marker);
-
-                    // drag a key to move it on this camera's track
-                    let dragging = false;
-                    let toFrame = key;
-                    marker.addEventListener('pointerdown', (event) => {
-                        if (!event.isPrimary) return;
-                        event.stopPropagation();
-                        dragging = true;
-                        drag.busy = true;
-                        toFrame = key;
-                        marker.setPointerCapture(event.pointerId);
-                        events.fire('shotCameras.select', camera.id);
-                    });
-                    marker.addEventListener('pointermove', (event) => {
-                        if (!dragging) return;
-                        const rowRect = row.getBoundingClientRect();
-                        toFrame = frameFromOffset(event.clientX - rowRect.left);
-                        marker.style.left = `${offsetFromFrame(toFrame)}px`;
-                    });
-                    marker.addEventListener('pointerup', (event) => {
-                        if (!dragging) return;
-                        dragging = false;
-                        marker.releasePointerCapture(event.pointerId);
-                        endDrag();
-                        if (toFrame !== key) {
-                            events.fire('track.moveKey', key, toFrame);
-                        } else {
-                            events.fire('timeline.setFrame', key);
-                        }
-                    });
+                    addKeyMarker(row, key, rgb(camera.color), i18n.t('sm.timeline.camera-key', { camera: camera.name, frame: key }),
+                        (from, to) => events.fire('track.moveKey', from, to),
+                        (frame) => {
+                            events.fire('shotCameras.select', camera.id);
+                            events.fire('track.removeKey', frame);
+                        },
+                        () => events.fire('shotCameras.select', camera.id));
                 }
 
                 // click on the row: select the camera and scrub there
                 row.addEventListener('pointerdown', (event) => {
-                    if (!event.isPrimary) return;
+                    if (!event.isPrimary || event.button !== 0) return;
                     events.fire('shotCameras.select', camera.id);
                     events.fire('timeline.setFrame', frameFromOffset(event.offsetX));
                 });
 
                 addCursor(row);
                 this.dom.appendChild(row);
+
+                if (expanded) {
+                    for (const [channel, text] of CAMERA_ROWS) {
+                        const button = createKeyButton(events,
+                            () => events.invoke('shotCameras.channelState', channel, camera.id) as KeyState,
+                            () => events.fire('shotCameras.keyChannel', channel, camera.id));
+                        const sub = channelRow(i18n.t(text), button.dom, (event) => {
+                            events.fire('shotCameras.select', camera.id);
+                            events.fire('timeline.setFrame', frameFromOffset(event.offsetX));
+                        });
+                        for (const key of camera.track.channelKeys(channel)) {
+                            if (key >= frames) continue;
+                            addKeyMarker(sub, key, rgb(camera.color), `${i18n.t(text)} · Frame ${key}`,
+                                (from, to) => events.fire('shotCameras.moveChannelKey', camera.id, channel, from, to),
+                                frame => events.fire('shotCameras.removeChannelKey', camera.id, channel, frame),
+                                () => events.fire('shotCameras.select', camera.id));
+                        }
+                        addCursor(sub);
+                        this.dom.appendChild(sub);
+                    }
+                }
             }
 
-            // cut row
+            // cut row: blocks are shots. Click a block = go there, drag its
+            // edge = trim (a touching neighbour moves along), right-click =
+            // switch camera / delete; drag in an empty area = new shot of the
+            // selected camera
 
             const cutRow = document.createElement('div');
             cutRow.classList.add('track-row', 'cut-track');
-            cutRow.title = 'Schnittspur: ziehen = Bereich der gewählten Kamera zuweisen, Klick = Schnitt ab hier, Rechtsklick = Segment löschen';
+            i18n.bindDom(cutRow, 'sm.timeline.cut-tip', 'title');
 
             const cutLabel = document.createElement('div');
             cutLabel.classList.add('track-label');
-            cutLabel.textContent = 'Schnitt';
+            cutLabel.textContent = i18n.t('sm.cameras.mode.cut');
             cutRow.appendChild(cutLabel);
 
-            const segments = events.invoke('cut.segments') as CutSegment[] ?? [];
-            const cutTrack = events.invoke('cut.track') as CutTrack;
+            const localFrame = (event: PointerEvent) => frameFromOffset(event.clientX - cutRow.getBoundingClientRect().left);
+            // the edge frame under the pointer while trimming: halfway
+            // between frames snaps to the nearer one
+            const edgeFrame = (event: PointerEvent) => {
+                const x = event.clientX - cutRow.getBoundingClientRect().left;
+                return Math.max(0, Math.min(frames, Math.round((x - PADDING) / width() * (frames - 1))));
+            };
+
             for (const segment of segments) {
                 const camera = events.invoke('shotCameras.byId', segment.cameraId) as ShotCamera;
                 if (!camera) continue;
                 const block = document.createElement('div');
                 block.classList.add('cut-segment');
-                const x0 = offsetFromFrame(segment.start);
-                const x1 = offsetFromFrame(Math.min(segment.end, frames - 1));
-                block.style.left = `${x0}px`;
-                block.style.width = `${Math.max(2, x1 - x0)}px`;
+                const place = (start: number, end: number) => {
+                    const x0 = offsetFromFrame(start);
+                    const x1 = offsetFromFrame(Math.min(end, frames - 1));
+                    block.style.left = `${x0}px`;
+                    block.style.width = `${Math.max(4, x1 - x0)}px`;
+                };
+                place(segment.start, segment.end);
                 block.style.backgroundColor = rgb(camera.color, 0.55);
                 block.style.borderColor = rgb(camera.color);
                 block.textContent = camera.name;
-                block.title = `Frame ${segment.start}–${segment.end - 1} → ${camera.name}`;
+                block.title = `${i18n.t('sm.timeline.shot', { start: segment.start, end: segment.end - 1, camera: camera.name })}\n${i18n.t('sm.timeline.shot-tip')}`;
                 // cross-fade: the previous camera's colour fading out
                 const from = segment.fade && cutTrack.cutFrom(segment);
                 const fromCamera = from ? events.invoke('shotCameras.byId', from) as ShotCamera : null;
                 if (fromCamera) {
-                    const w = offsetFromFrame(segment.start + segment.fade) - x0;
+                    const w = offsetFromFrame(segment.start + segment.fade) - offsetFromFrame(segment.start);
                     block.style.backgroundImage = `linear-gradient(90deg, ${rgb(fromCamera.color, 0.8)} 0, transparent ${w}px)`;
-                    block.title += ` · Überblendung von ${fromCamera.name}, ${segment.fade} Frames`;
+                    block.title += ` · ${i18n.t('sm.timeline.fade-from', { camera: fromCamera.name, frames: segment.fade })}`;
                 }
                 cutRow.appendChild(block);
+
+                const edgeAt = (event: PointerEvent): 'start' | 'end' | null => {
+                    const r = block.getBoundingClientRect();
+                    const x = event.clientX - r.left;
+                    if (x < 6) return 'start';
+                    if (x > r.width - 6) return 'end';
+                    return null;
+                };
+
+                let trim: { edge: 'start' | 'end', to: number } | null = null;
+                block.addEventListener('pointermove', (event) => {
+                    if (trim) {
+                        trim.to = edgeFrame(event);
+                        if (trim.edge === 'end') place(segment.start, Math.max(segment.start + 1, trim.to));
+                        else place(Math.min(segment.end - 1, trim.to), segment.end);
+                        return;
+                    }
+                    block.style.cursor = edgeAt(event) ? 'ew-resize' : 'pointer';
+                });
+                block.addEventListener('pointerdown', (event) => {
+                    if (!event.isPrimary || event.button !== 0) return;
+                    event.stopPropagation();
+                    const edge = edgeAt(event);
+                    if (edge) {
+                        trim = { edge, to: edge === 'end' ? segment.end : segment.start };
+                        drag.busy = true;
+                        block.setPointerCapture(event.pointerId);
+                        return;
+                    }
+                    // a click selects the shot's camera and moves there
+                    events.fire('shotCameras.select', camera.id);
+                    events.fire('timeline.setFrame', localFrame(event));
+                });
+                block.addEventListener('pointerup', (event) => {
+                    if (!trim) return;
+                    const t = trim;
+                    trim = null;
+                    block.releasePointerCapture(event.pointerId);
+                    endDrag();
+                    events.fire('cut.trim', segment.start, t.edge, t.to);
+                });
+                block.addEventListener('contextmenu', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openMenu(event.clientX, event.clientY, [
+                        ...cameras.filter(c => c.id !== segment.cameraId).map(c => ({
+                            text: i18n.t('sm.timeline.switch-to', { camera: c.name }),
+                            color: c.color,
+                            action: () => events.fire('cut.setCamera', segment.start, c.id)
+                        })),
+                        { text: i18n.t('sm.timeline.delete-shot'), action: () => events.fire('cut.removeAt', segment.start) }
+                    ]);
+                });
             }
 
             const preview = document.createElement('div');
@@ -168,8 +398,6 @@ class TimelineTracks extends Container {
 
             let dragStart = -1;
             let dragEnd = -1;
-
-            const localFrame = (event: PointerEvent) => frameFromOffset(event.clientX - cutRow.getBoundingClientRect().left);
 
             cutRow.addEventListener('pointerdown', (event) => {
                 if (!event.isPrimary || event.button !== 0) return;
@@ -203,19 +431,14 @@ class TimelineTracks extends Container {
                     // dragged: exactly that range (inclusive of the end frame)
                     events.fire('cut.set', a, b + 1);
                 } else {
-                    // click: cut to the selected camera from here up to the
-                    // next cut (or the end of the timeline)
-                    const current = segments.find(s => a >= s.start && a < s.end);
-                    const next = segments.find(s => s.start > a);
-                    const end = current ? current.end : (next ? next.start : numFrames());
-                    events.fire('cut.set', a, end);
+                    // click in an empty area: the selected camera from here
+                    // up to the next shot
+                    const camera = events.invoke('shotCameras.selected') as ShotCamera;
+                    if (camera) events.fire('cut.cutTo', a, camera.id);
                 }
             });
 
-            cutRow.addEventListener('contextmenu', (event) => {
-                event.preventDefault();
-                events.fire('cut.removeAt', frameFromOffset(event.clientX - cutRow.getBoundingClientRect().left));
-            });
+            cutRow.addEventListener('contextmenu', event => event.preventDefault());
 
             addCursor(cutRow);
             this.dom.appendChild(cutRow);
@@ -223,23 +446,26 @@ class TimelineTracks extends Container {
             // section cut track (src/section/section-tool.ts): click selects
             // it as the key target; keys show their cut value
             const sectionTrack = events.functions.has('section.track') ? events.invoke('section.track') : null;
-            if (sectionTrack) {
+            if (sectionTrack && sectionTrack.keys.length > 0) {
                 const sectionRow = document.createElement('div');
                 sectionRow.classList.add('track-row', 'section-track');
                 if (keyTarget?.kind === 'section') sectionRow.classList.add('key-target');
-                sectionRow.title = 'Schnitt-Spur: Klick = Key-Ziel, Keys im Lineal verschieben bzw. löschen';
+                sectionRow.title = i18n.t('sm.timeline.section-tip');
                 const sectionLabel = document.createElement('div');
                 sectionLabel.classList.add('track-label');
-                sectionLabel.textContent = 'Schnitt';
+                sectionLabel.textContent = i18n.t('sm.section.title');
                 sectionRow.appendChild(sectionLabel);
+                const sectionEdit = (name: string, fn: () => boolean) => {
+                    const before = sectionTrack.snapshot();
+                    if (fn()) events.fire('edit.add', new AnimTrackEditOp(name, sectionTrack, before, sectionTrack.snapshot()), true);
+                };
                 for (const key of sectionTrack.keyData) {
                     if (key.frame >= frames) continue;
-                    const marker = document.createElement('div');
-                    marker.classList.add('track-key');
-                    marker.style.left = `${offsetFromFrame(key.frame)}px`;
-                    marker.style.backgroundColor = `rgba(194, 14, 126, ${0.35 + 0.65 * key.value})`;
-                    marker.title = `Frame ${key.frame}: Schnitt ${Math.round(key.value * 100)} %`;
-                    sectionRow.appendChild(marker);
+                    addKeyMarker(sectionRow, key.frame, `rgba(194, 14, 126, ${0.35 + 0.65 * key.value})`,
+                        i18n.t('sm.timeline.section-key', { frame: key.frame, value: Math.round(key.value * 100) }),
+                        (from, to) => sectionEdit('sectionMoveKey', () => sectionTrack.moveKey(from, to)),
+                        frame => sectionEdit('sectionRemoveKey', () => sectionTrack.removeKey(frame)),
+                        () => events.fire('section.selectTrack'));
                 }
                 sectionRow.addEventListener('pointerdown', (event) => {
                     if (!event.isPrimary || event.button !== 0) return;
@@ -250,105 +476,109 @@ class TimelineTracks extends Container {
                 this.dom.appendChild(sectionRow);
             }
 
-            // depth of field focus track (src/dof/dof.ts): shown once depth
-            // of field is on or has keys; click selects it as the key target
-            const dofTrack = events.functions.has('dof.track') ? events.invoke('dof.track') : null;
-            const dofState = events.functions.has('dof.state') ? events.invoke('dof.state') : null;
-            if (dofTrack && (dofState?.enabled || dofTrack.keys.length > 0)) {
-                const dofRow = document.createElement('div');
-                dofRow.classList.add('track-row', 'dof-track');
-                if (keyTarget?.kind === 'dof') dofRow.classList.add('key-target');
-                dofRow.title = 'Fokus-Spur: Klick = Key-Ziel, Keys im Lineal verschieben bzw. löschen';
-                const dofLabel = document.createElement('div');
-                dofLabel.classList.add('track-label');
-                dofLabel.textContent = 'Fokus';
-                dofRow.appendChild(dofLabel);
-                for (const key of dofTrack.keyData) {
+            // look track (src/look/look.ts): like the section track
+            const lookTrack = events.functions.has('look.track') ? events.invoke('look.track') : null;
+            if (lookTrack && lookTrack.keys.length > 0) {
+                const lookRow = document.createElement('div');
+                lookRow.classList.add('track-row', 'look-track');
+                if (keyTarget?.kind === 'look') lookRow.classList.add('key-target');
+                lookRow.title = i18n.t('sm.timeline.look-tip');
+                const lookLabel = document.createElement('div');
+                lookLabel.classList.add('track-label');
+                lookLabel.textContent = i18n.t('sm.look.title');
+                lookRow.appendChild(lookLabel);
+                const lookEdit = (name: string, fn: () => boolean) => {
+                    const before = lookTrack.snapshot();
+                    if (fn()) events.fire('edit.add', new AnimTrackEditOp(name, lookTrack, before, lookTrack.snapshot()), true);
+                };
+                for (const key of lookTrack.keyData) {
                     if (key.frame >= frames) continue;
-                    const marker = document.createElement('div');
-                    marker.classList.add('track-key');
-                    marker.style.left = `${offsetFromFrame(key.frame)}px`;
-                    marker.style.backgroundColor = '#5aa9e6';
-                    marker.title = `Frame ${key.frame}: Fokus ${key.focus.toFixed(2)}, Blende ${key.aperture.toFixed(3)}`;
-                    dofRow.appendChild(marker);
+                    addKeyMarker(lookRow, key.frame, 'rgb(255, 184, 64)',
+                        i18n.t('sm.timeline.look-key', { frame: key.frame }),
+                        (from, to) => lookEdit('lookMoveKey', () => lookTrack.moveKey(from, to)),
+                        frame => lookEdit('lookRemoveKey', () => lookTrack.removeKey(frame)),
+                        () => events.fire('look.selectTrack'));
                 }
-                dofRow.addEventListener('pointerdown', (event) => {
+                lookRow.addEventListener('pointerdown', (event) => {
                     if (!event.isPrimary || event.button !== 0) return;
-                    events.fire('dof.selectTrack');
+                    events.fire('look.selectTrack');
                     events.fire('timeline.setFrame', frameFromOffset(event.offsetX));
                 });
-                addCursor(dofRow);
-                this.dom.appendChild(dofRow);
+                addCursor(lookRow);
+                this.dom.appendChild(lookRow);
             }
 
-            // layer rows (src/layer-anim.ts): double-click adds a key with
-            // every channel, drag moves a key, right-click deletes it
+            // light track (src/light/light.ts): like the look track
+            const lightTrack = events.functions.has('light.track') ? events.invoke('light.track') : null;
+            if (lightTrack && lightTrack.keys.length > 0) {
+                const lightRow = document.createElement('div');
+                lightRow.classList.add('track-row', 'look-track', 'light-track');
+                if (keyTarget?.kind === 'light') lightRow.classList.add('key-target');
+                lightRow.title = i18n.t('sm.timeline.light-tip');
+                const lightLabel = document.createElement('div');
+                lightLabel.classList.add('track-label');
+                lightLabel.textContent = i18n.t('sm.light.title');
+                lightRow.appendChild(lightLabel);
+                const lightEdit = (name: string, fn: () => boolean) => {
+                    const before = lightTrack.snapshot();
+                    if (fn()) events.fire('edit.add', new AnimTrackEditOp(name, lightTrack, before, lightTrack.snapshot()), true);
+                };
+                for (const key of lightTrack.keyData) {
+                    if (key.frame >= frames) continue;
+                    addKeyMarker(lightRow, key.frame, 'rgb(255, 226, 120)',
+                        i18n.t('sm.timeline.light-key', { frame: key.frame }),
+                        (from, to) => lightEdit('lightMoveKey', () => lightTrack.moveKey(from, to)),
+                        frame => lightEdit('lightRemoveKey', () => lightTrack.removeKey(frame)),
+                        () => events.fire('light.selectTrack'));
+                }
+                lightRow.addEventListener('pointerdown', (event) => {
+                    if (!event.isPrimary || event.button !== 0) return;
+                    events.fire('light.selectTrack');
+                    events.fire('timeline.setFrame', frameFromOffset(event.offsetX));
+                });
+                addCursor(lightRow);
+                this.dom.appendChild(lightRow);
+            }
+
+            // layer rows (src/layer-anim.ts): double-click adds a key, drag
+            // moves a key, right-click deletes it; ▸ shows one row per
+            // property
 
             const layers = events.invoke('layerAnim.layers') as Splat[] ?? [];
             const selectedLayer = (events.functions.has('selection') ? events.invoke('selection') : null) as Splat;
             for (const splat of layers) {
                 const state = events.invoke('layerAnim.state', splat) as LayerState;
+                const expanded = expandedLayers.has(splat);
                 const row = document.createElement('div');
                 row.classList.add('track-row', 'layer-track');
                 if (splat === selectedLayer) row.classList.add('selected');
                 if (keyTarget?.kind === 'layer' && splat === selectedLayer) row.classList.add('key-target');
-                row.title = `${splat.name}: Doppelklick = Key setzen, Key ziehen = verschieben, Rechtsklick auf Key = löschen`;
+                row.title = `${splat.name}: ${i18n.t('sm.timeline.layer-tip')}`;
 
                 const label = document.createElement('div');
                 label.classList.add('track-label');
-                label.textContent = `▤ ${splat.name}`;
+                const name = document.createElement('span');
+                name.textContent = `▤ ${splat.name}`;
+                label.appendChild(name);
+                addExpander(label, expanded, () => {
+                    if (expanded) expandedLayers.delete(splat);
+                    else expandedLayers.add(splat);
+                });
                 row.appendChild(label);
 
                 for (const key of state.track.keyData) {
                     if (key.frame >= frames) continue;
-                    const marker = document.createElement('div');
-                    marker.classList.add('track-key', 'layer-key');
-                    // fill shows the key's opacity, so fades read at a glance
                     const o = key.opacity ?? 1;
-                    marker.style.backgroundColor = `rgba(230, 230, 230, ${0.25 + 0.75 * o})`;
+                    const channels = LAYER_ROWS.filter(([c]) => key[c] !== undefined).map(([, t]) => i18n.t(t)).join(', ');
+                    const marker = addKeyMarker(row, key.frame, `rgba(230, 230, 230, ${0.25 + 0.75 * o})`, `Frame ${key.frame}: ${channels}`,
+                        (from, to) => events.fire('layerAnim.moveKey', splat, from, to),
+                        frame => events.fire('layerAnim.removeKey', splat, frame),
+                        () => events.fire('selection', splat));
+                    // fill shows the key's opacity, so fades read at a glance
+                    marker.classList.add('layer-key');
                     if (key.opacity === undefined) marker.classList.add('transform-only');
-                    marker.style.left = `${offsetFromFrame(key.frame)}px`;
-                    marker.title = `Frame ${key.frame}${key.opacity !== undefined ? `, Deckkraft ${o.toFixed(2)}` : ''}${key.mix !== undefined ? `, Punkt-Mix ${key.mix.toFixed(2)}` : ''}${key.position ? ', Transform' : ''}`;
-                    row.appendChild(marker);
-
-                    let dragging = false;
-                    let toFrame = key.frame;
-                    const fromFrame = key.frame;
-                    marker.addEventListener('pointerdown', (event) => {
-                        if (!event.isPrimary || event.button !== 0) return;
-                        event.stopPropagation();
-                        dragging = true;
-                        drag.busy = true;
-                        toFrame = fromFrame;
-                        marker.setPointerCapture(event.pointerId);
-                        events.fire('selection', splat);
-                    });
-                    marker.addEventListener('pointermove', (event) => {
-                        if (!dragging) return;
-                        toFrame = frameFromOffset(event.clientX - row.getBoundingClientRect().left);
-                        marker.style.left = `${offsetFromFrame(toFrame)}px`;
-                    });
-                    marker.addEventListener('pointerup', (event) => {
-                        if (!dragging) return;
-                        dragging = false;
-                        marker.releasePointerCapture(event.pointerId);
-                        endDrag();
-                        if (toFrame !== fromFrame) {
-                            events.fire('layerAnim.moveKey', splat, fromFrame, toFrame);
-                        } else {
-                            events.fire('timeline.setFrame', fromFrame);
-                        }
-                    });
-                    marker.addEventListener('contextmenu', (event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        events.fire('layerAnim.removeKey', splat, fromFrame);
-                    });
                 }
 
-                // the first click may select the layer, which rebuilds the
-                // rows, so a native dblclick never sees both clicks: detect
-                // the double click across rebuilds instead
                 // transition blocks: drag the body to move, the ends to resize,
                 // right-click to delete
                 const selectedTransition = events.invoke('layerAnim.selectedTransition');
@@ -364,21 +594,21 @@ class TimelineTracks extends Container {
                     };
                     place(tr.start, tr.duration);
                     block.textContent = `${tr.kind === 'in' ? '▲' : '▼'} ${TRANSITION_LABELS[tr.effect]}`;
-                    block.title = `${tr.kind === 'in' ? 'In' : 'Out'}-Transition ${TRANSITION_LABELS[tr.effect]}: Frame ${tr.start}–${tr.start + tr.duration} (ziehen = verschieben, Enden = Länge, Rechtsklick = löschen)`;
+                    block.title = i18n.t('sm.timeline.transition-tip', { kind: tr.kind === 'in' ? 'In' : 'Out', effect: TRANSITION_LABELS[tr.effect], start: tr.start, end: tr.start + tr.duration });
                     row.appendChild(block);
 
                     let mode: 'move' | 'start' | 'end' | null = null;
                     let downFrame = 0;
                     let start = tr.start;
                     let duration = tr.duration;
-                    const localFrame = (e: PointerEvent) => frameFromOffset(e.clientX - row.getBoundingClientRect().left);
+                    const trFrame = (e: PointerEvent) => frameFromOffset(e.clientX - row.getBoundingClientRect().left);
 
                     block.addEventListener('pointerdown', (event) => {
                         if (!event.isPrimary || event.button !== 0) return;
                         event.stopPropagation();
-                        const width = block.getBoundingClientRect().width;
-                        mode = event.offsetX < 6 ? 'start' : event.offsetX > width - 6 ? 'end' : 'move';
-                        downFrame = localFrame(event);
+                        const w = block.getBoundingClientRect().width;
+                        mode = event.offsetX < 6 ? 'start' : event.offsetX > w - 6 ? 'end' : 'move';
+                        downFrame = trFrame(event);
                         start = tr.start;
                         duration = tr.duration;
                         drag.busy = true;
@@ -388,7 +618,7 @@ class TimelineTracks extends Container {
                     });
                     block.addEventListener('pointermove', (event) => {
                         if (!mode) return;
-                        const frame = localFrame(event);
+                        const frame = trFrame(event);
                         const end = tr.start + tr.duration;
                         if (mode === 'move') {
                             start = Math.max(0, tr.start + frame - downFrame);
@@ -456,6 +686,9 @@ class TimelineTracks extends Container {
                         row.setPointerCapture(event.pointerId);
                         return;
                     }
+                    // the first click may select the layer, which rebuilds the
+                    // rows, so a native dblclick never sees both clicks: detect
+                    // the double click across rebuilds instead
                     const frame = frameFromOffset(event.offsetX);
                     const now = performance.now();
                     if (lastLayerClick.splat === splat && now - lastLayerClick.time < 400) {
@@ -482,7 +715,37 @@ class TimelineTracks extends Container {
                         block.style.paddingLeft = `${labelRight - left + 6}px`;
                     }
                 });
+
+                if (expanded) {
+                    for (const [channel, text] of LAYER_ROWS) {
+                        const button = createKeyButton(events,
+                            () => events.invoke('layerAnim.channelState', splat, channel) as KeyState,
+                            () => events.fire('layerAnim.keyChannel', splat, channel));
+                        const sub = channelRow(i18n.t(text), button.dom, (event) => {
+                            events.fire('selection', splat);
+                            events.fire('timeline.setFrame', frameFromOffset(event.offsetX));
+                        });
+                        for (const key of state.track.channelKeys(channel)) {
+                            if (key >= frames) continue;
+                            addKeyMarker(sub, key, '#e6e6e6', `${i18n.t(text)} · Frame ${key}`,
+                                (from, to) => events.fire('layerAnim.moveChannelKey', splat, channel, from, to),
+                                frame => events.fire('layerAnim.removeChannelKey', splat, channel, frame),
+                                () => events.fire('selection', splat));
+                        }
+                        addCursor(sub);
+                        this.dom.appendChild(sub);
+                    }
+                }
             }
+
+            updateLive(frameNow());
+        };
+
+        // which camera the cut shows at frame
+        updateLive = (frame: number) => {
+            const segments = events.invoke('cut.segments') as CutSegment[] ?? [];
+            const id = segments.length > 0 ? events.invoke('cut.cameraAt', frame) : null;
+            liveLabels.forEach(l => l.el.classList.toggle('live', l.id === id));
         };
 
         const moveCursors = (frame: number) => {
@@ -490,9 +753,10 @@ class TimelineTracks extends Container {
             cursors.forEach((c) => {
                 c.style.left = x;
             });
+            updateLive(frame);
         };
 
-        const requestRebuild = () => {
+        requestRebuild = () => {
             if (drag.busy) {
                 drag.pending = true;
             } else {
@@ -506,8 +770,10 @@ class TimelineTracks extends Container {
             'shotCameras.changed', 'cut.changed', 'timeline.frames',
             'track.keyAdded', 'track.keyRemoved', 'track.keyMoved', 'track.keyUpdated',
             'track.keysLoaded', 'track.keysCleared',
-            'layerAnim.trackChanged', 'layerAnim.transitionSelected', 'track.target', 'section.trackChanged', 'dof.trackChanged', 'dof.enabled', 'scene.elementAdded', 'scene.elementRemoved', 'selection.changed', 'splat.name'
+            'layerAnim.trackChanged', 'layerAnim.transitionSelected', 'track.target', 'section.trackChanged', 'look.trackChanged', 'light.trackChanged', 'scene.elementAdded', 'scene.elementRemoved', 'selection.changed', 'splat.name'
         ].forEach(name => events.on(name, requestRebuild));
+        // rows are translated at build time
+        i18n.onChange(requestRebuild);
 
         events.on('timeline.frame', moveCursors);
     }

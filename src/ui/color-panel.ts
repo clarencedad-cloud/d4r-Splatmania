@@ -210,7 +210,7 @@ class ColorPanel extends Container {
         controlRow.append(reset);
 
         // the collapsible body (ui/collapsible.ts), closed by default
-        const section = new CollapsibleSection({ key: 'colors', title: i18n.t('panel.colors'), iconElement: createSvg(colorsSvg) });
+        const section = new CollapsibleSection({ key: 'colors', title: 'panel.colors', iconElement: createSvg(colorsSvg) });
         const content = new Container({
             class: 'color-panel-content'
         });

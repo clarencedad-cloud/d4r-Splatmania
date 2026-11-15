@@ -9,6 +9,9 @@ import { Events } from '../events';
 import type { Scene } from '../scene';
 import type { Splat } from '../splat';
 import { makeFloating } from '../ui/floating-panel';
+import { helpButton } from '../ui/help';
+import { createKeyButton } from '../ui/key-button';
+import { i18n } from '../ui/localization';
 
 // Section cut: cuts the model from the top down along an up axis, e.g. the
 // roof off a building down to its floor plan. Non-destructive - the splat
@@ -334,20 +337,22 @@ class SectionTool {
             panel.dom.addEventListener(name, e => e.stopPropagation());
         });
         canvasContainer.append(panel);
-        makeFloating(panel, { key: 'section', title: 'Schnitt' });
+        makeFloating(panel, { key: 'section', title: 'sm.section.title', extras: [helpButton(events, 'section')] });
 
         const row = (text: string, title?: string) => {
             const r = new Container({ class: 'section-row' });
-            if (title) r.dom.title = title;
-            r.append(new Label({ text, class: 'section-label' }));
+            if (title) i18n.bindDom(r.dom, title, 'title');
+            const label = new Label({ class: 'section-label' });
+            i18n.bindText(label, text);
+            r.append(label);
             panel.append(r);
             return r;
         };
         const button = (parent: Container, text: string, title: string, onClick: () => void) => {
             const b = document.createElement('span');
             b.classList.add('section-button');
-            b.textContent = text;
-            b.title = title;
+            i18n.bindDom(b, text);
+            if (title) i18n.bindDom(b, title, 'title');
             b.addEventListener('click', onClick);
             parent.dom.appendChild(b);
             return b;
@@ -364,46 +369,67 @@ class SectionTool {
 
         let syncing = false;
 
-        const cutRow = row('Schnitt', '0 % = nichts abgeschnitten, 100 % = bis zur Grundriss-Höhe über dem Boden');
+        const cutRow = row('sm.section.cut', 'sm.section.cut-tip');
         const cutSlider = new SliderInput({ min: 0, max: 100, sliderMin: 0, sliderMax: 100, precision: 0, step: 1, value: 0 });
         cutSlider.on('change', (v: number) => !syncing && events.fire('section.set', { value: v / 100 }));
         cutRow.append(cutSlider);
+        // key button of the cut value: key / remove the key at this frame
+        cutRow.dom.appendChild(createKeyButton(events, () => {
+            const frame = Math.round(events.invoke('timeline.frame') ?? 0);
+            const keys = track.keyData;
+            const atFrame = keys.find(k => k.frame === frame);
+            const animated = keys.length > 0;
+            const v = animated ? track.evaluate(frame) : null;
+            if (animated && v !== null && Math.abs(v - state.value) > 1e-4) return 'changed';
+            if (atFrame) return 'keyed';
+            return animated ? 'animated' : 'static';
+        }, () => {
+            const frame = Math.round(events.invoke('timeline.frame') ?? 0);
+            const keyed = track.keyData.some(k => k.frame === frame && Math.abs(k.value - state.value) < 1e-4);
+            if (keyed) {
+                const before = track.snapshot();
+                track.removeKey(frame);
+                events.fire('edit.add', new AnimTrackEditOp('sectionUnkey', track, before, track.snapshot()), true);
+            } else {
+                events.fire('section.addKey', frame);
+            }
+        }).dom);
 
-        const heightRow = row('Höhe (m)', 'Absolute Schnitthöhe entlang der Achse, gekoppelt an den Regler');
+        const heightRow = row('sm.section.height', 'sm.section.height-tip');
         const heightInput = new NumericInput({ precision: 2, step: 0.05, value: 0, class: 'section-number' });
         heightInput.on('change', (v: number) => !syncing && events.fire('section.set', { value: Math.max(0, valueFor(v)) }));
         heightRow.append(heightInput);
         const extentLabel = new Label({ text: '', class: 'section-hint' });
         heightRow.append(extentLabel);
 
-        const floorRow = row('Grundriss', 'Was von den Wänden bei 100 % stehen bleibt (über dem Boden)');
+        const floorRow = row('sm.section.floor-plan', 'sm.section.floor-plan-tip');
         const floorPlan = new NumericInput({ min: 0, precision: 2, step: 0.05, value: state.floorPlanHeight, class: 'section-number' });
         floorPlan.on('change', (v: number) => !syncing && events.fire('section.set', { floorPlanHeight: v }));
         floorRow.append(floorPlan);
-        const pickButton = button(floorRow, 'Boden picken', 'Nächster Klick in den Viewport setzt die Bodenhöhe', () => {
+        const pickButton = button(floorRow, 'sm.section.pick-floor', 'sm.section.pick-floor-tip', () => {
             picking = !picking;
             events.fire('section.picking', picking);
         });
         events.on('section.picking', (on: boolean) => pickButton.classList.toggle('active', on));
 
-        const syncAxis = segmented(row('Achse', 'Welt-Y oder die Hochachse des aktiven Layers (folgt dem Orient-Werkzeug)'), [['world', 'Welt Y'], ['layer', 'Layer']], v => events.fire('section.set', { axisMode: v as SectionState['axisMode'] }));
-        const syncScope = segmented(row('Wirkt auf'), [['all', 'Alle sichtbaren'], ['active', 'Aktiven Layer']], v => events.fire('section.set', { scope: v as SectionState['scope'] }));
+        const syncAxis = segmented(row('sm.transitions.axis', 'sm.section.axis-tip'), [['world', 'sm.section.world-y'], ['layer', 'Layer']], v => events.fire('section.set', { axisMode: v as SectionState['axisMode'] }));
+        const syncScope = segmented(row('sm.section.scope'), [['all', 'sm.section.all-visible'], ['active', 'sm.section.active-layer']], v => events.fire('section.set', { scope: v as SectionState['scope'] }));
 
-        const edgeRow = row('Kante', 'Weich: die letzten cm blenden aus; hart: scharfer Schnitt');
-        const syncEdge = segmented(edgeRow, [['soft', 'Weich'], ['hard', 'Hart']], v => events.fire('section.set', { edge: v === 'soft' ? 0.05 : 0 }));
-        const planeRow = row('Ebene zeigen', 'Schnittebene als Gitter (nur im Editor)');
+        const edgeRow = row('sm.transitions.edge', 'sm.section.edge-tip');
+        const syncEdge = segmented(edgeRow, [['soft', 'sm.section.soft'], ['hard', 'sm.section.hard']], v => events.fire('section.set', { edge: v === 'soft' ? 0.05 : 0 }));
+        const planeRow = row('sm.section.show-plane', 'sm.section.show-plane-tip');
         const planeToggle = new BooleanInput({ value: true });
         planeToggle.on('change', (v: boolean) => !syncing && events.fire('section.set', { showPlane: v }));
         planeRow.append(planeToggle);
 
         const actions = new Container({ class: 'section-row' });
         panel.append(actions);
-        button(actions, '◆ Key', 'Schnitt-Wert am aktuellen Frame als Key speichern', () => events.fire('section.addKey'));
-        button(actions, 'Neu messen', 'Ober- und Unterkante aus den sichtbaren Splats neu bestimmen', () => measure());
+        button(actions, '◆ Key', 'sm.section.key-tip', () => events.fire('section.addKey'));
+        button(actions, 'sm.section.measure', 'sm.section.measure-tip', () => measure());
         const message = new Label({ text: '', class: 'section-message' });
-        button(actions, 'Abgeschnittenes selektieren', 'Abgeschnittene Splats des aktiven Layers auswählen (dann Entf)', async () => {
+        button(actions, 'sm.section.select-cut', 'sm.section.select-cut-tip', async () => {
             const n = await events.invoke('section.selectCut');
-            message.text = `${n} Splats ausgewählt`;
+            message.text = i18n.t('sm.common.selected-splats', { count: n });
         });
         panel.append(message);
 

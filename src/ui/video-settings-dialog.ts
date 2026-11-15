@@ -123,6 +123,7 @@ const codecNames: Record<VideoCodecChoice, string> = {
     h264: 'H.264',
     h265: 'H.265/HEVC',
     vp9: 'VP9',
+    png: 'PNG',
     av1: 'AV1'
 };
 
@@ -173,13 +174,13 @@ class VideoSettingsDialog extends Container {
             options: [
                 { v: 'standard', t: 'Standard' },
                 { v: 'equirect', t: '360° Equirectangular' },
-                { v: 'stereo', t: '360° Stereo (oben/unten)' }
+                { v: 'stereo', t: '360° Stereo (top/bottom)' }
             ]
         });
         i18n.bindOptions(projectionSelect, () => [
             { v: 'standard', t: i18n.t('popup.render-video.projection.standard') },
             { v: 'equirect', t: i18n.t('popup.render-video.projection.equirectangular') },
-            { v: 'stereo', t: '360° Stereo (oben/unten)' }
+            { v: 'stereo', t: i18n.t('sm.stereo.projection') }
         ]);
         const projectionRow = new Container({ class: 'row' });
         projectionRow.append(projectionLabel);
@@ -187,11 +188,12 @@ class VideoSettingsDialog extends Container {
 
         // shot camera source
 
-        const shotLabel = new Label({ class: 'label', text: 'Kamera' });
+        const shotLabel = new Label({ class: 'label' });
+        i18n.bindText(shotLabel, 'sm.cameras.camera');
         const shotSelect = new SelectInput({
             class: 'select',
             defaultValue: 'cut',
-            options: [{ v: 'cut', t: 'Schnitt (ein MP4)' }]
+            options: [{ v: 'cut', t: i18n.t('sm.video.shot-cut') }]
         });
         const shotRow = new Container({ class: 'row' });
         shotRow.append(shotLabel);
@@ -216,17 +218,21 @@ class VideoSettingsDialog extends Container {
         i18n.bindText(formatLabel, 'popup.render-video.format');
         const formatSelect = new SelectInput({
             class: 'select',
-            defaultValue: 'mp4',
-            options: [
-                { v: 'mp4', t: 'MP4' },
-                { v: 'webm', t: 'WebM' },
-                { v: 'mov', t: 'MOV' },
-                { v: 'mkv', t: 'MKV' }
-            ]
+            defaultValue: 'mp4'
         });
+        i18n.bindOptions(formatSelect, () => [
+            { v: 'mp4', t: 'MP4' },
+            { v: 'webm', t: 'WebM' },
+            { v: 'mov', t: 'MOV (QuickTime)' },
+            { v: 'mkv', t: 'MKV' },
+            { v: 'png-seq', t: i18n.t('sm.video.png-seq') },
+            { v: 'exr-seq', t: i18n.t('sm.video.exr-seq') }
+        ]);
+
         const formatRow = new Container({ class: 'row' });
         formatRow.append(formatLabel);
         formatRow.append(formatSelect);
+        i18n.bindDom(formatRow.dom, 'sm.video.format-tip', 'title');
 
         // codec
 
@@ -256,8 +262,11 @@ class VideoSettingsDialog extends Container {
             ],
             'mov': [
                 { v: 'h264', t: 'H.264' },
-                { v: 'h265', t: 'H.265/HEVC' }
+                { v: 'h265', t: 'H.265/HEVC' },
+                { v: 'png', t: 'PNG (Alpha)' }
             ],
+            'png-seq': [{ v: 'png', t: 'PNG' }],
+            'exr-seq': [{ v: 'png', t: 'EXR' }],
             'mkv': [
                 { v: 'h264', t: 'H.264' },
                 { v: 'h265', t: 'H.265/HEVC' },
@@ -275,10 +284,16 @@ class VideoSettingsDialog extends Container {
             // Set default codec based on format
             if (format === 'webm') {
                 codecSelect.value = 'vp9';
+            } else if (format.endsWith('-seq')) {
+                codecSelect.value = 'png';
             } else {
                 codecSelect.value = 'h264';
             }
         };
+
+        // frames we write ourselves (no WebCodecs encoder): QuickTime PNG
+        // and the image sequences
+        const isRaw = () => formatSelect.value.endsWith('-seq') || codecSelect.value === 'png';
 
         // framerate
 
@@ -370,29 +385,49 @@ class VideoSettingsDialog extends Container {
 
         const stereoRow = (text: string, input: Element, title: string) => {
             const r = new Container({ class: 'row' });
-            r.dom.title = title;
-            r.append(new Label({ class: 'label', text }));
+            i18n.bindDom(r.dom, title, 'title');
+            const label = new Label({ class: 'label' });
+            i18n.bindText(label, text);
+            r.append(label);
             r.append(input);
             r.hidden = true;
             return r;
         };
         const ipdInput = new NumericInput({ class: 'numeric-input', min: 0, max: 1000, precision: 4, step: 0.001, value: 0.064 });
-        const ipdRow = stereoRow('Augenabstand', ipdInput,
-            'IPD in Szeneneinheiten: 0,064 = 6,4 cm in einer Szene in Metern. Unskalierte PLYs können andere Einheiten haben, dann anpassen');
+        const ipdRow = stereoRow('sm.stereo.ipd', ipdInput, 'sm.stereo.ipd-tip');
         const poleSlider = new SliderInput({ class: 'slider', min: 20, max: 69, precision: 0, value: 50 });
-        const poleRow = stereoRow('Pol-Überblendung ab', poleSlider,
-            'Ab dieser Höhe (Grad) blendet das Stereo weich ins Mono-Panorama, damit oben und unten keine Doppelbilder entstehen');
+        const poleRow = stereoRow('sm.stereo.pole', poleSlider, 'sm.stereo.pole-tip');
         const segmentSelect = new SelectInput({
             class: 'select',
-            defaultValue: '96',
-            options: [
-                { v: '48', t: 'Entwurf (48 Segmente)' },
-                { v: '96', t: 'Gut (96 Segmente)' },
-                { v: '112', t: 'Hoch (112 Segmente)' },
-                { v: '160', t: 'Sehr hoch (160 Segmente)' }
-            ]
+            defaultValue: '96'
         });
-        const segmentRow = stereoRow('Stereo-Qualität', segmentSelect, 'Azimut-Streifen pro Auge: mehr = sauberere Disparität, längere Renderzeit (pro Bild 6 + 2 × Segmente Renderdurchgänge)');
+        i18n.bindOptions(segmentSelect, () => [
+            { v: '48', t: i18n.t('sm.stereo.q48') },
+            { v: '96', t: i18n.t('sm.stereo.q96') },
+            { v: '112', t: i18n.t('sm.stereo.q112') },
+            { v: '160', t: i18n.t('sm.stereo.q160') }
+        ]);
+        const segmentRow = stereoRow('sm.stereo.quality', segmentSelect, 'sm.stereo.quality-tip-video');
+
+        // motion blur (standard projection only)
+
+        const motionBlurSelect = new SelectInput({ class: 'select', defaultValue: '1' });
+        i18n.bindOptions(motionBlurSelect, () => [
+            { v: '1', t: i18n.t('sm.motion-blur.off') },
+            { v: '4', t: i18n.t('sm.motion-blur.light') },
+            { v: '8', t: i18n.t('sm.motion-blur.medium') },
+            { v: '16', t: i18n.t('sm.motion-blur.high') }
+        ]);
+        const motionBlurRow = stereoRow('sm.motion-blur.title', motionBlurSelect, 'sm.motion-blur.tip');
+        motionBlurRow.hidden = false;
+        const shutterSlider = new SliderInput({ class: 'slider', min: 0.1, max: 1, precision: 2, value: 0.5 });
+        const shutterRow = stereoRow('sm.motion-blur.shutter', shutterSlider, 'sm.motion-blur.shutter-tip');
+        const syncMotionBlur = () => {
+            const is360 = projectionSelect.value !== 'standard';
+            motionBlurRow.hidden = is360;
+            shutterRow.hidden = is360 || motionBlurSelect.value === '1';
+        };
+        motionBlurSelect.on('change', syncMotionBlur);
 
         // transparent background
 
@@ -403,9 +438,11 @@ class VideoSettingsDialog extends Container {
         transparentBgRow.append(transparentBgLabel);
         transparentBgRow.append(transparentBgBoolean);
 
-        // hide transparent background till we add support for webm
-        // video container
-        transparentBgRow.hidden = true;
+        i18n.bindDom(transparentBgRow.dom, 'sm.video.alpha-tip', 'title');
+
+        // exr: camera depth as a Z channel
+        const depthBoolean = new BooleanInput({ class: 'boolean', value: true });
+        const depthRow = stereoRow('sm.video.depth', depthBoolean, 'sm.video.depth-tip');
 
         // show debug overlays
 
@@ -415,6 +452,18 @@ class VideoSettingsDialog extends Container {
         const showDebugRow = new Container({ class: 'row' });
         showDebugRow.append(showDebugLabel);
         showDebugRow.append(showDebugBoolean);
+
+        // transparency: webm (vp9 / av1 with an alpha stream), quicktime
+        // png and the sequences; depth: exr in standard projection
+        const syncOutputRows = () => {
+            const format = formatSelect.value;
+            const raw = isRaw();
+            transparentBgRow.hidden = !(format === 'webm' || raw);
+            depthRow.hidden = !(format === 'exr-seq' && projectionSelect.value === 'standard');
+            codecRow.hidden = format.endsWith('-seq');
+            bitrateRow.hidden = raw;
+        };
+        codecSelect.on('change', syncOutputRows);
 
         // sync the ui to the selected projection: 360 renders are 2:1
         // equirectangular without portrait mode or debug overlays
@@ -429,6 +478,8 @@ class VideoSettingsDialog extends Container {
             [ipdRow, poleRow, segmentRow].forEach((r) => {
                 r.hidden = !isStereo;
             });
+            syncMotionBlur();
+            syncOutputRows();
         };
 
         // content
@@ -447,7 +498,10 @@ class VideoSettingsDialog extends Container {
         content.append(ipdRow);
         content.append(poleRow);
         content.append(segmentRow);
+        content.append(motionBlurRow);
+        content.append(shutterRow);
         content.append(transparentBgRow);
+        content.append(depthRow);
         content.append(showDebugRow);
 
         const compatibilityMessage = new Label({
@@ -649,7 +703,7 @@ class VideoSettingsDialog extends Container {
             supportByResolution = new Map();
             updateCompatibilityUI();
 
-            if (typeof VideoEncoder === 'undefined') {
+            if (typeof VideoEncoder === 'undefined' && !isRaw()) {
                 probeState = 'unavailable';
                 updateCompatibilityUI();
                 return;
@@ -672,6 +726,10 @@ class VideoSettingsDialog extends Container {
                     const { width, height } = dimensionsFor(option.v);
                     if (Math.max(width, height) > maxTextureSize) {
                         return [option.v, false] as const;
+                    }
+
+                    if (isRaw()) {
+                        return [option.v, true] as const;
                     }
 
                     const config = buildVideoEncoderConfig(encodingSettingsFor(option.v));
@@ -710,8 +768,31 @@ class VideoSettingsDialog extends Container {
             syncProjection();
             requestEncoderSupportRefresh();
         });
+
+        // the projection is a camera property (src/camera-poses.ts): picking
+        // a camera (or a cut whose cameras all share one) takes it over,
+        // together with the stereo eye separation; it can still be changed
+        // here for this export
+        const applyShotProjection = () => {
+            const cameras = (events.invoke('shotCameras.list') ?? []) as { id: number, projection: string, ipd: number }[];
+            let source: { projection: string, ipd: number }[] = [];
+            if (shotSelect.value.startsWith('camera:')) {
+                const id = parseInt(shotSelect.value.slice(7), 10);
+                source = cameras.filter(c => c.id === id);
+            } else if (shotSelect.value === 'cut') {
+                const ids = new Set((events.invoke('cut.segments') as { cameraId: number }[]).map(seg => seg.cameraId));
+                source = cameras.filter(c => ids.has(c.id));
+            } else {
+                source = cameras;
+            }
+            if (source.length === 0 || !source.every(c => c.projection === source[0].projection)) return;
+            if (projectionSelect.value !== source[0].projection) projectionSelect.value = source[0].projection;
+            if (source[0].projection === 'stereo') ipdInput.value = source[0].ipd;
+        };
+        shotSelect.on('change', applyShotProjection);
         formatSelect.on('change', () => {
             syncFormat();
+            syncOutputRows();
             requestEncoderSupportRefresh();
         });
         codecSelect.on('change', requestEncoderSupportRefresh);
@@ -749,12 +830,13 @@ class VideoSettingsDialog extends Container {
             const cameras = events.invoke('shotCameras.list') as { id: number, name: string }[];
             const hasCuts = (events.invoke('cut.segments') as unknown[]).length > 0;
             shotSelect.options = [
-                { v: 'cut', t: 'Schnitt (ein MP4)' },
-                ...cameras.map(c => ({ v: `camera:${c.id}`, t: `Kamera: ${c.name}` })),
-                { v: 'all', t: 'Alle Kameras einzeln' }
+                { v: 'cut', t: i18n.t('sm.video.shot-cut') },
+                ...cameras.map(c => ({ v: `camera:${c.id}`, t: i18n.t('sm.video.shot-camera', { camera: c.name }) })),
+                { v: 'all', t: i18n.t('sm.video.shot-all') }
             ];
             const selectedCamera = events.invoke('shotCameras.selected') as { id: number };
             shotSelect.value = hasCuts ? 'cut' : `camera:${selectedCamera.id}`;
+            applyShotProjection();
         };
 
         // function implementations
@@ -786,12 +868,23 @@ class VideoSettingsDialog extends Container {
                         startFrame: frameRange[0],
                         endFrame: frameRange[1],
                         ...encodingSettings,
-                        transparentBg: transparentBgBoolean.value,
+                        transparentBg: !transparentBgRow.hidden && transparentBgBoolean.value,
+                        depth: !depthRow.hidden && depthBoolean.value,
                         showDebug: !is360 && showDebugBoolean.value,
-                        format: formatSelect.value as 'mp4' | 'webm' | 'mov' | 'mkv',
+                        format: formatSelect.value as VideoSettings['format'],
                         projection: isStereo ? 'stereo' : (is360 ? 'equirect' : 'standard'),
                         levelHorizon: is360 && levelHorizonBoolean.value,
                         stereo: isStereo ? { ipd: ipdInput.value, poleStart: poleSlider.value, segments: parseInt(segmentSelect.value, 10) } : undefined,
+                        motionBlur: !is360 && motionBlurSelect.value !== '1' ? { samples: parseInt(motionBlurSelect.value, 10), shutter: shutterSlider.value } : undefined,
+                        // 'all' renders each camera in its own projection: the
+                        // chosen resolution for this projection, defaults for
+                        // the others
+                        perProjection: shotSelect.value === 'all' ? Object.fromEntries((['standard', 'equirect', 'stereo'] as const).map((proj) => {
+                            const current = (isStereo ? 'stereo' : (is360 ? 'equirect' : 'standard')) === proj;
+                            const fallback = proj === 'stereo' ? 'tb-2048' : (proj === 'equirect' ? '360-4k' : '1080');
+                            const { width, height, bitrate } = encodingSettingsFor(current ? resolutionSelect.value : fallback);
+                            return [proj, { width, height, bitrate }];
+                        })) : undefined,
                         shot: shotSelect.value.startsWith('camera:') ?
                             { mode: 'camera', cameraId: parseInt(shotSelect.value.slice(7), 10) } :
                             { mode: shotSelect.value as 'cut' | 'all' }

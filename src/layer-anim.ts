@@ -22,11 +22,19 @@ type LayerKey = {
 
 type LayerInterpolation = 'linear' | 'smooth';
 
+type LayerChannel = 'opacity' | 'mix' | 'position' | 'rotation' | 'scale';
+const LAYER_CHANNELS: LayerChannel[] = ['position', 'rotation', 'scale', 'opacity', 'mix'];
+
 // how a layer renders: follow the global mode, or force splats / points
 type LayerRenderMode = 'inherit' | 'splats' | 'points';
 
 type PointCloudSettings = {
     mode: 'splats' | 'points',
+    // splat display: size factor (1 = as trained) and screen-space low-pass
+    // in px^2 (0.3 = 3dgs reference; lower = crisper). Display only, exports
+    // of the splat data stay unchanged
+    splatScale: number,
+    splatFilter: number,
     // point diameter: pixels, or world units (shrinks with distance)
     size: number,
     sizeMode: 'px' | 'world',
@@ -184,18 +192,95 @@ class LayerAnimTrack implements AnimTrack {
         this.changed();
     }
 
-    // capture all channels from the layer's current state
-    addKey(frame: number): boolean {
+    // the layer's current value of a channel (what a key would store)
+    current(channel: LayerChannel): number | Vec3 | Quat | undefined {
         const state = this.events.invoke('layerAnim.state', this.splat) as LayerState;
         const entity = this.splat.entity;
-        this.setKey({
-            frame,
-            opacity: state.opacity,
-            mix: state.mixOverride ?? undefined,
-            position: entity.getLocalPosition().clone(),
-            rotation: entity.getLocalRotation().clone(),
-            scale: entity.getLocalScale().clone()
+        switch (channel) {
+            case 'opacity': return state.opacity;
+            case 'mix': return state.mixOverride ?? undefined;
+            case 'position': return entity.getLocalPosition().clone();
+            case 'rotation': return entity.getLocalRotation().clone();
+            case 'scale': return entity.getLocalScale().clone();
+        }
+    }
+
+    isAnimated(channel: LayerChannel) {
+        return this.keyList.some(k => k[channel] !== undefined);
+    }
+
+    channelKeys(channel: LayerChannel) {
+        return this.keyList.filter(k => k[channel] !== undefined).map(k => k.frame);
+    }
+
+    // the current value differs from what the keys give at frame
+    isChanged(channel: LayerChannel, frame: number) {
+        if (!this.isAnimated(channel)) return false;
+        const value = this.current(channel);
+        if (value === undefined) return false;
+        if (channel === 'opacity' || channel === 'mix') {
+            return Math.abs(this.evaluateNumber(channel, frame) - (value as number)) > 1e-4;
+        }
+        if (channel === 'rotation') {
+            const q = this.evaluateQuat(frame, new Quat());
+            return Math.abs(Math.abs(q.dot(value as Quat)) - 1) > 1e-6;
+        }
+        const v = this.evaluateVec(channel, frame, new Vec3());
+        return v.distance(value as Vec3) > 1e-5;
+    }
+
+    channelState(channel: LayerChannel, frame: number): 'static' | 'animated' | 'keyed' | 'changed' {
+        if (this.isChanged(channel, frame)) return 'changed';
+        if (this.keyList.some(k => k.frame === frame && k[channel] !== undefined)) return 'keyed';
+        return this.isAnimated(channel) ? 'animated' : 'static';
+    }
+
+    keyChannel(channel: LayerChannel, frame: number): boolean {
+        const value = this.current(channel);
+        if (value === undefined) return false;
+        this.setKey({ frame, [channel]: value } as LayerKey);
+        return true;
+    }
+
+    removeChannelKey(channel: LayerChannel, frame: number): boolean {
+        const key = this.keyList.find(k => k.frame === frame);
+        if (!key || key[channel] === undefined) return false;
+        delete key[channel];
+        if (!LAYER_CHANNELS.some(c => key[c] !== undefined)) {
+            this.keyList.splice(this.keyList.indexOf(key), 1);
+        }
+        this.changed();
+        return true;
+    }
+
+    moveChannelKey(channel: LayerChannel, fromFrame: number, toFrame: number): boolean {
+        if (fromFrame === toFrame) return false;
+        const key = this.keyList.find(k => k.frame === fromFrame);
+        if (!key || key[channel] === undefined) return false;
+        const value = key[channel];
+        delete key[channel];
+        if (!LAYER_CHANNELS.some(c => key[c] !== undefined)) {
+            this.keyList.splice(this.keyList.indexOf(key), 1);
+        }
+        this.setKey({ frame: toFrame, [channel]: value } as LayerKey);
+        return true;
+    }
+
+    // which channels the key button keys: the transform, plus opacity and
+    // point mix when they are animated or were changed
+    addKeyChannels(frame: number): LayerChannel[] {
+        return LAYER_CHANNELS.filter((c) => {
+            if (c === 'position' || c === 'rotation' || c === 'scale') return true;
+            return this.current(c) !== undefined && (this.isAnimated(c) || this.isChanged(c, frame));
         });
+    }
+
+    addKey(frame: number): boolean {
+        const key: LayerKey = { frame };
+        this.addKeyChannels(frame).forEach((c) => {
+            (key as any)[c] = this.current(c);
+        });
+        this.setKey(key);
         return true;
     }
 
@@ -317,7 +402,9 @@ type LayerState = {
     // explicit splat <-> point mix (0 splats, 1 points); null follows the
     // render mode
     mixOverride: number | null,
-    renderMode: LayerRenderMode
+    renderMode: LayerRenderMode,
+    // splat size of this layer; null follows the global display setting
+    splatScale: number | null
 };
 
 const registerLayerAnimEvents = (events: Events) => {
@@ -325,6 +412,8 @@ const registerLayerAnimEvents = (events: Events) => {
 
     const points: PointCloudSettings = {
         mode: 'splats',
+        splatScale: 1,
+        splatFilter: 0.3,
         size: 3,
         sizeMode: 'px',
         colorMode: 'original',
@@ -336,7 +425,7 @@ const registerLayerAnimEvents = (events: Events) => {
     const stateOf = (splat: Splat): LayerState => {
         let state = states.get(splat);
         if (!state) {
-            state = { track: new LayerAnimTrack(events, splat), opacity: 1, mixOverride: null, renderMode: 'inherit' };
+            state = { track: new LayerAnimTrack(events, splat), opacity: 1, mixOverride: null, renderMode: 'inherit', splatScale: null };
             states.set(splat, state);
         }
         return state;
@@ -425,7 +514,7 @@ const registerLayerAnimEvents = (events: Events) => {
         const state = states.get(splat);
         const mode = state && state.renderMode !== 'inherit' ? state.renderMode : points.mode;
         const mix = state?.mixOverride ?? (mode === 'points' ? 1 : 0);
-        return { opacity: state?.opacity ?? 1, mix, glow: points.glow };
+        return { opacity: state?.opacity ?? 1, mix, glow: points.glow, splatScale: state?.splatScale ?? points.splatScale ?? 1 };
     });
 
     events.on('layerAnim.setPoints', (value: Partial<PointCloudSettings>) => {
@@ -442,6 +531,41 @@ const registerLayerAnimEvents = (events: Events) => {
     events.on('layerAnim.setMix', (splat: Splat, value: number | null) => {
         stateOf(splat).mixOverride = value === null ? null : Math.min(1, Math.max(0, value));
         changed(splat);
+    });
+
+    // splat size of one layer (null = the global display setting); a run
+    // of edits (slider drag) is one undo step
+    let lastScaleEdit: { splat: Splat, op: any, time: number } | null = null;
+    events.on('layerAnim.setSplatScale', (splat: Splat, value: number | null) => {
+        const state = stateOf(splat);
+        const next = value === null ? null : Math.max(0.01, value);
+        if (state.splatScale === next) return;
+        const apply = (v: number | null) => {
+            state.splatScale = v;
+            changed(splat);
+            events.fire('layerAnim.splatScale', splat);
+        };
+        const before = state.splatScale;
+        apply(next);
+        const now = performance.now();
+        if (lastScaleEdit && lastScaleEdit.splat === splat && now - lastScaleEdit.time < 1000) {
+            lastScaleEdit.op.after = next;
+            lastScaleEdit.time = now;
+            return;
+        }
+        const op = {
+            name: 'layerSplatScale',
+            before,
+            after: next,
+            do() {
+                apply(this.after);
+            },
+            undo() {
+                apply(this.before);
+            }
+        };
+        events.fire('edit.add', op, true);
+        lastScaleEdit = { splat, op, time: now };
     });
 
     events.on('layerAnim.setRenderMode', (splat: Splat, mode: LayerRenderMode) => {
@@ -462,6 +586,32 @@ const registerLayerAnimEvents = (events: Events) => {
 
     events.on('layerAnim.addKey', (splat: Splat, frame?: number) => {
         trackEdit(splat, 'layerAddKey', track => track.addKey(frameOrCurrent(frame)));
+    });
+
+    // per channel keys (key buttons in the panels, channel rows in the
+    // timeline): the button keys the channel, or removes an unchanged key
+    events.on('layerAnim.keyChannel', (splat: Splat, channel: LayerChannel, frame?: number) => {
+        const f = frameOrCurrent(frame);
+        const keyed = stateOf(splat).track.channelState(channel, f) === 'keyed';
+        trackEdit(splat, keyed ? 'layerUnkey' : 'layerKey', track => (keyed ? track.removeChannelKey(channel, f) : track.keyChannel(channel, f)));
+    });
+
+    // key just these channels (auto key)
+    events.on('layerAnim.keyChannels', (splat: Splat, channels: LayerChannel[], frame?: number) => {
+        const f = frameOrCurrent(frame);
+        trackEdit(splat, 'layerAutoKey', track => channels.map(c => track.keyChannel(c, f)).some(Boolean));
+    });
+
+    events.on('layerAnim.removeChannelKey', (splat: Splat, channel: LayerChannel, frame: number) => {
+        trackEdit(splat, 'layerUnkey', track => track.removeChannelKey(channel, frame));
+    });
+
+    events.on('layerAnim.moveChannelKey', (splat: Splat, channel: LayerChannel, fromFrame: number, toFrame: number) => {
+        trackEdit(splat, 'layerMoveKey', track => track.moveChannelKey(channel, fromFrame, toFrame));
+    });
+
+    events.function('layerAnim.channelState', (splat: Splat, channel: LayerChannel) => {
+        return splat ? stateOf(splat).track.channelState(channel, Math.round(events.invoke('timeline.frame') ?? 0)) : 'static';
     });
 
     events.on('layerAnim.removeKey', (splat: Splat, frame?: number) => {
@@ -507,6 +657,7 @@ const registerLayerAnimEvents = (events: Events) => {
             opacity: state.opacity,
             mixOverride: state.mixOverride,
             renderMode: state.renderMode,
+            splatScale: state.splatScale,
             interpolation: state.track.interpolation,
             transitions: state.track.transitions.map(cloneTransition),
             keys: state.track.keyData.map(k => ({
@@ -526,6 +677,7 @@ const registerLayerAnimEvents = (events: Events) => {
         state.opacity = doc.opacity ?? 1;
         state.mixOverride = doc.mixOverride ?? null;
         state.renderMode = doc.renderMode ?? 'inherit';
+        state.splatScale = typeof doc.splatScale === 'number' ? doc.splatScale : null;
         state.track.restore({
             interpolation: doc.interpolation ?? 'smooth',
             transitions: (doc.transitions ?? []).map((t: Transition) => {
@@ -638,8 +790,9 @@ const registerLayerAnimEvents = (events: Events) => {
     events.function('docSerialize.pointCloud', () => ({ ...points }));
 
     events.function('docDeserialize.pointCloud', (doc: any) => {
-        if (doc) events.fire('layerAnim.setPoints', doc);
+        // projects from before the splat size fall back to the defaults
+        if (doc) events.fire('layerAnim.setPoints', { splatScale: 1, splatFilter: 0.3, ...doc });
     });
 };
 
-export { registerLayerAnimEvents, TRANSITION_LABELS, LayerAnimTrack, LayerState, LayerKey, LayerRenderMode, PointCloudSettings, Transition, TransitionEffect, TransitionEasing, TransitionAxis };
+export { registerLayerAnimEvents, TRANSITION_LABELS, LayerAnimTrack, LayerState, LayerKey, LayerRenderMode, PointCloudSettings, Transition, TransitionEffect, TransitionEasing, TransitionAxis, LayerChannel, LAYER_CHANNELS };

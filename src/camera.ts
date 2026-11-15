@@ -114,6 +114,9 @@ class Camera extends Element {
     stochasticResolvePass: SimpleRenderPass;
     gizmoPass: RenderPassForward;
     depthReducePass: RenderPass;
+    // the look (src/look/look.ts): glow and grading over the splats, before
+    // the gizmos. Target-less like depthReducePass: it runs its own passes
+    lookPass: RenderPass;
     finalPass: SimpleRenderPass;
 
     // overridden target size
@@ -367,6 +370,13 @@ class Camera extends Element {
         this.depthReducePass = new RenderPass(device);
         this.depthReducePass.name = 'depthReduce';
         this.depthReducePass.execute = () => scene.projectedSplatRenderer.reduceDepth();
+        this.lookPass = new RenderPass(device);
+        this.lookPass.name = 'look';
+        this.lookPass.execute = () => {
+            if (scene.events.functions.has('look.applyCamera')) {
+                scene.events.invoke('look.applyCamera', this.colorTarget, !this.finalPass.enabled);
+            }
+        };
         this.finalPass = new SimpleRenderPass(device,
             new ShaderQuad(device, vertexShader, fragmentShader, 'final-blit'), {
                 vars: () => {
@@ -495,6 +505,7 @@ class Camera extends Element {
         this.warpTarget?.destroy();
         this.gizmoPass?.destroy();
         this.depthReducePass?.destroy();
+        this.lookPass?.destroy();
         this.finalPass?.destroy();
         this.camera.framePasses = null;
 
@@ -641,7 +652,7 @@ class Camera extends Element {
             // assign render passes to camera
             this.camera.framePasses = [this.clearPass, this.stochasticClearPass, this.mainPass, this.splatPass,
                 this.stochasticSplatPass, this.warpClearPass, this.warpSplatPass, this.depthReducePass, this.stochasticResolvePass,
-                this.gizmoPass, this.finalPass];
+                this.lookPass, this.gizmoPass, this.finalPass];
         } else {
             // resize existing render targets
             const { splatTarget, colorTarget, workTarget } = this;

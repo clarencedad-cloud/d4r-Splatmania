@@ -8,15 +8,19 @@ import { ExportSettings } from '../export-settings';
 import type { BlobReadSource } from '../io';
 import type { PanoramaJob } from '../render';
 import { AboutPopup } from './about-popup';
+import { AiShotsPanel } from './ai-shots-panel';
 import { BottomToolbar } from './bottom-toolbar';
 import { CameraInfoOverlay } from './camera-info-overlay';
 import { DepthFilterPanel } from './depth-filter-panel';
 import { ExportPopup } from './export-popup';
+import { registerHelp } from './help';
 import { ImageSettingsDialog } from './image-settings-dialog';
 import { i18n } from './localization';
+import { LookPanel } from './look-panel';
 import { Menu } from './menu';
 import { OverdrawLegend } from './overdraw-legend';
 import { OverlaysPanel } from './overlays-panel';
+import { PanoramaPreview } from './panorama-preview';
 import { PerfOverlay } from './perf-overlay';
 import logo from './playcanvas-logo.png';
 import { Popup, ShowOptions } from './popup';
@@ -29,9 +33,12 @@ import { ShortcutsPopup } from './shortcuts-popup';
 import { Spinner } from './spinner';
 import { StatusBar } from './status-bar';
 import { TimelinePanel } from './timeline-panel';
+import { TitlesOverlay } from './titles-overlay';
+import { TitlesPanel } from './titles-panel';
 import { Tooltips } from './tooltips';
 import { VideoSettingsDialog } from './video-settings-dialog';
 import { ViewCube } from './view-cube';
+import { ViewportLabel } from './viewport-label';
 import { version } from '../../package.json';
 
 // ts compiler and vscode find this type, but eslint does not
@@ -84,7 +91,7 @@ class EditorUI {
             text: 'SPLATMANIA '
         });
         const versionSpan = document.createElement('span');
-        versionSpan.textContent = `v${version}`;
+        versionSpan.textContent = `v${version} · by design4real`;
         appLabel.dom.appendChild(versionSpan);
 
         // canvas container
@@ -112,6 +119,9 @@ class EditorUI {
         const settingsPanel = new SettingsPanel(events, tooltips);
         const appearancePanel = new AppearancePanel(events, tooltips);
         const overlaysPanel = new OverlaysPanel(events, tooltips);
+        const lookPanel = new LookPanel(events, tooltips);
+        const titlesPanel = new TitlesPanel(events, tooltips);
+        const aiShotsPanel = new AiShotsPanel(events, tooltips);
         const bottomToolbar = new BottomToolbar(events, tooltips);
         const depthFilterPanel = new DepthFilterPanel(events);
         const rightToolbar = new RightToolbar(events, tooltips);
@@ -121,6 +131,10 @@ class EditorUI {
         const overdrawLegend = new OverdrawLegend(events);
 
         canvasContainer.dom.appendChild(canvas);
+        // title preview over the 3d view (below the 360 preview, which hides it)
+        canvasContainer.dom.appendChild(new TitlesOverlay(events).dom);
+        // 360 camera preview, right above the 3d view
+        canvasContainer.append(new PanoramaPreview(events));
         canvasContainer.append(annotationContainer);
         canvasContainer.append(appLabel);
         canvasContainer.append(cameraInfoOverlay);
@@ -138,10 +152,15 @@ class EditorUI {
         canvasContainer.append(settingsPanel);
         canvasContainer.append(appearancePanel);
         canvasContainer.append(overlaysPanel);
+        canvasContainer.append(lookPanel);
+        canvasContainer.append(titlesPanel);
+        canvasContainer.append(aiShotsPanel);
 
         // view axes container
         const viewCube = new ViewCube(events);
         canvasContainer.append(viewCube);
+        // which camera the viewport looks through, left of the view cube
+        canvasContainer.dom.appendChild(new ViewportLabel(events).dom);
         events.on('prerender', (cameraMatrix: Mat4) => {
             viewCube.update(cameraMatrix);
         });
@@ -198,6 +217,7 @@ class EditorUI {
         topContainer.append(videoSettingsDialog);
         topContainer.append(shortcutsPopup);
         topContainer.append(aboutPopup);
+        registerHelp(events, topContainer);
 
         appContainer.append(editorContainer);
         appContainer.append(topContainer);
@@ -271,7 +291,8 @@ class EditorUI {
                     const imageFileTypes: Record<string, { description: string, accept: Record<`${string}/${string}`, `.${string}`[]>, extension: string }> = {
                         png: { description: 'PNG Image', accept: { 'image/png': ['.png'] }, extension: '.png' },
                         jpeg: { description: 'JPEG Image', accept: { 'image/jpeg': ['.jpg', '.jpeg'] }, extension: '.jpg' },
-                        webp: { description: 'WebP Image', accept: { 'image/webp': ['.webp'] }, extension: '.webp' }
+                        webp: { description: 'WebP Image', accept: { 'image/webp': ['.webp'] }, extension: '.webp' },
+                        exr: { description: 'OpenEXR Image', accept: { 'image/x-exr': ['.exr'] }, extension: '.exr' }
                     };
                     const imageFileType = imageFileTypes[imageSettings.format];
 
@@ -285,7 +306,7 @@ class EditorUI {
                             await events.invoke('showPopup', {
                                 type: 'error',
                                 header: i18n.t('panel.render.failed'),
-                                message: 'Die gewählte Kamera hat keine Keys.'
+                                message: i18n.t('sm.render.no-keys')
                             });
                             return;
                         }
@@ -367,6 +388,15 @@ class EditorUI {
                     };
                     const codecName = codecNames[videoSettings.codec] || videoSettings.codec.toUpperCase();
 
+                    if (videoSettings.format === 'png-seq' || videoSettings.format === 'exr-seq') {
+                        // image sequence: a folder (or a zip download)
+                        if (window.showDirectoryPicker) {
+                            videoSettings.directory = await window.showDirectoryPicker({ id: 'SplatmaniaSequenceExport', mode: 'readwrite' });
+                        }
+                        await events.invoke('render.video', videoSettings, undefined);
+                        return;
+                    }
+
                     if (videoSettings.format === 'webm') {
                         fileExtension = '.webm';
                         filePickerTypes = [{
@@ -396,7 +426,7 @@ class EditorUI {
                     // every shot camera as its own file: one render per camera,
                     // written into a chosen folder (or downloaded one by one)
                     if (videoSettings.shot?.mode === 'all') {
-                        const cameras = events.invoke('shotCameras.list') as { id: number, name: string }[];
+                        const cameras = events.invoke('shotCameras.list') as { id: number, name: string, projection: 'standard' | 'equirect' | 'stereo', ipd: number }[];
                         const base = events.invoke('render.baseFilename');
                         const safe = (name: string) => name.replace(/[\\/:*?"<>|]/g, '_');
                         const directory = window.showDirectoryPicker ?
@@ -404,8 +434,20 @@ class EditorUI {
                             null;
 
                         for (const camera of cameras) {
-                            const suffix = `_${safe(camera.name)}${videoSettings.projection === 'stereo' ? '_TB' : ''}`;
-                            const settings = { ...videoSettings, shot: { mode: 'camera' as const, cameraId: camera.id }, filenameSuffix: suffix };
+                            const projection = camera.projection ?? videoSettings.projection;
+                            const suffix = `_${safe(camera.name)}${projection === 'stereo' ? '_TB' : ''}`;
+                            const size = videoSettings.perProjection?.[projection];
+                            const stereo = projection === 'stereo' ? { ipd: camera.ipd, poleStart: videoSettings.stereo?.poleStart ?? 50, segments: videoSettings.stereo?.segments ?? 112 } : undefined;
+                            const settings = {
+                                ...videoSettings,
+                                ...(size ?? {}),
+                                projection,
+                                stereo,
+                                levelHorizon: projection !== 'standard' && (videoSettings.projection === 'standard' || (videoSettings.levelHorizon ?? true)),
+                                showDebug: projection === 'standard' && videoSettings.showDebug,
+                                shot: { mode: 'camera' as const, cameraId: camera.id },
+                                filenameSuffix: suffix
+                            };
                             const handle = directory ? await directory.getFileHandle(`${base}${suffix}${fileExtension}`, { create: true }) : null;
                             const stream = handle ? await handle.createWritable() : undefined;
                             const ok = await events.invoke('render.video', settings, stream);

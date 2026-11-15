@@ -9,6 +9,8 @@ import { Events } from '../events';
 import type { Scene } from '../scene';
 import type { Splat } from '../splat';
 import { makeFloating } from '../ui/floating-panel';
+import { helpButton } from '../ui/help';
+import { i18n } from '../ui/localization';
 
 // Quality tool: per-splat quality scores (0 bad .. 1 good) shown as a heatmap
 // in the splat renderer (display only, the data is untouched), a threshold to
@@ -209,7 +211,7 @@ class QualityTool {
             }
         };
 
-        events.function('quality.computeScores', () => withProgress('Qualität: Scores', async () => {
+        events.function('quality.computeScores', () => withProgress(i18n.t('sm.quality.progress-scores'), async () => {
             const layersNow = visibleLayers();
             let low = 0;
             let total = 0;
@@ -227,15 +229,15 @@ class QualityTool {
                 total += rows.length;
             }
             if (mode === 'off' || mode === 'compare') events.fire('quality.setMode', 'heatmap');
-            return { text: `${layersNow.length} Layer bewertet · ${low} von ${total} Splats unter ${threshold.toFixed(2)}` };
+            return { text: i18n.t('sm.quality.scored', { layers: layersNow.length, low, total, threshold: threshold.toFixed(2) }) };
         }));
 
-        events.function('quality.compareScans', () => withProgress('Qualität: Scan-Vergleich', async () => {
+        events.function('quality.compareScans', () => withProgress(i18n.t('sm.quality.progress-compare'), async () => {
             const layersNow = visibleLayers();
-            if (layersNow.length < 2) return { text: 'Für den Vergleich mindestens zwei sichtbare Layer.' };
+            if (layersNow.length < 2) return { text: i18n.t('sm.quality.need-two') };
             const datas: LayerData[] = [];
             for (const splat of layersNow) datas.push(await readLayerData(splat));
-            events.fire('progressUpdate', { text: 'Vergleich läuft …', progress: 50 });
+            events.fire('progressUpdate', { text: i18n.t('sm.quality.comparing'), progress: 50 });
             const result = await runAnalysis<CompareResult>('compare', {
                 layers: datas.map(d => ({ positions: d.positions, scales: d.scales, opacities: d.opacities })),
                 options: { weights, margin, voxel: compareVoxel > 0 ? compareVoxel : undefined }
@@ -247,7 +249,7 @@ class QualityTool {
             events.fire('quality.setMode', 'compare');
             const parts = layersNow.map((s, i) => `${s.name}: ${result.markedCount[i]}`).join(' · ');
             events.fire('quality.compared', result.voxel);
-            return { text: `Raster ${result.voxel.toFixed(3)} · ${result.overlapVoxels} überlappende Voxel · markiert ${parts}`, result };
+            return { text: i18n.t('sm.quality.compared', { voxel: result.voxel.toFixed(3), overlap: result.overlapVoxels, parts }), result };
         }));
 
         // panel
@@ -258,11 +260,13 @@ class QualityTool {
         });
         canvasContainer.append(panel);
 
-        makeFloating(panel, { key: 'quality', title: 'Qualität' });
+        makeFloating(panel, { key: 'quality', title: 'sm.quality.title', extras: [helpButton(events, 'quality')] });
 
         const row = (text: string) => {
             const r = new Container({ class: 'quality-row' });
-            r.append(new Label({ text, class: 'quality-label' }));
+            const label = new Label({ class: 'quality-label' });
+            i18n.bindText(label, text);
+            r.append(label);
             panel.append(r);
             return r;
         };
@@ -276,48 +280,49 @@ class QualityTool {
         const button = (parent: Container, text: string, title: string, onClick: () => void) => {
             const b = document.createElement('span');
             b.classList.add('quality-button');
-            b.textContent = text;
-            b.title = title;
+            i18n.bindDom(b, text);
+            if (title) i18n.bindDom(b, title, 'title');
             b.addEventListener('click', onClick);
             parent.dom.appendChild(b);
             return b;
         };
 
-        const modeRow = row('Anzeige');
-        modeRow.dom.title = 'Heatmap ist relativ: Sie zeigt die schwächsten Bereiche dieses Scans. Ob ein Scan an einer Stelle schärfer ist als ein anderer, zeigt der Vergleich.';
-        const modeButtons = ([['off', 'Aus'], ['heatmap', 'Heatmap'], ['threshold', 'Unter Schwelle'], ['compare', 'Vergleich']] as [QualityMode, string][]).map(([value, text]) => {
+        const modeRow = row('sm.quality.display');
+        i18n.bindDom(modeRow.dom, 'sm.quality.display-tip', 'title');
+        const modeButtons = ([['off', 'sm.common.off'], ['heatmap', 'Heatmap'], ['threshold', 'sm.quality.below'], ['compare', 'sm.quality.compare']] as [QualityMode, string][]).map(([value, text]) => {
             const b = button(modeRow, text, '', () => events.fire('quality.setMode', value));
             b.classList.add('quality-segment');
             b.dataset.value = value;
             return b;
         });
 
-        const heatmapHint = new Label({ text: 'Heatmap ist relativ (schwächste Bereiche dieses Scans). Welcher Scan wo schärfer ist: „Scans vergleichen“.', class: 'quality-note' });
+        const heatmapHint = new Label({ class: 'quality-note' });
+        i18n.bindText(heatmapHint, 'sm.quality.heatmap-hint');
         panel.append(heatmapHint);
 
-        const thresholdRow = row('Schwelle');
+        const thresholdRow = row('sm.transitions.threshold');
         const thresholdSlider = new SliderInput({ min: 0, max: 1, sliderMin: 0, sliderMax: 1, precision: 2, step: 0.01, value: threshold });
         thresholdSlider.on('change', (v: number) => events.fire('quality.setThreshold', v));
         thresholdRow.append(thresholdSlider);
 
         const slider = (text: string, title: string, min: number, max: number, value: number, onChange: (v: number) => void, precision = 2) => {
             const r = row(text);
-            r.dom.title = title;
+            i18n.bindDom(r.dom, title, 'title');
             const sl = new SliderInput({ min, max, sliderMin: min, sliderMax: max, precision, step: 0.01, value });
             sl.on('change', onChange);
             r.append(sl);
             return sl;
         };
-        slider('Größe', 'Gewicht: große, weiche Splats', 0, 2, weights.size, (v) => {
+        slider('sm.points.size', 'sm.quality.w-size', 0, 2, weights.size, (v) => {
             weights.size = v;
         });
-        slider('Deckkraft', 'Gewicht: niedrige Deckkraft', 0, 2, weights.opacity, (v) => {
+        slider('sm.anim.opacity', 'sm.quality.w-opacity', 0, 2, weights.opacity, (v) => {
             weights.opacity = v;
         });
-        slider('Nadeln', 'Gewicht: starke Anisotropie', 0, 2, weights.anisotropy, (v) => {
+        slider('sm.quality.needles', 'sm.quality.w-needles', 0, 2, weights.anisotropy, (v) => {
             weights.anisotropy = v;
         });
-        slider('Dichte', 'Gewicht: geringe lokale Dichte', 0, 2, weights.density, (v) => {
+        slider('sm.quality.density', 'sm.quality.w-density', 0, 2, weights.density, (v) => {
             weights.density = v;
         });
         // 0 = automatic (the core adapts it to the splat density); after a
@@ -328,7 +333,7 @@ class QualityTool {
             const used = usedVoxel !== null ? usedVoxel.toFixed(3) : '';
             rasterHint.text = compareVoxel > 0 ? used && `(${used})` : used ? `auto ${used}` : 'auto';
         };
-        const rasterSlider = slider('Raster', 'Vergleichsraster (Voxelgröße, Welteinheiten); 0 = automatisch nach Splat-Dichte', 0, 1, compareVoxel, (v) => {
+        const rasterSlider = slider('sm.quality.grid', 'sm.quality.grid-tip', 0, 1, compareVoxel, (v) => {
             compareVoxel = v;
             syncRasterHint();
         }, 3);
@@ -337,7 +342,7 @@ class QualityTool {
             usedVoxel = voxel;
             syncRasterHint();
         });
-        slider('Toleranz', 'So viel schlechter muss ein Layer sein, um markiert zu werden', 0, 0.5, margin, (v) => {
+        slider('sm.quality.tolerance', 'sm.quality.tolerance-tip', 0, 0.5, margin, (v) => {
             margin = v;
         });
 
@@ -346,31 +351,31 @@ class QualityTool {
 
         const run = async (fn: string, title: string) => {
             if (!events.functions.has(fn)) {
-                message.text = 'Der Score-Kern ist noch nicht angebunden.';
+                message.text = i18n.t('sm.quality.no-core');
                 return;
             }
             message.text = `${title} …`;
             try {
                 const result = await events.invoke(fn);
-                message.text = result?.text ?? `${title}: fertig`;
+                message.text = result?.text ?? i18n.t('sm.common.done', { title });
             } catch (error) {
-                message.text = `${title} fehlgeschlagen: ${(error as Error).message ?? error}`;
+                message.text = i18n.t('sm.common.failed', { title, error: (error as Error).message ?? error });
             }
         };
 
-        button(actions, 'Scores berechnen', 'Qualitäts-Score für alle sichtbaren Layer berechnen', () => run('quality.computeScores', 'Scores'));
-        button(actions, 'Scans vergleichen', 'Pro Voxel den schärfsten Layer bestimmen und schlechtere Splats markieren', () => run('quality.compareScans', 'Vergleich'));
+        button(actions, 'sm.quality.compute', 'sm.quality.compute-tip', () => run('quality.computeScores', 'Scores'));
+        button(actions, 'sm.quality.compare-scans', 'sm.quality.compare-scans-tip', () => run('quality.compareScans', i18n.t('sm.quality.compare')));
 
         const selectRow = buttonRow();
-        button(selectRow, 'Unter Schwelle selektieren', 'Splats des aktiven Layers unter der Schwelle auswählen (dann Entf)', () => {
+        button(selectRow, 'sm.quality.select-below', 'sm.quality.select-below-tip', () => {
             const splat = events.invoke('selection') as Splat;
             const n = splat ? events.invoke('quality.selectBelow', splat) : null;
-            message.text = n === null ? 'Für den aktiven Layer gibt es noch keine Scores.' : `${n} Splats ausgewählt`;
+            message.text = n === null ? i18n.t('sm.quality.no-scores') : i18n.t('sm.common.selected-splats', { count: n });
         });
-        button(selectRow, 'Schlechtere selektieren', 'Splats des aktiven Layers auswählen, die in einem anderen Scan schärfer sind', () => {
+        button(selectRow, 'sm.quality.select-worse', 'sm.quality.select-worse-tip', () => {
             const splat = events.invoke('selection') as Splat;
             const n = splat ? events.invoke('quality.selectWorse', splat) : null;
-            message.text = n === null ? 'Für den aktiven Layer gibt es noch keinen Vergleich.' : `${n} Splats ausgewählt`;
+            message.text = n === null ? i18n.t('sm.quality.no-compare') : i18n.t('sm.common.selected-splats', { count: n });
         });
 
         panel.append(message);

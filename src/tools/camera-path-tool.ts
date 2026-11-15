@@ -5,6 +5,7 @@ import type { CameraAnimTrack, ShotCamera } from '../camera-poses';
 import { AnimTrackEditOp } from '../edit-ops';
 import { Events } from '../events';
 import { Scene } from '../scene';
+import { i18n } from '../ui/localization';
 
 // pointer movement below this many pixels still counts as a click
 const CLICK_TOLERANCE = 4;
@@ -16,6 +17,7 @@ type KeyRef = { cameraId: number, frame: number, part: Part };
 type Marker = { el: HTMLElement, label?: HTMLElement, line?: SVGLineElement, camera: ShotCamera, frame: number, part: Part };
 
 const v = new Vec3();
+const hv = new Vec3();
 const a = new Vec3();
 const b = new Vec3();
 const delta = new Vec3();
@@ -32,7 +34,10 @@ class CameraPathTransformHandler {
  * (position) and per key target, drag them in the view plane or with the
  * translate gizmo (Alt moves position and target together), shift-click on
  * the path inserts a key on the curve, Delete removes the selected key, F
- * frames it. Every drag, insert and delete is one undo step. The markers are
+ * frames it. The selected position key shows its bezier handles: dragging
+ * one shapes the curve (the other mirrors its direction, Alt breaks the
+ * link), a double-click returns to the automatic curve.
+ * Every drag, insert and delete is one undo step. The markers are
  * html above the canvas, so they are never clipped by the depth filter or the
  * section cut and never end up in an export.
  */
@@ -55,15 +60,30 @@ class CameraPathTool {
         // toolbar with the hints
         const toolbar = new Container({ class: ['select-toolbar', 'select-toolbar-tool', 'camera-path-toolbar'], hidden: true });
         toolbar.dom.addEventListener('pointerdown', e => e.stopPropagation());
-        const hint = new Label({ class: 'select-toolbar-label', text: 'Key ziehen oder Gizmo · Alt = Position + Ziel · Shift-Klick auf den Pfad = Key einfügen · Entf = löschen · F = fokussieren' });
+        const hint = new Label({ class: 'select-toolbar-label' });
+        i18n.bindText(hint, 'sm.path.hint');
         const status = new Label({ class: ['select-toolbar-label', 'camera-path-status'], text: '' });
+        const handleHint = new Label({ class: ['select-toolbar-label', 'camera-path-handle-hint'] });
+        i18n.bindText(handleHint, 'sm.path.handles-hint');
         toolbar.append(hint);
+        toolbar.append(handleHint);
         toolbar.append(status);
         canvasContainer.append(toolbar);
 
         const gizmo = new TranslateGizmo(scene.camera.camera, scene.gizmoLayer);
         const pivot = new Entity('cameraPathGizmoPivot');
         const transformHandler = new CameraPathTransformHandler();
+
+        // bezier handles of the selected position key: [in, out]
+        type HandleSide = 'in' | 'out';
+        const handleEls = (['in', 'out'] as HandleSide[]).map((side) => {
+            const el = document.createElement('div');
+            el.classList.add('camera-path-handle', `cp-handle-${side}`);
+            el.hidden = true;
+            overlay.appendChild(el);
+            return { side, el, line: null as SVGLineElement | null };
+        });
+        let handleDrag: { side: HandleSide, before: unknown, depth: number, id: number, moved: boolean, x: number, y: number } | null = null;
 
         let active = false;
         let selected: KeyRef | null = null;
@@ -112,7 +132,7 @@ class CameraPathTool {
                 // tool is active, so the view stays where it is
                 events.fire('timeline.setFrame', ref.frame);
             }
-            status.text = ref ? `Frame ${ref.frame} · ${ref.part === 'position' ? 'Position' : 'Ziel'}` : '';
+            status.text = ref ? `Frame ${ref.frame} · ${i18n.t(ref.part === 'position' ? 'sm.path.position' : 'sm.path.target')}` : '';
             placeGizmo();
             // highlight only: rebuilding would drop the marker being dragged
             markers.forEach((m) => {
@@ -145,6 +165,12 @@ class CameraPathTool {
             overlay.querySelectorAll('.camera-path-marker, .camera-path-label').forEach(el => el.remove());
             svg.innerHTML = '';
             markers = [];
+            handleEls.forEach((h) => {
+                h.line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                h.line.classList.add('camera-path-handle-line');
+                h.line.style.display = 'none';
+                svg.appendChild(h.line);
+            });
             const current = selectedCamera();
             for (const camera of cameras()) {
                 const isCurrent = camera === current;
@@ -163,8 +189,8 @@ class CameraPathTool {
                         if (isCurrent && selected && selected.frame === pose.frame && selected.part === part) el.classList.add('selected');
                         el.style.setProperty('--cam', rgb(camera.color));
                         el.title = isCurrent ?
-                            `${camera.name}, Frame ${pose.frame}: ${part === 'position' ? 'Position' : 'Ziel'} (ziehen, Alt = beides)` :
-                            `${camera.name} wählen`;
+                            i18n.t('sm.path.marker-tip', { camera: camera.name, frame: pose.frame, part: i18n.t(part === 'position' ? 'sm.path.position' : 'sm.path.target') }) :
+                            i18n.t('sm.path.select-camera', { camera: camera.name });
                         overlay.appendChild(el);
                         const marker: Marker = { el, camera, frame: pose.frame, part, line: part === 'position' ? line : undefined };
                         if (part === 'position') {
@@ -195,7 +221,42 @@ class CameraPathTool {
 
         const screen = new Vec3();
         const screen2 = new Vec3();
+        const screen3 = new Vec3();
+
+        // the selected key's handles (position keys only)
+        const selectedHandles = () => {
+            if (!selected || selected.part !== 'position') return null;
+            const camera = cameraById(selected.cameraId);
+            const pose = poseOf(selected);
+            const handles = camera?.track.getHandles(selected.frame);
+            return camera && pose && handles ? { camera, pose, ...handles } : null;
+        };
+
+        const updateHandles = () => {
+            const h = selectedHandles();
+            const p = h && project(h.pose.position, screen);
+            handleEls.forEach(({ side, el, line }) => {
+                const offset = h && (side === 'in' ? h.handleIn : h.handleOut);
+                const s = p && offset && project(hv.add2(h.pose.position, offset), screen3);
+                el.hidden = !s;
+                if (line) line.style.display = s ? '' : 'none';
+                if (!s) return;
+                el.classList.toggle('custom', h.custom);
+                el.style.setProperty('--cam', rgb(h.camera.color));
+                el.style.transform = `translate(${s.x}px, ${s.y}px)`;
+                el.title = i18n.t('sm.path.handle-tip');
+                if (line) {
+                    line.setAttribute('x1', String(p.x));
+                    line.setAttribute('y1', String(p.y));
+                    line.setAttribute('x2', String(s.x));
+                    line.setAttribute('y2', String(s.y));
+                    line.setAttribute('stroke', rgb(h.camera.color, 0.9));
+                }
+            });
+        };
+
         const updatePositions = () => {
+            updateHandles();
             const current = selectedCamera();
             for (const m of markers) {
                 const pose = m.camera.track.getPoses().find(p => p.frame === m.frame);
@@ -279,6 +340,67 @@ class CameraPathTool {
                 events.fire('edit.add', new AnimTrackEditOp('cameraPathDrag', marker.camera.track, before, marker.camera.track.snapshot()), true);
             }
         }
+
+        // handle drag: shapes the curve at the selected key
+
+        handleEls.forEach(({ side, el }) => {
+            el.addEventListener('pointerdown', (e: PointerEvent) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                e.preventDefault();
+                const h = selectedHandles();
+                if (!h) return;
+                const cam = scene.camera.mainCamera;
+                v.add2(h.pose.position, side === 'in' ? h.handleIn : h.handleOut).sub(cam.getPosition());
+                handleDrag = { side, before: h.camera.track.snapshot(), depth: v.dot(cam.forward), id: e.pointerId, moved: false, x: e.clientX, y: e.clientY };
+                try {
+                    el.setPointerCapture(e.pointerId);
+                } catch {
+                    // pointer already gone
+                }
+            });
+            el.addEventListener('pointermove', (e: PointerEvent) => {
+                if (!handleDrag || e.pointerId !== handleDrag.id || handleDrag.side !== side) return;
+                if (!handleDrag.moved && Math.hypot(e.clientX - handleDrag.x, e.clientY - handleDrag.y) <= CLICK_TOLERANCE) return;
+                handleDrag.moved = true;
+                const h = selectedHandles();
+                if (!h) return;
+                const rect = container.getBoundingClientRect();
+                scene.camera.camera.screenToWorld(e.clientX - rect.left, e.clientY - rect.top, handleDrag.depth, v);
+                const dragged = new Vec3().sub2(v, h.pose.position);
+                const other = side === 'in' ? h.handleOut : h.handleIn;
+                // smooth key: the other handle keeps its length and points the
+                // opposite way; with alt both move on their own (a corner)
+                if (!e.altKey && dragged.length() > 1e-6) {
+                    const length = other.length();
+                    other.copy(dragged).normalize().mulScalar(-length);
+                } else if (!e.altKey) {
+                    other.set(0, 0, 0);
+                }
+                const handleIn = side === 'in' ? dragged : (e.altKey ? h.handleIn : other);
+                const handleOut = side === 'out' ? dragged : (e.altKey ? h.handleOut : other);
+                h.camera.track.setHandles(selected.frame, handleIn, handleOut);
+                scene.forceRender = true;
+            });
+            const up = (e: PointerEvent) => {
+                if (!handleDrag || e.pointerId !== handleDrag.id || handleDrag.side !== side) return;
+                const { before, moved } = handleDrag;
+                handleDrag = null;
+                if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+                const camera = selected && cameraById(selected.cameraId);
+                if (moved && camera) {
+                    events.fire('edit.add', new AnimTrackEditOp('cameraPathHandle', camera.track, before, camera.track.snapshot()), true);
+                }
+            };
+            el.addEventListener('pointerup', up);
+            el.addEventListener('pointercancel', up);
+            // double-click: back to the automatic curve
+            el.addEventListener('dblclick', (e: MouseEvent) => {
+                e.stopPropagation();
+                const camera = selected && cameraById(selected.cameraId);
+                if (camera && selected) trackEdit('cameraPathHandleReset', camera.track, () => camera.track.setHandles(selected.frame, null, null));
+            });
+        });
 
         // gizmo drag: one undo step per drag
 
@@ -402,7 +524,7 @@ class CameraPathTool {
             // view along with the keys being edited: switch to the free view
             if (events.invoke('camera.viewMode') !== 'free') {
                 events.fire('camera.setViewMode', 'free');
-                status.text = 'Viewport auf „Frei“ gestellt';
+                status.text = i18n.t('sm.path.forced-free');
             }
             if (!events.invoke('camera.showPaths')) events.fire('camera.setShowPaths', true);
             overlay.hidden = false;

@@ -1,3 +1,4 @@
+import { MemoryFileSystem } from '@playcanvas/splat-transform';
 import { path, Quat, Vec3 } from 'playcanvas';
 
 import type { Pose } from './camera-poses';
@@ -428,6 +429,47 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
         .filter(splat => splat.visible)
         .filter(splat => splat.numSplats > 0);
     };
+
+    // open the scene in the html player (the viewer export) in a new tab,
+    // built in memory: the player has VR and AR built in, so with a PC VR
+    // headset (Quest Link / Air Link, SteamVR) its VR button starts it right
+    // away. `target` is a window opened by the click (before any await, so
+    // popup blockers let it through)
+    events.function('viewer.preview', async (target: Window | null) => {
+        const splats = getSplats();
+        if (splats.length === 0) {
+            target?.close();
+            return;
+        }
+        const bg = events.invoke('bgClr');
+        const options = buildExportOptions(events, 'viewer', {
+            filename: 'preview.html',
+            maxSHBands: 3,
+            viewerType: 'html',
+            includeAnimation: true,
+            loopMode: 'repeat',
+            backgroundColor: [bg.r, bg.g, bg.b],
+            fov: scene.camera.fov
+        });
+        try {
+            const fs = new MemoryFileSystem();
+            await serializeViewer(splats, options.serializeSettings, { ...options.viewerExportSettings!, events }, fs);
+            const bytes = fs.results.get('output.html');
+            if (!bytes) throw new Error('the player was not written');
+            const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'text/html' }));
+            if (target && !target.closed) {
+                target.location.href = url;
+            } else {
+                window.open(url, '_blank');
+            }
+            // the tab keeps its own copy once loaded
+            setTimeout(() => URL.revokeObjectURL(url), 120000);
+        } catch (error) {
+            target?.close();
+            const message = error instanceof WebGPUUnavailableError ? i18n.t('popup.webgpu-unavailable') : (error instanceof Error ? error.message : String(error));
+            await events.invoke('showPopup', { type: 'error', header: i18n.t('popup.error'), message });
+        }
+    });
 
     events.function('scene.allSplats', () => {
         return (scene.getElementsByType(ElementType.splat) as Splat[]);

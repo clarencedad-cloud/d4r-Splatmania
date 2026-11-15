@@ -16,6 +16,7 @@ import { Events } from './events';
 import type { Scene } from './scene';
 import type { Splat } from './splat';
 import { createExportSource } from './splat-serialize';
+import { i18n } from './ui/localization';
 
 // splat-transform cleanup on the active layer. Filters (floaters, cluster,
 // NaN) don't touch the data: the gaussians they would remove are selected,
@@ -44,13 +45,13 @@ const registerCleanupEvents = (events: Events, scene: Scene) => {
     const active = () => events.invoke('selection') as Splat | null;
 
     const fail = async (message: string) => {
-        await events.invoke('showPopup', { type: 'error', header: 'Bereinigen fehlgeschlagen', message });
+        await events.invoke('showPopup', { type: 'error', header: i18n.t('sm.cleanup.failed'), message });
     };
 
     // the layer as a world-space DataTable, one row per live instance
     const layerTable = async (splat: Splat) => {
         const built = await createExportSource([splat], {});
-        if (!built) throw new Error('Der Layer enthält keine Splats.');
+        if (!built) throw new Error(i18n.t('sm.cleanup.empty'));
         const table = await materializeToDataTable(built.source, built.pool);
         const index = new Float32Array(table.numRows);
         for (let i = 0; i < index.length; i++) index[i] = i;
@@ -63,11 +64,11 @@ const registerCleanupEvents = (events: Events, scene: Scene) => {
         if (running) return null;
         const splat = active();
         if (!splat) {
-            await fail('Bitte zuerst einen Layer auswählen.');
+            await fail(i18n.t('sm.cleanup.no-layer'));
             return null;
         }
         if (needsGpu && !scene.graphicsDevice.isWebGPU) {
-            await fail('Diese Funktion braucht WebGPU (GPU-Voxelisierung). Bitte einen Browser mit WebGPU verwenden.');
+            await fail(i18n.t('sm.cleanup.needs-webgpu'));
             return null;
         }
         running = true;
@@ -127,7 +128,7 @@ const registerCleanupEvents = (events: Events, scene: Scene) => {
     };
 
     events.function('cleanup.filterFloaters', (options: Partial<FloaterOptions> = {}) => {
-        return filter('Floater entfernen', {
+        return filter(i18n.t('sm.cleanup.floaters'), {
             kind: 'filterFloaters',
             voxelResolution: options.voxelResolution ?? 0.05,
             opacityCutoff: options.opacityCutoff ?? 0.1,
@@ -137,7 +138,7 @@ const registerCleanupEvents = (events: Events, scene: Scene) => {
 
     events.function('cleanup.filterCluster', (options: Partial<ClusterOptions> = {}) => {
         const seed = options.seed ?? [0, 0, 0];
-        return filter('Cluster behalten', {
+        return filter(i18n.t('sm.cleanup.cluster'), {
             kind: 'filterCluster',
             voxelResolution: options.voxelResolution ?? 1.0,
             opacityCutoff: options.opacityCutoff ?? 0.999,
@@ -147,7 +148,7 @@ const registerCleanupEvents = (events: Events, scene: Scene) => {
     });
 
     events.function('cleanup.filterNaN', () => {
-        return filter('Ungültige Splats (NaN)', { kind: 'filterNaN' }, false);
+        return filter(i18n.t('sm.cleanup.nan-title'), { kind: 'filterNaN' }, false);
     });
 
     // decimate (and optionally reduce SH bands) into a new layer
@@ -155,7 +156,7 @@ const registerCleanupEvents = (events: Events, scene: Scene) => {
         return run('Decimate', false, async () => {
             const splat = active();
             const built = await createExportSource([splat], {});
-            if (!built) throw new Error('Der Layer enthält keine Splats.');
+            if (!built) throw new Error(i18n.t('sm.cleanup.empty'));
             const before = splat.instances.count;
             const target = options.count ?? Math.max(1, Math.round(before * (options.percent ?? 50) / 100));
             events.fire('progressUpdate', { text: `Decimate: ${before} → ${target} Splats …`, progress: 30 });
@@ -174,7 +175,7 @@ const registerCleanupEvents = (events: Events, scene: Scene) => {
             if (cancelled) return null;
 
             // write a PLY in memory and import it as a new layer
-            events.fire('progressUpdate', { text: 'Neuen Layer anlegen …', progress: 80 });
+            events.fire('progressUpdate', { text: i18n.t('sm.cleanup.creating-layer'), progress: 80 });
             const fs = new MemoryFileSystem();
             const base = splat.name.replace(/\.[^.]*$/, '').replace(/^\//, '');
             const filename = `${base}_decimate_${table.numRows}.ply`;

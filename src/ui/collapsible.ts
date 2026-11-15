@@ -1,7 +1,37 @@
 import { Container, Label } from '@playcanvas/pcui';
 
+import { i18n } from './localization';
+
 // open/closed state of every collapsible section and sub-group, per user
 const storageKey = 'splatmania.ui.sections';
+// sections switched off in the View menu, per user
+const offKey = 'splatmania.ui.sections-off';
+
+const loadOff = (): string[] => {
+    try {
+        const list = JSON.parse(localStorage.getItem(offKey) ?? '[]');
+        return Array.isArray(list) ? list : [];
+    } catch {
+        return [];
+    }
+};
+
+const off = new Set<string>(loadOff());
+const registry = new Map<string, CollapsibleSection[]>();
+
+// is a section shown (View menu)?
+const sectionShown = (key: string) => !off.has(key);
+
+const setSectionShown = (key: string, shown: boolean) => {
+    if (shown) off.delete(key);
+    else off.add(key);
+    try {
+        localStorage.setItem(offKey, JSON.stringify([...off]));
+    } catch {
+        // storage unavailable: the choice holds for this session only
+    }
+    registry.get(key)?.forEach(section => section.class[shown ? 'remove' : 'add']('section-off'));
+};
 
 const loadStates = (): Record<string, boolean> => {
     try {
@@ -24,6 +54,7 @@ const saveState = (key: string, open: boolean) => {
 type CollapsibleOptions = {
     // storage key of the open state
     key: string,
+    // i18n key of the title
     title: string,
     // pc-icon glyph shown before the title
     icon?: string,
@@ -64,7 +95,9 @@ class CollapsibleSection extends Container {
             icon.dom.appendChild(options.iconElement);
             this.header.append(icon);
         }
-        this.header.append(new Label({ text: options.title, class: options.sub ? 'collapsible-sub-label' : 'panel-header-label' }));
+        const titleLabel = new Label({ class: options.sub ? 'collapsible-sub-label' : 'panel-header-label' });
+        i18n.bindText(titleLabel, options.title);
+        this.header.append(titleLabel);
         this.infoLabel = new Label({ text: '', class: 'collapsible-info' });
         this.header.append(this.infoLabel);
         options.actions?.forEach((action) => {
@@ -89,6 +122,11 @@ class CollapsibleSection extends Container {
         });
 
         this.setOpen(loadStates()[this.key] ?? options.open ?? false, false);
+
+        if (!options.sub) {
+            registry.set(this.key, [...(registry.get(this.key) ?? []), this]);
+            if (off.has(this.key)) this.class.add('section-off');
+        }
     }
 
     get open() {
@@ -110,10 +148,10 @@ class CollapsibleSection extends Container {
 
 // "Erweitert" sub-group for rarely used parameters, closed by default;
 // returns its body
-const advancedGroup = (parent: Container, key: string, title = 'Erweitert') => {
+const advancedGroup = (parent: Container, key: string, title = 'sm.common.advanced') => {
     const group = new CollapsibleSection({ key, title, sub: true });
     parent.append(group);
     return group.body;
 };
 
-export { CollapsibleSection, advancedGroup };
+export { CollapsibleSection, advancedGroup, sectionShown, setSectionShown };

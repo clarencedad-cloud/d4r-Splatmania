@@ -106,3 +106,31 @@
 .camera-path-toolbar .camera-path-status {
     color: #f49ac8;
 }
+
+// bezier handles of the selected key (src/tools/camera-path-tool.ts)
+#camera-path-overlay .camera-path-handle {
+    position: absolute;
+    left: -6px;
+    top: -6px;
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--cam, #fff);
+    border-radius: 50%;
+    background-color: rgba(21, 18, 30, 0.85);
+    pointer-events: auto;
+    cursor: move;
+
+    &.custom {
+        background-color: var(--cam, #fff);
+    }
+
+    &:hover {
+        transform-origin: center;
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
+    }
+}
+
+#camera-path-overlay .camera-path-handle-line {
+    stroke-width: 1;
+    stroke-dasharray: 3 2;
+}

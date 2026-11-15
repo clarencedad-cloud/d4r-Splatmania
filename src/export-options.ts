@@ -57,6 +57,58 @@ interface SceneExportOptions {
     viewerExportSettings?: ViewerExportSettings;
 }
 
+// the look (src/look/look.ts) in the viewer's own post effects. They are
+// not the same effects, so this is an approximation; grain, the LUT and the
+// fog have no viewer counterpart and are left out
+const lookPostEffects = (events: Events) => {
+    const settings = defaultPostEffectSettings();
+    const look = events.functions.has('look.state') ? events.invoke('look.state') : null;
+    if (!look?.enabled) return settings;
+    const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+    if (look.bloom > 0) {
+        settings.bloom = {
+            enabled: true,
+            intensity: clamp(look.bloom * 0.03, 0, 0.1),
+            blurLevel: Math.round(clamp(2 + look.bloomRadius * 8, 1, 16))
+        };
+    }
+    if (look.exposure !== 0 || look.contrast !== 1 || look.saturation !== 1 || look.temperature !== 0) {
+        settings.grading = {
+            enabled: true,
+            brightness: clamp(Math.pow(2, look.exposure), 0, 3),
+            contrast: clamp(look.contrast, 0.5, 1.5),
+            saturation: clamp(look.saturation, 0, 2),
+            tint: [1 + 0.25 * look.temperature, 1, 1 - 0.25 * look.temperature]
+        };
+    }
+    if (look.vignette > 0) {
+        settings.vignette = {
+            enabled: true,
+            intensity: clamp(look.vignette, 0, 1),
+            inner: clamp((1 - look.vignetteSoftness) * 0.9, 0, 3),
+            outer: 1.2,
+            curvature: 1
+        };
+    }
+    if (look.aberration > 0) {
+        settings.fringing = { enabled: true, intensity: Math.round(clamp(look.aberration * 30, 0, 100)) };
+    }
+    return settings;
+};
+
+// a camera's keys for the viewer. Bezier handles (src/tools/camera-path-tool.ts)
+// shape the editor's curve, which the viewer's own spline can't reproduce:
+// such a camera goes out as one pose per frame
+const viewerPoses = (camera: ShotCamera, frames: number): Pose[] => {
+    if (!camera.track.hasHandles) return camera.track.getPoses() as Pose[];
+    const poses: Pose[] = [];
+    for (let frame = 0; frame < frames; frame++) {
+        const pose = camera.track.getPoseAt(frame);
+        if (pose) poses.push({ name: `camera_${frame}`, frame, position: pose.position.clone(), target: pose.target.clone(), fov: pose.fov } as Pose);
+    }
+    return poses;
+};
+
 const buildViewerSettings = (events: Events, choices: ExportChoices): ViewerExportSettings => {
     const fov = choices.fov;
 
@@ -85,7 +137,7 @@ const buildViewerSettings = (events: Events, choices: ExportChoices): ViewerExpo
         const selected = events.invoke('shotCameras.selected') as ShotCamera;
         shotCameras.sort((a, b) => (a === selected ? -1 : b === selected ? 1 : 0));
         const sources = shotCameras.length > 0 ?
-            shotCameras.map(c => ({ name: c.name, poses: c.track.getPoses() as Pose[] })) :
+            shotCameras.map(c => ({ name: c.name, poses: viewerPoses(c, frames) })) :
             [{ name: 'cameraAnim', poses: events.invoke('camera.poses') as Pose[] }];
 
         for (const source of sources) {
@@ -137,7 +189,7 @@ const buildViewerSettings = (events: Events, choices: ExportChoices): ViewerExpo
         tonemapping: 'none',
         highPrecisionRendering: false,
         background: { color: choices.backgroundColor },
-        postEffectSettings: defaultPostEffectSettings(),
+        postEffectSettings: lookPostEffects(events),
         animTracks,
         cameras,
         annotations: [],

@@ -3,6 +3,8 @@ import { BooleanInput, Container, Label, SelectInput, SliderInput } from '@playc
 import type { DepthFilterState } from '../depth-filter';
 import { Events } from '../events';
 import { makeFloating } from './floating-panel';
+import { helpButton } from './help';
+import { i18n } from './localization';
 
 // floating panel for the depth-limited selection (src/depth-filter.ts):
 // draggable and minimizable, the on/off switch stays in the title bar
@@ -25,9 +27,10 @@ class DepthFilterPanel extends Container {
 
         const row = (labelText: string, input: Container | BooleanInput | SliderInput | SelectInput, title?: string) => {
             const container = new Container({ class: 'depth-filter-row' });
-            const label = new Label({ text: labelText, class: 'depth-filter-label' });
+            const label = new Label({ class: 'depth-filter-label' });
+            i18n.bindText(label, labelText);
             if (title) {
-                container.dom.title = title;
+                i18n.bindDom(container.dom, title, 'title');
             }
             container.append(label);
             container.append(input);
@@ -38,23 +41,20 @@ class DepthFilterPanel extends Container {
         const enabled = new BooleanInput({ type: 'toggle', value: state.enabled });
         const near = new SliderInput({ min: 0, max: 100000, sliderMin: 0, sliderMax: 20, precision: 2, step: 0.1, value: state.near });
         const far = new SliderInput({ min: 0, max: 100000, sliderMin: 0, sliderMax: 20, precision: 2, step: 0.1, value: state.far });
-        const display = new SelectInput({
-            options: [
-                { v: 'off', t: 'Normal' },
-                { v: 'dim', t: 'Abdunkeln' },
-                { v: 'hide', t: 'Ausblenden' }
-            ],
-            value: state.display
-        });
+        const display = new SelectInput({ value: state.display });
+        i18n.bindOptions(display, () => [
+            { v: 'off', t: i18n.t('sm.depth.outside.off') },
+            { v: 'dim', t: i18n.t('sm.depth.outside.dim') },
+            { v: 'hide', t: i18n.t('sm.depth.outside.hide') }
+        ]);
         const minAlpha = new SliderInput({ min: 0, max: 1, sliderMin: 0, sliderMax: 1, precision: 2, step: 0.01, value: state.minAlpha });
 
-        enabled.dom.title = 'Rechteck, Lasso, Polygon, Pinsel und Klick erfassen nur Splats im Tiefenbereich';
-        const floating = makeFloating(this, { key: 'depthFilter', title: 'Tiefenfilter', extras: [enabled.dom] });
-        row('Near (m)', near, 'Mindestabstand zur Kamera (View-Tiefe der Splat-Mitte)');
-        row('Far (m)', far, 'Maximalabstand zur Kamera');
-        row('Außerhalb', display, 'Wie Splats außerhalb des Bereichs angezeigt werden');
-        row('Min. Deckkraft', minAlpha,
-            'Nur sichtbare Splats: Bei Tiefen-Selektion (Depth an) gewinnt ein Splat ein Pixel nur, wenn er dort mindestens diese Deckkraft beiträgt. 0 = aus');
+        i18n.bindDom(enabled.dom, 'sm.depth.enabled-tip', 'title');
+        const floating = makeFloating(this, { key: 'depthFilter', title: 'sm.depth.title', extras: [helpButton(events, 'depthFilter'), enabled.dom] });
+        row('sm.depth.near', near, 'sm.depth.near-tip');
+        row('sm.depth.far', far, 'sm.depth.far-tip');
+        row('sm.depth.outside', display, 'sm.depth.outside-tip');
+        row('sm.depth.min-alpha', minAlpha, 'sm.depth.min-alpha-tip');
 
         let syncing = false;
         const sync = () => {

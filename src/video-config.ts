@@ -1,4 +1,5 @@
-type VideoCodecChoice = 'h264' | 'h265' | 'vp9' | 'av1';
+// png: QuickTime with PNG frames (lossless, alpha), written by src/mov-writer.ts
+type VideoCodecChoice = 'h264' | 'h265' | 'vp9' | 'av1' | 'png';
 
 type VideoSettings = {
     startFrame: number;
@@ -9,7 +10,8 @@ type VideoSettings = {
     bitrate: number;
     transparentBg: boolean;
     showDebug: boolean;
-    format: 'mp4' | 'webm' | 'mov' | 'mkv';
+    // png-seq / exr-seq: one image per frame, into a folder or a zip
+    format: 'mp4' | 'webm' | 'mov' | 'mkv' | 'png-seq' | 'exr-seq';
     codec: VideoCodecChoice;
     // 'stereo': omnidirectional stereo, top-bottom (left eye on top), 1:1
     projection?: 'standard' | 'equirect' | 'stereo';
@@ -20,11 +22,24 @@ type VideoSettings = {
     // one camera, or every camera as its own file ('all' is expanded into
     // one 'camera' render per camera by the export flow)
     shot?: { mode: 'cut' | 'camera' | 'all', cameraId?: number };
+    // 'all': output size per projection, each camera renders in its own
+    // projection (src/camera-poses.ts ShotCamera.projection)
+    perProjection?: Record<string, { width: number, height: number, bitrate: number }>;
     // appended to the default download filename (e.g. "_Kamera 2")
     filenameSuffix?: string;
+    // motion blur (standard projection): sub-frames per frame, averaged over
+    // the shutter (fraction of the frame time, 0.5 = a 180° shutter)
+    motionBlur?: { samples: number, shutter: number };
+    // exr sequence: add a Z channel (camera depth), standard projection only
+    depth?: boolean;
+    // image sequences: the folder the frames go into (else a zip download)
+    directory?: FileSystemDirectoryHandle;
 };
 
 type MuxerVideoCodec = 'avc' | 'hevc' | 'vp9' | 'av1';
+
+// codecs with a WebCodecs encoder
+type EncodedCodecChoice = Exclude<VideoCodecChoice, 'png'>;
 
 type EncoderParams = {
     width: number;
@@ -129,7 +144,7 @@ const av1Codec = ({ width, height, frameRate }: EncoderParams) => {
     return `av01.0.${String(levelIdx).padStart(2, '0')}M.08`;
 };
 
-const CODEC_CONFIG: Record<VideoCodecChoice, { type: MuxerVideoCodec; codec: (params: EncoderParams) => string }> = {
+const CODEC_CONFIG: Record<EncodedCodecChoice, { type: MuxerVideoCodec; codec: (params: EncoderParams) => string }> = {
     h264: { type: 'avc', codec: h264Codec },
     h265: { type: 'hevc', codec: h265Codec },
     vp9: { type: 'vp9', codec: vp9Codec },
@@ -137,14 +152,14 @@ const CODEC_CONFIG: Record<VideoCodecChoice, { type: MuxerVideoCodec; codec: (pa
 };
 
 const getVideoCodecType = (codecChoice: VideoCodecChoice): MuxerVideoCodec => {
-    return CODEC_CONFIG[codecChoice]?.type ?? CODEC_CONFIG.h264.type;
+    return CODEC_CONFIG[codecChoice as EncodedCodecChoice]?.type ?? CODEC_CONFIG.h264.type;
 };
 
 const buildVideoEncoderConfig = (
     settings: Pick<VideoSettings, 'codec' | 'width' | 'height' | 'bitrate' | 'frameRate'>
 ) => {
     const { codec: codecChoice, width, height, bitrate, frameRate } = settings;
-    const codecConfig = CODEC_CONFIG[codecChoice] ?? CODEC_CONFIG.h264;
+    const codecConfig = CODEC_CONFIG[codecChoice as EncodedCodecChoice] ?? CODEC_CONFIG.h264;
 
     return {
         codec: codecConfig.codec({ width, height, frameRate }),

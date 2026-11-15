@@ -181,3 +181,326 @@
         }
     }
 }
+
+// look panel (src/ui/look-panel.ts): taller than the other options panels,
+// so it scrolls inside the viewport (it has no dropdowns to escape)
+#look-panel {
+    max-height: calc(100% - 32px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+
+    > * {
+        flex-shrink: 0;
+    }
+
+    // everything but the on/off row dims while the look is off
+    &.look-disabled > .settings-panel-row:not(:nth-child(2)),
+    &.look-disabled > .options-panel-section {
+        opacity: 0.45;
+    }
+
+    .look-lut-buttons {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        width: 187px;
+
+        > .look-lut-name {
+            flex: 1 1 auto;
+            min-width: 0;
+            margin: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 11px;
+        }
+
+        > .look-lut-button {
+            flex: 0 0 auto;
+            margin: 0;
+            height: 24px;
+            line-height: 22px;
+            padding: 0 8px;
+            font-size: 11px;
+        }
+    }
+}
+
+// the look button shows a dot while a look is applied
+#right-toolbar > #right-toolbar-look {
+    position: relative;
+
+    &.look-on::after {
+        content: '';
+        position: absolute;
+        top: 7px;
+        right: 7px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background-color: #e6128a;
+    }
+}
+
+// fog colour row: toggle plus picker
+#look-panel > .settings-panel-row > .settings-panel-row-toggle + .settings-panel-row-pickers {
+    width: auto;
+    margin-left: 8px;
+}
+
+// titles (src/ui/titles-panel.ts, src/ui/titles-overlay.ts)
+#titles-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+#titles-panel {
+    max-height: calc(100% - 32px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+
+    > * {
+        flex-shrink: 0;
+    }
+
+    .titles-empty {
+        margin: 10px 12px 4px;
+        font-size: 11px;
+        white-space: normal;
+        opacity: 0.7;
+    }
+
+    .titles-add {
+        margin: 8px 10px 2px;
+    }
+
+    .titles-list {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .titles-card {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin: 8px 8px 0;
+        padding: 6px;
+        border-radius: 4px;
+        background-color: rgba(255, 255, 255, 0.04);
+    }
+
+    .titles-text {
+        width: 100%;
+        box-sizing: border-box;
+        resize: vertical;
+        min-height: 40px;
+        padding: 4px 6px;
+        margin-bottom: 4px;
+        border: 1px solid #4a4063;
+        border-radius: 3px;
+        background-color: #15121e;
+        color: #e8e4f0;
+        font: 13px sans-serif;
+    }
+
+    .titles-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 26px;
+
+        > .titles-row-label {
+            flex: 0 0 64px;
+            margin: 0;
+            font-size: 11px;
+        }
+
+        > .titles-slider {
+            flex: 1 1 auto;
+            margin: 0;
+        }
+
+        > .titles-num {
+            width: 56px;
+            margin: 0;
+        }
+
+        > .titles-dash {
+            margin: 0 2px;
+        }
+
+        > .titles-color {
+            margin: 0;
+            height: 22px;
+            width: 40px;
+        }
+
+        > .titles-inline-label {
+            margin: 0 0 0 8px;
+            font-size: 11px;
+        }
+
+        > .titles-check {
+            margin: 0;
+        }
+    }
+
+    .titles-choices {
+        display: flex;
+        flex: 1 1 auto;
+        gap: 2px;
+    }
+
+    .titles-choice,
+    .titles-small,
+    .titles-small-text {
+        margin: 0;
+        height: 22px;
+        line-height: 20px;
+        padding: 0 6px;
+        font-size: 11px;
+        min-width: 0;
+    }
+
+    .titles-choice {
+        flex: 1 1 0;
+
+        &.active {
+            background-color: #c20e7e;
+            border-color: #c20e7e;
+            color: #fff;
+        }
+    }
+
+    .titles-actions {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 4px;
+    }
+
+    .titles-remove:hover {
+        color: #ff6b6b;
+    }
+}
+
+// look key button in the panel header (src/ui/look-panel.ts)
+#look-panel > .panel-header > .look-key-button {
+    width: 22px;
+    height: 22px;
+    margin: 0 2px 0 auto;
+    font-size: 14px;
+}
+
+#timeline-panel > #timeline-tracks > .track-row.look-track {
+    background-color: rgba(255, 184, 64, 0.05);
+}
+
+// light panel (src/light/light-panel.ts)
+#light-panel {
+    max-height: calc(100% - 32px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+
+    > * {
+        flex-shrink: 0;
+    }
+
+    > .panel-header > .look-key-button {
+        width: 22px;
+        height: 22px;
+        margin: 0 2px 0 auto;
+        font-size: 14px;
+    }
+
+    &.look-disabled > :not(.panel-header):not(.settings-panel-row:first-of-type) {
+        opacity: 0.45;
+    }
+
+    .light-empty,
+    .light-hint {
+        margin: 6px 12px;
+        font-size: 11px;
+        white-space: normal;
+        opacity: 0.75;
+    }
+
+    .light-hint {
+        color: #ffb840;
+        opacity: 1;
+    }
+
+    .light-add-row {
+        display: flex;
+        gap: 4px;
+        margin: 6px 10px 4px;
+
+        > .light-add {
+            flex: 1 1 0;
+            margin: 0;
+            min-width: 0;
+            font-size: 11px;
+        }
+    }
+
+    .light-list {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .light-card {
+        display: flex;
+        flex-direction: column;
+        margin: 6px 8px 0;
+        padding: 4px 0;
+        border-radius: 4px;
+        background-color: rgba(255, 255, 255, 0.04);
+
+        &.light-off > :not(.light-card-title) {
+            opacity: 0.45;
+        }
+    }
+
+    .light-card-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 6px;
+
+        > .light-card-name {
+            flex: 1 1 auto;
+            margin: 0;
+            font-weight: bold;
+        }
+
+        > .light-check {
+            margin: 0;
+        }
+    }
+
+    .light-small,
+    .light-small-text {
+        margin: 0;
+        height: 22px;
+        line-height: 20px;
+        padding: 0 6px;
+        font-size: 11px;
+        min-width: 0;
+    }
+
+    .light-actions {
+        display: flex;
+        gap: 4px;
+        margin: 4px 6px 0;
+
+        > .light-small-text {
+            flex: 1 1 0;
+        }
+    }
+}
+
+#timeline-panel > #timeline-tracks > .track-row.light-track {
+    background-color: rgba(255, 226, 120, 0.05);
+}

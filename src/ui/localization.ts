@@ -2,6 +2,8 @@ import i18next from 'i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 import Backend from 'i18next-http-backend';
 
+import { buildQuery } from '../build-query';
+
 interface LocalizeOptions {
     ellipsis?: boolean;
     // any other values are forwarded to i18next as {{placeholder}} interpolation data
@@ -59,16 +61,17 @@ class Localization {
         .init({
             detection: {
                 // `querystring` (?lng=) wins so shareable links keep working.
-                // `localStorage` holds an EXPLICIT user choice and takes
-                // precedence over the browser locale. `navigator` is the default
-                // when nothing is stored. caches:[] disables i18next's automatic
-                // write-back so a stored value only ever means an explicit pick
-                // (setLanguage manages the key itself).
-                order: ['querystring', 'localStorage', 'navigator', 'htmlTag'],
+                // `localStorage` holds an EXPLICIT user choice. Splatmania is
+                // English by default: the browser locale (`navigator`,
+                // `htmlTag`) is deliberately not consulted, so without an
+                // explicit pick fallbackLng (en) applies. caches:[] disables
+                // i18next's automatic write-back so a stored value only ever
+                // means an explicit pick (setLanguage manages the key itself).
+                order: ['querystring', 'localStorage'],
                 caches: []
             },
             backend: {
-                loadPath: './static/locales/{{lng}}.json'
+                loadPath: `./static/locales/{{lng}}.json${buildQuery}`
             },
             supportedLngs: this.languages.map(l => l.code),
             fallbackLng: 'en',
@@ -109,9 +112,8 @@ class Localization {
     setLanguage(code: string | null): Promise<unknown> {
         if (code === null) {
             localStorage.removeItem(this.storageKey);
-            const detected = i18next.services.languageDetector?.detect();
-            const detectedLng = Array.isArray(detected) ? detected[0] : detected;
-            return i18next.changeLanguage(detectedLng || 'en');
+            // "Automatic" means the default language: English
+            return i18next.changeLanguage('en');
         }
         localStorage.setItem(this.storageKey, code);
         return i18next.changeLanguage(code);
@@ -149,6 +151,23 @@ class Localization {
             el.options = build();
             el.value = value;
         }, el);
+    }
+
+    /**
+     * Bind a plain DOM node's text (or an attribute such as 'title') to a key
+     * or builder, re-translated on language change. For nodes that are
+     * rebuilt often, translate at build time with t() instead (and rebuild
+     * on onChange) so dropped nodes don't pile up updaters.
+     */
+    bindDom(el: HTMLElement | SVGElement, key: string | (() => string), attr: 'textContent' | 'title' = 'textContent', options?: LocalizeOptions): () => void {
+        return this.onChange(() => {
+            const text = typeof key === 'function' ? key() : this.t(key, options);
+            if (attr === 'title') {
+                el.setAttribute('title', text);
+            } else {
+                el.textContent = text;
+            }
+        });
     }
 
     /** Locale-aware integer formatting. */

@@ -53,7 +53,7 @@ class ImageSettingsDialog extends Container {
         i18n.bindOptions(projectionSelect, () => [
             { v: 'standard', t: i18n.t('popup.render-image.projection.standard') },
             { v: 'equirect', t: i18n.t('popup.render-image.projection.equirectangular') },
-            { v: 'stereo', t: '360° Stereo (oben/unten)' }
+            { v: 'stereo', t: i18n.t('sm.stereo.projection') }
         ]);
         const projectionRow = new Container({ class: 'row' });
         projectionRow.append(projectionLabel);
@@ -127,7 +127,8 @@ class ImageSettingsDialog extends Container {
             options: [
                 { v: 'png', t: 'PNG' },
                 { v: 'jpeg', t: 'JPEG' },
-                { v: 'webp', t: 'WebP' }
+                { v: 'webp', t: 'WebP' },
+                { v: 'exr', t: 'EXR' }
             ]
         });
         const formatRow = new Container({ class: 'row' });
@@ -168,29 +169,29 @@ class ImageSettingsDialog extends Container {
 
         const row = (text: string, input: Element, title?: string) => {
             const r = new Container({ class: 'row' });
-            if (title) r.dom.title = title;
-            r.append(new Label({ class: 'label', text }));
+            if (title) i18n.bindDom(r.dom, title, 'title');
+            const label = new Label({ class: 'label' });
+            i18n.bindText(label, text);
+            r.append(label);
             r.append(input);
             return r;
         };
 
         const ipdInput = new NumericInput({ class: 'numeric-input', min: 0, max: 1000, precision: 4, step: 0.001, value: 0.064 });
-        const ipdRow = row('Augenabstand', ipdInput,
-            'IPD in Szeneneinheiten: 0,064 = 6,4 cm in einer Szene in Metern. Unskalierte PLYs können andere Einheiten haben, dann anpassen (größer = stärkerer 3D-Effekt)');
+        const ipdRow = row('sm.stereo.ipd', ipdInput, 'sm.stereo.ipd-tip');
         const poleSlider = new SliderInput({ class: 'slider', min: 20, max: 69, precision: 0, value: 50 });
-        const poleRow = row('Pol-Überblendung ab', poleSlider,
-            'Ab dieser Höhe (Grad über/unter dem Horizont) blendet das Stereo weich ins Mono-Panorama, damit oben und unten keine Doppelbilder entstehen');
+        const poleRow = row('sm.stereo.pole', poleSlider, 'sm.stereo.pole-tip');
         const segmentSelect = new SelectInput({
             class: 'select',
-            defaultValue: '112',
-            options: [
-                { v: '48', t: 'Entwurf (48 Segmente)' },
-                { v: '96', t: 'Gut (96 Segmente)' },
-                { v: '112', t: 'Hoch (112 Segmente)' },
-                { v: '160', t: 'Sehr hoch (160 Segmente)' }
-            ]
+            defaultValue: '112'
         });
-        const segmentRow = row('Stereo-Qualität', segmentSelect, 'Anzahl der Azimut-Streifen pro Auge: mehr = sauberere Disparität, längere Renderzeit');
+        i18n.bindOptions(segmentSelect, () => [
+            { v: '48', t: i18n.t('sm.stereo.q48') },
+            { v: '96', t: i18n.t('sm.stereo.q96') },
+            { v: '112', t: i18n.t('sm.stereo.q112') },
+            { v: '160', t: i18n.t('sm.stereo.q160') }
+        ]);
+        const segmentRow = row('sm.stereo.quality', segmentSelect, 'sm.stereo.quality-tip');
         [ipdRow, poleRow, segmentRow].forEach((r) => {
             r.hidden = true;
         });
@@ -199,20 +200,20 @@ class ImageSettingsDialog extends Container {
 
         const sourceSelect = new SelectInput({
             class: 'select',
-            defaultValue: 'view',
-            options: [
-                { v: 'view', t: 'Aktuelle Ansicht' },
-                { v: 'camera', t: 'Kamera am aktuellen Frame' },
-                { v: 'cameraKeys', t: 'Alle Keyframes einer Kamera' },
-                { v: 'allCameras', t: 'Alle Kameras am aktuellen Frame' },
-                { v: 'allCameraKeys', t: 'Alle Keyframes aller Kameras' }
-            ]
+            defaultValue: 'view'
         });
-        const sourceRow = row('Quelle', sourceSelect, 'Woher das Panorama kommt. Bei mehreren Panoramen wird ein Ordner gewählt');
+        i18n.bindOptions(sourceSelect, () => [
+            { v: 'view', t: i18n.t('sm.pano.view') },
+            { v: 'camera', t: i18n.t('sm.pano.camera') },
+            { v: 'cameraKeys', t: i18n.t('sm.pano.camera-keys') },
+            { v: 'allCameras', t: i18n.t('sm.pano.all-cameras') },
+            { v: 'allCameraKeys', t: i18n.t('sm.pano.all-camera-keys') }
+        ]);
+        const sourceRow = row('sm.pano.source', sourceSelect, 'sm.pano.source-tip');
         const cameraSelect = new SelectInput({ class: 'select' });
-        const cameraRow = row('Kamera', cameraSelect);
+        const cameraRow = row('sm.cameras.camera', cameraSelect);
         const northBoolean = new BooleanInput({ class: 'boolean', value: false });
-        const northRow = row('Nord = Welt -Z', northBoolean, 'Aus: Die Panoramamitte folgt der Blickrichtung der Kamera bzw. des Keys. An: Mitte zeigt immer nach Welt -Z');
+        const northRow = row('sm.pano.north', northBoolean, 'sm.pano.north-tip');
         [sourceRow, cameraRow, northRow].forEach((r) => {
             r.hidden = true;
         });
@@ -227,6 +228,18 @@ class ImageSettingsDialog extends Container {
             levelHorizonRow.hidden = !is360 || fromCamera;
         };
         sourceSelect.on('change', syncSource);
+
+        // picking a panorama camera takes over its projection and stereo
+        // eye separation
+        const applyCameraProjection = () => {
+            if (!['camera', 'cameraKeys'].includes(sourceSelect.value)) return;
+            const cameras = (events.invoke('shotCameras.list') ?? []) as { id: number, projection: string, ipd: number }[];
+            const camera = cameras.find(c => String(c.id) === cameraSelect.value);
+            if (!camera || camera.projection === 'standard') return;
+            if (projectionSelect.value !== camera.projection) projectionSelect.value = camera.projection;
+            if (camera.projection === 'stereo') ipdInput.value = camera.ipd;
+        };
+        cameraSelect.on('change', applyCameraProjection);
 
         // transparent background
 
@@ -246,6 +259,19 @@ class ImageSettingsDialog extends Container {
         showDebugRow.append(showDebugLabel);
         showDebugRow.append(showDebugBoolean);
 
+        // exr: camera depth as a Z channel (standard projection)
+        const depthLabel = new Label({ class: 'label' });
+        i18n.bindText(depthLabel, 'sm.video.depth');
+        const depthBoolean = new BooleanInput({ class: 'boolean', value: true });
+        const depthRow = new Container({ class: 'row' });
+        i18n.bindDom(depthRow.dom, 'sm.image.depth-tip', 'title');
+        depthRow.append(depthLabel);
+        depthRow.append(depthBoolean);
+        depthRow.hidden = true;
+        const syncDepth = () => {
+            depthRow.hidden = !(formatSelect.value === 'exr' && projectionSelect.value === 'standard');
+        };
+
         // content
 
         const content = new Container({ id: 'content' });
@@ -255,6 +281,7 @@ class ImageSettingsDialog extends Container {
         content.append(formatRow);
         content.append(qualityRow);
         content.append(transparentBgRow);
+        content.append(depthRow);
         content.append(showDebugRow);
         content.append(levelHorizonRow);
         content.append(ipdRow);
@@ -358,6 +385,7 @@ class ImageSettingsDialog extends Container {
         };
 
         projectionSelect.on('change', syncProjection);
+        projectionSelect.on('change', syncDepth);
 
         // jpeg has no alpha channel: hide the transparent background toggle
         // and show the quality slider instead
@@ -365,6 +393,7 @@ class ImageSettingsDialog extends Container {
             const isJpeg = formatSelect.value === 'jpeg';
             transparentBgRow.hidden = isJpeg;
             qualityRow.hidden = !isJpeg;
+            syncDepth();
         });
 
         // handle key bindings for enter and escape
@@ -394,6 +423,14 @@ class ImageSettingsDialog extends Container {
             if (cameras.length) {
                 cameraSelect.value = String(selected?.id ?? cameras[0].id);
             }
+            // a panorama camera (src/camera-poses.ts projection) preselects
+            // its panorama: that camera as source, its projection and eyes
+            const camera = selected as { id: number, projection?: string } | null;
+            if (camera?.projection && camera.projection !== 'standard') {
+                projectionSelect.value = camera.projection;
+                sourceSelect.value = 'camera';
+                applyCameraProjection();
+            }
             syncSource();
         };
 
@@ -417,7 +454,7 @@ class ImageSettingsDialog extends Container {
                     const [width, height] = resolutionValue.value;
                     const isStereo = projectionSelect.value === 'stereo';
                     const is360 = projectionSelect.value === 'equirect' || isStereo;
-                    const format = formatSelect.value as 'png' | 'jpeg' | 'webp';
+                    const format = formatSelect.value as ImageSettings['format'];
 
                     const imageSettings: ImageSettings = {
                         width,
@@ -426,6 +463,7 @@ class ImageSettingsDialog extends Container {
                         showDebug: !is360 && showDebugBoolean.value,
                         format,
                         quality: format === 'jpeg' ? qualitySlider.value / 100 : undefined,
+                        depth: !depthRow.hidden && depthBoolean.value,
                         projection: (isStereo ? 'stereo' : (is360 ? 'equirect' : 'standard')) as ImageSettings['projection'],
                         levelHorizon: is360 && levelHorizonBoolean.value,
                         stereo: isStereo ? { ipd: ipdInput.value, poleStart: poleSlider.value, segments: parseInt(segmentSelect.value, 10) } : undefined,

@@ -3,15 +3,19 @@ import { Button, Container, Element, Label } from '@playcanvas/pcui';
 import { Events } from '../events';
 import { ShortcutManager } from '../shortcut-manager';
 import { i18n } from './localization';
+import aiShotsSvg from './svg/ai-shots.svg';
 import alignSvg from './svg/align.svg';
 import appearanceSvg from './svg/appearance.svg';
 import cameraFrameSelectionSvg from './svg/camera-frame-selection.svg';
 import cameraResetSvg from './svg/camera-reset.svg';
 import flyCameraSvg from './svg/fly-camera.svg';
+import lightSvg from './svg/light.svg';
+import lookSvg from './svg/look.svg';
 import orbitCameraSvg from './svg/orbit-camera.svg';
 import overlaysSvg from './svg/overlays.svg';
 import qualitySvg from './svg/quality.svg';
 import sectionSvg from './svg/section.svg';
+import titlesSvg from './svg/titles.svg';
 import { Tooltips } from './tooltips';
 
 const createSvg = (svgString: string) => {
@@ -36,6 +40,34 @@ class RightToolbar extends Container {
             id: 'right-toolbar-appearance',
             class: 'right-toolbar-toggle'
         });
+
+        // look: glow, grading, lens effects (src/ui/look-panel.ts)
+        const look = new Button({
+            id: 'right-toolbar-look',
+            class: 'right-toolbar-toggle'
+        });
+        look.dom.appendChild(createSvg(lookSvg));
+
+        // relighting (src/light/light-panel.ts)
+        const light = new Button({
+            id: 'right-toolbar-light',
+            class: 'right-toolbar-toggle'
+        });
+        light.dom.appendChild(createSvg(lightSvg));
+
+        // titles over the image (src/ui/titles-panel.ts)
+        const titles = new Button({
+            id: 'right-toolbar-titles',
+            class: 'right-toolbar-toggle'
+        });
+        titles.dom.appendChild(createSvg(titlesSvg));
+
+        // shot suggestions (src/ui/ai-shots-panel.ts)
+        const aiShots = new Button({
+            id: 'right-toolbar-ai-shots',
+            class: 'right-toolbar-toggle'
+        });
+        aiShots.dom.appendChild(createSvg(aiShotsSvg));
 
         const orbitMode = new Button({
             id: 'right-toolbar-orbit-mode',
@@ -100,6 +132,10 @@ class RightToolbar extends Container {
         const buttonLabels: [Button, string][] = [
             [appearance, 'panel.appearance'],
             [overlays, 'panel.overlays'],
+            [look, 'sm.look.title'],
+            [light, 'sm.light.title'],
+            [titles, 'sm.titles.title'],
+            [aiShots, 'sm.aishots.title'],
             [orbitMode, 'tooltip.right-toolbar.orbit-camera'],
             [flyMode, 'tooltip.right-toolbar.fly-camera'],
             [cameraFrameSelection, 'tooltip.right-toolbar.frame-selection'],
@@ -112,6 +148,10 @@ class RightToolbar extends Container {
 
         this.append(appearance);
         this.append(overlays);
+        this.append(look);
+        this.append(light);
+        this.append(titles);
+        this.append(aiShots);
         this.append(new Element({ class: 'right-toolbar-separator' }));
         this.append(orbitMode);
         this.append(flyMode);
@@ -144,6 +184,10 @@ class RightToolbar extends Container {
         tooltips.register(cameraFrameSelection, tooltip('tooltip.right-toolbar.frame-selection', 'camera.focus'), 'left');
         tooltips.register(cameraReset, tooltip('tooltip.right-toolbar.reset-camera', 'camera.reset'), 'left');
         tooltips.register(overlays, tooltip('panel.overlays'), 'left');
+        tooltips.register(look, tooltip('sm.look.title'), 'left');
+        tooltips.register(light, tooltip('sm.light.title'), 'left');
+        tooltips.register(titles, tooltip('sm.titles.title'), 'left');
+        tooltips.register(aiShots, tooltip('sm.aishots.title'), 'left');
         tooltips.register(settings, tooltip('panel.settings'), 'left');
         tooltips.register(align, tooltip('tooltip.right-toolbar.align', 'tool.align'), 'left');
         tooltips.register(quality, tooltip('tooltip.right-toolbar.quality', 'tool.quality'), 'left');
@@ -157,6 +201,10 @@ class RightToolbar extends Container {
         cameraFrameSelection.on('click', () => events.fire('camera.focus'));
         cameraReset.on('click', () => events.fire('camera.reset'));
         overlays.on('click', () => events.fire('overlaysPanel.toggleVisible'));
+        look.on('click', () => events.fire('lookPanel.toggleVisible'));
+        light.on('click', () => events.fire('lightPanel.toggleVisible'));
+        titles.on('click', () => events.fire('titlesPanel.toggleVisible'));
+        aiShots.on('click', () => events.fire('aiShotsPanel.toggleVisible'));
         settings.on('click', () => events.fire('settingsPanel.toggleVisible'));
         align.on('click', () => events.fire('tool.align'));
         quality.on('click', () => events.fire('tool.quality'));
@@ -179,6 +227,30 @@ class RightToolbar extends Container {
 
         events.on('overlaysPanel.visible', (visible: boolean) => {
             overlays.class[visible ? 'add' : 'remove']('active');
+        });
+
+        events.on('titlesPanel.visible', (visible: boolean) => {
+            titles.class[visible ? 'add' : 'remove']('active');
+        });
+
+        events.on('aiShotsPanel.visible', (visible: boolean) => {
+            aiShots.class[visible ? 'add' : 'remove']('active');
+        });
+
+        events.on('lightPanel.visible', (visible: boolean) => {
+            light.class[visible ? 'add' : 'remove']('active');
+        });
+        events.on('light.changed', () => {
+            light.class[events.invoke('light.active') ? 'add' : 'remove']('look-on');
+        });
+
+        events.on('lookPanel.visible', (visible: boolean) => {
+            look.class[visible ? 'add' : 'remove']('active');
+        });
+
+        // a dot on the button while a look is applied
+        events.on('look.changed', () => {
+            look.class[events.invoke('look.active') ? 'add' : 'remove']('look-on');
         });
 
         events.on('settingsPanel.visible', (visible: boolean) => {

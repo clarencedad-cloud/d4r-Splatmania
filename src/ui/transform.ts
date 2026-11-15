@@ -1,7 +1,8 @@
-import { Container, ContainerArgs, Label, NumericInput, VectorInput } from '@playcanvas/pcui';
+import { Button, Container, ContainerArgs, Label, NumericInput, VectorInput } from '@playcanvas/pcui';
 import { Quat, Vec3 } from 'playcanvas';
 
 import { Events } from '../events';
+import { createKeyButton, KeyState } from './key-button';
 import { i18n } from './localization';
 import { Pivot } from '../pivot';
 
@@ -82,9 +83,39 @@ class Transform extends Container {
         scale.append(scaleLabel);
         scale.append(scaleInput);
 
+        // XGrids preset: XGrids scans come in Z-up, this stands them upright
+        // (the values typed into the panel: position 0, rotation -90 0 0,
+        // scale 1). One undo step, like any panel edit
+        const presetRow = new Container({ class: ['transform-row', 'transform-preset-row'] });
+        const presetLabel = new Label({ class: 'transform-label' });
+        const xgrids = new Button({ text: 'XGRIDS default', class: 'transform-preset', enabled: false });
+        i18n.bindDom(xgrids.dom, 'sm.transform.xgrids-tip', 'title');
+        xgrids.on('click', () => {
+            const pivot = events.invoke('pivot') as Pivot;
+            if (!pivot || !(events.functions.has('selection') && events.invoke('selection'))) return;
+            const q = new Quat().setFromEulerAngles(-90, 0, 0);
+            pivot.start();
+            pivot.moveTRS(new Vec3(0, 0, 0), q, new Vec3(1, 1, 1));
+            pivot.end();
+        });
+        presetRow.append(presetLabel);
+        presetRow.append(xgrids);
+
         this.append(position);
         this.append(rotation);
+        this.append(presetRow);
         this.append(scale);
+
+        // key buttons: key just this property of the selected splat
+        const selected = () => (events.functions.has('selection') ? events.invoke('selection') : null);
+        const keyButton = (channel: string) => createKeyButton(
+            events,
+            () => (selected() ? events.invoke('layerAnim.channelState', selected(), channel) as KeyState : null),
+            () => selected() && events.fire('layerAnim.keyChannel', selected(), channel)
+        ).dom;
+        position.dom.appendChild(keyButton('position'));
+        rotation.dom.appendChild(keyButton('rotation'));
+        scale.dom.appendChild(keyButton('scale'));
 
         const toArray = (v: Vec3) => {
             return [v.x, v.y, v.z];
@@ -155,7 +186,7 @@ class Transform extends Container {
 
         // toggle ui availability based on selection
         events.on('selection.changed', (selection) => {
-            positionVector.enabled = rotationVector.enabled = scaleInput.enabled = !!selection;
+            positionVector.enabled = rotationVector.enabled = scaleInput.enabled = xgrids.enabled = !!selection;
         });
 
         events.on('pivot.placed', (pivot: Pivot) => {

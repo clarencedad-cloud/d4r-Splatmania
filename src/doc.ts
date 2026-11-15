@@ -99,6 +99,11 @@ const registerDocEvents = (scene: Scene, events: Events) => {
         // archive, so the zip is only safe to close once they are gone
         events.fire('scene.clear');
         events.fire('camera.reset');
+        // a new or loaded document starts without a look (a loaded one then
+        // restores its own)
+        if (events.functions.has('docDeserialize.look')) events.invoke('docDeserialize.look', null);
+        if (events.functions.has('docDeserialize.titles')) events.invoke('docDeserialize.titles', null);
+        if (events.functions.has('docDeserialize.light')) events.invoke('docDeserialize.light', null);
         events.fire('doc.setName', null);
         documentFileHandle = null;
         documentFs?.close();
@@ -205,6 +210,9 @@ const registerDocEvents = (scene: Scene, events: Events) => {
             events.invoke('docDeserialize.pointCloud', document.pointCloud);
             events.invoke('docDeserialize.section', document.section);
             if (events.functions.has('docDeserialize.dof')) events.invoke('docDeserialize.dof', document.dof);
+            if (events.functions.has('docDeserialize.look')) events.invoke('docDeserialize.look', document.look);
+            if (events.functions.has('docDeserialize.titles')) events.invoke('docDeserialize.titles', document.titles);
+            if (events.functions.has('docDeserialize.light')) events.invoke('docDeserialize.light', document.light);
             events.invoke('docDeserialize.view', document.view);
             scene.camera.docDeserialize(document.camera);
 
@@ -317,6 +325,9 @@ const registerDocEvents = (scene: Scene, events: Events) => {
                 pointCloud: events.invoke('docSerialize.pointCloud'),
                 section: events.invoke('docSerialize.section'),
                 dof: events.invoke('docSerialize.dof'),
+                look: events.invoke('docSerialize.look'),
+                titles: events.invoke('docSerialize.titles'),
+                light: events.invoke('docSerialize.light'),
                 timeline: events.invoke('docSerialize.timeline'),
                 resources: groups.map((group, i) => ({
                     filename: `resource_${i}.ply`,
