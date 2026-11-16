@@ -294,7 +294,7 @@ const registerLookEvents = (events: Events, scene: Scene) => {
         if (suppressed > 0 || scene.overdrawRender || !lookActive(state)) return;
         renderer.apply(target, state, {
             panorama: false,
-            background: offscreen ? null : events.invoke('bgClr'),
+            background: offscreen || (events.functions.has('background.gradient') && events.invoke('background.gradient')) ? null : events.invoke('bgClr'),
             seed: seed(),
             referenceHeight: REFERENCE_HEIGHT
         });

@@ -194,6 +194,14 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
         return depth;
     };
 
+    // background of export frames: the plain colour as clear colour, or a
+    // transparent clear and the sky gradient composited afterwards
+    // (src/background.ts)
+    const exportClear = (): Color => (events.functions.has('background.exportClear') && events.invoke('background.exportClear')) || events.invoke('bgClr');
+    const compositeView = (data: Uint8Array, width: number, height: number) => {
+        if (events.functions.has('background.compositeView')) events.invoke('background.compositeView', data, width, height);
+    };
+
     // premultiplied -> straight alpha (png, webm alpha)
     const unpremultiply = (src: Uint8Array, dst: Uint8Array) => {
         for (let i = 0; i < src.length; i += 4) {
@@ -315,12 +323,20 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
         // trigger a render and wait for it
         render: () => Promise<void>,
         cancelled: () => boolean,
-        progress: (fraction: number) => void
+        progress: (fraction: number) => void,
+        // composite the sky gradient (not for transparent exports)
+        background?: boolean
     }) => {
         const suppress = events.functions.has('look.suppress');
         if (suppress) events.invoke('look.suppress', true);
         try {
-            return await capturePanoramaImpl(p);
+            const ok = await capturePanoramaImpl(p);
+            if (ok && p.background && events.functions.has('background.compositePanorama')) {
+                const w = p.ods ? p.ods.eyeWidth : p.equirect.equirectTarget.width;
+                const h = p.ods ? p.ods.eyeHeight * 2 : p.equirect.equirectTarget.height;
+                events.invoke('background.compositePanorama', p.data, w, h, !!p.ods);
+            }
+            return ok;
         } finally {
             if (suppress) events.invoke('look.suppress', false);
         }
@@ -360,7 +376,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.camera.renderOverlays = false;
             scene.gizmoLayer.enabled = false;
             scene.centersLayer.enabled = false;
-            scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
+            scene.camera.clearPass.setClearColor(exportClear());
             scene.camera.ortho = false;
             scene.lockedRenderMode = true;
             const ok = await capturePanorama({
@@ -531,7 +547,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.camera.renderOverlays = false;
             scene.gizmoLayer.enabled = false;
             scene.centersLayer.enabled = false;
-            scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
+            scene.camera.clearPass.setClearColor(exportClear());
             scene.camera.ortho = false;
             handles.push(events.on('camera.ortho', (value: boolean) => {
                 rigOrtho = value;
@@ -706,7 +722,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.gizmoLayer.enabled = false;
             scene.centersLayer.enabled = false;
             if (!transparentBg) {
-                scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
+                scene.camera.clearPass.setClearColor(exportClear());
             }
 
             // cpu-side buffer to read pixels into
@@ -751,6 +767,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     ods,
                     faceSize,
                     data,
+                    background: !transparentBg,
                     render: async () => {
                         scene.lockedRender = true;
                         await postRender();
@@ -783,6 +800,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 await workTarget.colorBuffer.read(0, 0, width, height, { renderTarget: workTarget, data, immediate: true });
 
                 if ((format === 'exr' && withDepth) || imageSettings.depthMap) depthData = await captureDepth(width, height);
+                if (!transparentBg) compositeView(data, width, height);
 
                 // titles (src/titles.ts) at the current frame
                 if (events.functions.has('titles.drawOnPixels')) {
@@ -1108,7 +1126,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.gizmoLayer.enabled = false;
                 scene.centersLayer.enabled = false;
                 if (!transparentBg) {
-                    scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
+                    scene.camera.clearPass.setClearColor(exportClear());
                 }
                 scene.lockedRenderMode = true;
 
@@ -1271,6 +1289,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     scene.dataProcessor.copyRt(mainTarget, workTarget, scene.overdrawRender);
 
                     await workTarget.colorBuffer.read(0, 0, width, height, { renderTarget: workTarget, data: buffer, immediate: true });
+                    if (!transparentBg && !is360) compositeView(buffer, width, height);
                 };
 
                 // render the outgoing camera of a cut cross-fade into fadeData;
@@ -1335,6 +1354,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                         ods,
                         faceSize,
                         data,
+                        background: !transparentBg,
                         render: async () => {
                             scene.lockedRender = true;
                             await postRender();

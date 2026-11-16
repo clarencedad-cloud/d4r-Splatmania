@@ -25,6 +25,18 @@ const saveState = (key: string, state: FloatingState) => {
     }
 };
 
+// the panel pressed last is drawn in front of the others (floating panels and
+// the scene panel share the viewport and overlap in narrow windows)
+let front: HTMLElement | null = null;
+const raiseOnPress = (dom: HTMLElement) => {
+    dom.addEventListener('pointerdown', () => {
+        if (front === dom) return;
+        if (front) front.style.zIndex = '';
+        dom.style.zIndex = '12';
+        front = dom;
+    }, true);
+};
+
 type FloatingOptions = {
     key: string,
     // i18n key of the title
@@ -61,6 +73,7 @@ const makeFloating = (panel: Container, options: FloatingOptions) => {
     });
     i18n.bindDom(header, 'sm.floating.header', 'title');
     dom.classList.add('floating-panel');
+    raiseOnPress(dom);
     dom.insertBefore(header, dom.firstChild);
 
     const setCollapsed = (collapsed: boolean) => {
@@ -162,4 +175,4 @@ const makeFloating = (panel: Container, options: FloatingOptions) => {
     };
 };
 
-export { makeFloating };
+export { makeFloating, raiseOnPress };

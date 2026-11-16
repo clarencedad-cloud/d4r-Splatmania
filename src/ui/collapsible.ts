@@ -22,9 +22,15 @@ const registry = new Map<string, CollapsibleSection[]>();
 // is a section shown (View menu)?
 const sectionShown = (key: string) => !off.has(key);
 
+// listeners for the View menu state (the scene panel shows a "show all" row)
+const sectionListeners: (() => void)[] = [];
+const onSectionsChanged = (listener: () => void) => sectionListeners.push(listener);
+const hiddenSections = () => [...off];
+
 const setSectionShown = (key: string, shown: boolean) => {
     if (shown) off.delete(key);
     else off.add(key);
+    sectionListeners.forEach(listener => listener());
     try {
         localStorage.setItem(offKey, JSON.stringify([...off]));
     } catch {
@@ -154,4 +160,4 @@ const advancedGroup = (parent: Container, key: string, title = 'sm.common.advanc
     return group.body;
 };
 
-export { CollapsibleSection, advancedGroup, sectionShown, setSectionShown };
+export { CollapsibleSection, advancedGroup, sectionShown, setSectionShown, onSectionsChanged, hiddenSections };

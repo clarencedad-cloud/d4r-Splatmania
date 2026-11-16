@@ -41,6 +41,7 @@ import { ColorGrade, createGradeTerms, dcDecode, dcEncode, sigmoid } from './col
 import type { EditorSplatResource } from './editor-splat-resource';
 import { Events } from './events';
 import { groupInstancesByChunk } from './gaussian-instances';
+import { isUniform, transformGaussian } from './gaussian-transform';
 import { PermutedChunkSource } from './io';
 import { SHRotation } from './sh-utils';
 import { Splat } from './splat';
@@ -186,6 +187,7 @@ const SH_REST_COUNTS: Record<number, number> = { 0: 0, 1: 9, 2: 24, 3: 45 };
 // Gaussians per chunk when streaming a scene to splat-transform. Chosen to
 // bound the transient working set (input layer buffers + writer output buffer)
 // rather than scale with the whole scene.
+
 const EXPORT_CHUNK_SIZE = 256 * 1024;
 
 // Build the canonical per-layer byte layout splat-transform expects. The
@@ -453,15 +455,23 @@ class SuperSplatChunkSource implements ChunkSource {
                     const src = i * 8;
                     const dst = (outputOffset + i) * 8;
                     rotationValue.set(srcGeometric[src + 1], srcGeometric[src + 2], srcGeometric[src + 3], srcGeometric[src]);
-                    rotationValue.mul2(transform.getRot(instance), rotationValue);
-                    dstGeometric[dst] = rotationValue.w;
-                    dstGeometric[dst + 1] = rotationValue.x;
-                    dstGeometric[dst + 2] = rotationValue.y;
-                    dstGeometric[dst + 3] = rotationValue.z;
                     const scale = transform.getScale(instance);
-                    dstGeometric[dst + 4] = Math.log(Math.exp(srcGeometric[src + 4]) * scale.x);
-                    dstGeometric[dst + 5] = Math.log(Math.exp(srcGeometric[src + 5]) * scale.y);
-                    dstGeometric[dst + 6] = Math.log(Math.exp(srcGeometric[src + 6]) * scale.z);
+                    if (isUniform(scale)) {
+                        rotationValue.mul2(transform.getRot(instance), rotationValue);
+                        dstGeometric[dst] = rotationValue.w;
+                        dstGeometric[dst + 1] = rotationValue.x;
+                        dstGeometric[dst + 2] = rotationValue.y;
+                        dstGeometric[dst + 3] = rotationValue.z;
+                        dstGeometric[dst + 4] = Math.log(Math.exp(srcGeometric[src + 4]) * scale.x);
+                        dstGeometric[dst + 5] = Math.log(Math.exp(srcGeometric[src + 5]) * scale.y);
+                        dstGeometric[dst + 6] = Math.log(Math.exp(srcGeometric[src + 6]) * scale.z);
+                    } else {
+                        // per-axis scale: the gaussian's axes no longer line
+                        // up with the layer's, so transform its covariance
+                        // and split it again into rotation and scale
+                        transformGaussian(transform.getMat(instance), rotationValue,
+                            srcGeometric[src + 4], srcGeometric[src + 5], srcGeometric[src + 6], dstGeometric, dst);
+                    }
                     const grade = gradeCache.get(instance);
                     dstGeometric[dst + 7] = grade.hasTransparency ?
                         grade.applyOpacity(srcGeometric[src + 7]) : srcGeometric[src + 7];

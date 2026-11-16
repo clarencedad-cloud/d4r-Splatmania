@@ -89,3 +89,26 @@ $height: 22px;
         font-size: 12px;
     }
 }
+
+// lock between the label and the per-axis scale: on = uniform scaling
+#transform .transform-scale-lock {
+    flex: 0 0 auto;
+    width: 16px;
+    margin-right: 4px;
+    text-align: center;
+    font-size: 15px;
+    font-weight: bold;
+    line-height: 22px;
+    cursor: pointer;
+    opacity: 0.35;
+    user-select: none;
+
+    &.active {
+        opacity: 1;
+        color: #c20e7e;
+    }
+
+    &:hover {
+        opacity: 1;
+    }
+}

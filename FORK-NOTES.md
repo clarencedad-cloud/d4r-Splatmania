@@ -995,3 +995,28 @@ Panel „Kamerafahrt-Vorschläge“ (rechte Leiste). Code in `src/ai-shots/` (`s
 - **Nah = Weiß** (Standard, wie ControlNet/MiDaS) oder umgekehrt. Leerer Hintergrund = fern.
 - Code: `src/depth-map.ts`, Dialog-Zeilen `src/ui/depth-map-options.ts`. Der EXR-Z-Kanal bleibt unverändert (echte Abstände, kein Bereich nötig).
 - Getestet per `render.image` am Testhaus: PNG + 16-Bit-Graustufen-PNG, automatischer Bereich gegen 0–60 von Hand verglichen. Sequenz-Export nicht per Klick getestet.
+
+## Skalierung pro Achse (17.11.2026)
+
+- **Transform-Panel:** Skalierung als X/Y/Z-Feld mit Kopplungs-Symbol ⛓ (Standard an: ein Wert skaliert alle drei im Verhältnis; aus: jede Achse einzeln).
+- **Skalieren-Werkzeug:** zusätzlich die Achsen-Griffe X/Y/Z (Ebenen-Griffe bleiben aus).
+- **Rendering:** unverändert korrekt (der Projektor rechnet die Kovarianz mit der vollen Modellmatrix).
+- **Export/Zusammenführen** (`splat-serialize.ts`): Bei ungleicher Skalierung wird jede Gaussian per Kovarianz Σ' = M R S² Rᵀ Mᵀ umgerechnet und per Jacobi-Eigenzerlegung in Rotation und Skalierung zurückgeführt (`src/gaussian-transform.ts`). Test: `node scripts/test-gaussian-transform.mjs` (2000 Zufallsfälle, Fehler < 1e-6).
+- **Grenzen:** Mit einem benutzerdefinierten lokalen Rahmen (Pivot gedreht gegenüber dem Layer) entsteht bei ungleicher Skalierung eine Scherung, die der Layer-Transform nur angenähert speichern kann. SH-Farben werden nur gedreht, nicht verzerrt (wie bisher).
+
+## Hintergrund: Farbe oder Himmelsverlauf (17.11.2026)
+
+- `src/background.ts`, Bedienung im Panel „Erscheinungsbild“ unter „Farben“: **Hintergrund** Farbe | Verlauf; beim Verlauf drei Farben (oben am Himmel, Horizont, unter dem Horizont) und **Verlaufshöhe** (Winkel, bei dem der Himmel die obere Farbe erreicht). Unter dem Horizont geht es über 12° in die Bodenfarbe über.
+- Der Verlauf hängt am echten Horizont (Elevation der Blickrichtung), nicht am Bildschirm.
+- **Viewport:** CSS-Verlauf hinter dem transparenten Canvas (`#canvas-container`), aus Kamera-Neigung und FOV neu berechnet. Der Look setzt bei Verlauf keinen flachen Hintergrund darüber.
+- **Export:** Bei Verlauf wird mit transparentem Clear gerendert und der Verlauf pro Pixel darunter gelegt (vor den Titeln): Standardbild, Video (jeder gelesene Frame, also auch Bewegungsunschärfe und Überblendungen), 360° mono und Stereo (zeilenweise nach Breitengrad). Transparente Exporte bleiben transparent.
+- Gespeichert im Projekt unter `background`.
+- **Grenze:** 360° ohne „Horizont waagerecht“ (Kamera geneigt) nimmt den Verlauf trotzdem nach Bildzeile.
+
+## Ausgeblendete Bereiche zurückholen (schmale Fenster)
+
+- Problem: In schmalen Fenstern lag das Menü „View“ außerhalb des Bildschirms, und das schwebende Depth-filter-Fenster verdeckte den Kopf des Scene-Panels. Über „View“ ausgeblendete Bereiche ließen sich so nicht mehr einblenden.
+- `src/ui/collapsible.ts`: `onSectionsChanged`, `hiddenSections`.
+- `src/ui/scene-panel.ts`: Sobald etwas ausgeblendet ist, zeigt eine Zeile unter „Scene Manager“ „X Bereich(e) ausgeblendet · alle einblenden“ (`sm.view.hidden-count`, `sm.view.show-all`).
+- `src/ui/scss/menu.scss`: Die Menüleiste liegt über den schwebenden Panels (z-index 20), bleibt im Fenster und scrollt bei Bedarf waagrecht.
+- `src/ui/floating-panel.ts`: `raiseOnPress` holt das zuletzt angeklickte Panel nach vorn. Das gilt für die schwebenden Panels und für das Scene-Panel.

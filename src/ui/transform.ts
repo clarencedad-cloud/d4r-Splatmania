@@ -71,17 +71,31 @@ class Transform extends Container {
         });
         i18n.bindText(scaleLabel, 'panel.scene.transform.scale');
 
-        const scaleInput = new NumericInput({
-            class: ['transform-expand', 'transform-scale'],
+        // per axis; the lock (on by default) keeps the proportions, so
+        // typing one value scales all three like before
+        const scaleVector = new VectorInput({
+            class: ['transform-expand', 'transform-scale-vector'],
             precision: 3,
-            value: 1,
+            dimensions: 3,
+            placeholder: ['X', 'Y', 'Z'],
+            value: [1, 1, 1],
             min: 0.001,
             max: 10000,
             enabled: false
         });
+        let scaleLocked = true;
+        const scaleLock = document.createElement('span');
+        scaleLock.classList.add('transform-scale-lock', 'active');
+        scaleLock.textContent = '⛓';
+        i18n.bindDom(scaleLock, 'sm.transform.scale-lock-tip', 'title');
+        scaleLock.addEventListener('click', () => {
+            scaleLocked = !scaleLocked;
+            scaleLock.classList.toggle('active', scaleLocked);
+        });
 
         scale.append(scaleLabel);
-        scale.append(scaleInput);
+        scale.dom.appendChild(scaleLock);
+        scale.append(scaleVector);
 
         // XGrids preset: XGrids scans come in Z-up, this stands them upright
         // (the values typed into the panel: position 0, rotation -90 0 0,
@@ -123,6 +137,8 @@ class Transform extends Container {
 
         let uiUpdating = false;
         let mouseUpdating = false;
+        // the scale last shown, to tell which axis was edited when locked
+        let lastScale = [1, 1, 1];
 
         // the panel shows the pivot in world coordinates. with a user-defined
         // local frame set (see Splat.getPivot), the pivot is that frame, so
@@ -133,7 +149,8 @@ class Transform extends Container {
             transform.rotation.getEulerAngles(v);
             positionVector.value = toArray(transform.position);
             rotationVector.value = toArray(v);
-            scaleInput.value = transform.scale.x;
+            scaleVector.value = toArray(transform.scale);
+            lastScale = toArray(transform.scale);
             uiUpdating = false;
         };
 
@@ -142,13 +159,23 @@ class Transform extends Container {
             const p = positionVector.value;
             const r = rotationVector.value;
             const q = new Quat().setFromEulerAngles(r[0], r[1], r[2]);
-            const s = scaleInput.value;
+            let s = scaleVector.value.slice();
+            if (scaleLocked) {
+                // the edited axis sets the factor for all three
+                const axis = [0, 1, 2].find(i => Math.abs(s[i] - lastScale[i]) > 1e-9);
+                if (axis !== undefined && lastScale[axis] > 0) {
+                    const f = s[axis] / lastScale[axis];
+                    s = lastScale.map(v => v * f);
+                }
+            }
+            s = s.map(v => Math.max(0.001, v));
+            lastScale = s.slice();
 
             if (q.w < 0) {
                 q.mulScalar(-1);
             }
 
-            pivot.moveTRS(new Vec3(p[0], p[1], p[2]), q, new Vec3(s, s, s));
+            pivot.moveTRS(new Vec3(p[0], p[1], p[2]), q, new Vec3(s[0], s[1], s[2]));
         };
 
         // handle a change in the UI state
@@ -178,7 +205,7 @@ class Transform extends Container {
             pivot.end();
         };
 
-        [positionVector.inputs, rotationVector.inputs, scaleInput].flat().forEach((input) => {
+        [positionVector.inputs, rotationVector.inputs, scaleVector.inputs].flat().forEach((input) => {
             input.on('change', change);
             input.on('slider:mousedown', mousedown);
             input.on('slider:mouseup', mouseup);
@@ -186,7 +213,7 @@ class Transform extends Container {
 
         // toggle ui availability based on selection
         events.on('selection.changed', (selection) => {
-            positionVector.enabled = rotationVector.enabled = scaleInput.enabled = xgrids.enabled = !!selection;
+            positionVector.enabled = rotationVector.enabled = scaleVector.enabled = xgrids.enabled = !!selection;
         });
 
         events.on('pivot.placed', (pivot: Pivot) => {

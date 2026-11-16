@@ -136,3 +136,35 @@
         }
     }
 }
+
+
+// sections switched off in the View menu: count and "show all"
+#scene-panel .sections-hidden-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    background-color: rgba(194, 14, 126, 0.14);
+
+    &.pcui-hidden {
+        display: none;
+    }
+
+    .sections-hidden-label {
+        flex-grow: 1;
+        margin: 0;
+        font-size: 11px;
+    }
+
+    .sections-hidden-show {
+        margin: 0;
+        font-size: 11px;
+        color: #c20e7e;
+        cursor: pointer;
+        white-space: nowrap;
+
+        &:hover {
+            color: #fff;
+        }
+    }
+}

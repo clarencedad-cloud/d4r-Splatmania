@@ -306,10 +306,82 @@ class AppearancePanel extends Container {
         colorsRow.append(colorsLabel);
         colorsRow.append(colorPickers);
 
+        // scene background: plain colour (the first colour picker above) or a
+        // sky gradient from the horizon up (src/background.ts)
+        let syncingBg = false;
+        const bgModeRow = new Container({ class: 'settings-panel-row' });
+        const bgModeLabel = new Label({ class: 'settings-panel-row-label' });
+        i18n.bindText(bgModeLabel, 'sm.background.title');
+        tooltips.register(bgModeLabel, () => i18n.t('sm.background.tip'), 'left');
+        const bgMode = document.createElement('div');
+        bgMode.classList.add('background-mode');
+        const modeButton = (mode: 'color' | 'gradient', key: string) => {
+            const el = document.createElement('span');
+            el.classList.add('background-mode-button');
+            el.dataset.mode = mode;
+            i18n.bindDom(el, key);
+            el.addEventListener('click', () => events.fire('background.set', { mode }));
+            bgMode.appendChild(el);
+            return el;
+        };
+        const modeButtons = [modeButton('color', 'sm.background.color'), modeButton('gradient', 'sm.background.gradient')];
+        bgModeRow.append(bgModeLabel);
+        bgModeRow.dom.appendChild(bgMode);
+
+        const gradientRow = new Container({ class: 'settings-panel-row' });
+        const gradientLabel = new Label({ class: 'settings-panel-row-label' });
+        i18n.bindText(gradientLabel, 'sm.background.colors');
+        tooltips.register(gradientLabel, () => i18n.t('sm.background.colors-tip'), 'left');
+        const gradientPickers = new Container({ class: 'settings-panel-row-pickers' });
+        const picker = (field: 'zenith' | 'horizon' | 'ground', tip: string) => {
+            const cp = new ColorPicker({ class: 'settings-panel-row-picker', channels: 3, value: [0, 0, 0] });
+            cp.on('change', (value: number[]) => {
+                if (!syncingBg) events.fire('background.set', { [field]: [value[0], value[1], value[2]] });
+            });
+            tooltips.register(cp, () => i18n.t(tip), 'left');
+            gradientPickers.append(cp);
+            return cp;
+        };
+        const zenithPicker = picker('zenith', 'sm.background.zenith');
+        const horizonPicker = picker('horizon', 'sm.background.horizon');
+        const groundPicker = picker('ground', 'sm.background.ground');
+        gradientRow.append(gradientLabel);
+        gradientRow.append(gradientPickers);
+
+        const spreadRow = new Container({ class: 'settings-panel-row' });
+        const spreadLabel = new Label({ class: 'settings-panel-row-label' });
+        i18n.bindText(spreadLabel, 'sm.background.spread');
+        tooltips.register(spreadLabel, () => i18n.t('sm.background.spread-tip'), 'left');
+        const spreadSlider = new SliderInput({ class: 'settings-panel-row-slider', min: 5, max: 90, precision: 0, step: 1, value: 45 });
+        spreadSlider.on('change', (value: number) => {
+            if (!syncingBg) events.fire('background.set', { spread: value });
+        });
+        spreadRow.append(spreadLabel);
+        spreadRow.append(spreadSlider);
+
+        const syncBackground = () => {
+            if (!events.functions.has('background.state')) return;
+            const st = events.invoke('background.state');
+            syncingBg = true;
+            modeButtons.forEach(el => el.classList.toggle('active', el.dataset.mode === st.mode));
+            gradientRow.hidden = spreadRow.hidden = st.mode !== 'gradient';
+            zenithPicker.value = st.zenith;
+            horizonPicker.value = st.horizon;
+            groundPicker.value = st.ground;
+            spreadSlider.value = st.spread;
+            syncingBg = false;
+        };
+        events.on('background.changed', syncBackground);
+        // the state is registered after the ui is built
+        queueMicrotask(syncBackground);
+
         this.append(header);
         this.append(displayRow);
         this.append(selectionDisplayRow);
         this.append(colorsRow);
+        this.append(bgModeRow);
+        this.append(gradientRow);
+        this.append(spreadRow);
         this.append(sectionHeader('panel.appearance.gaussians'));
         this.append(splatsColorBlend.row);
         this.append(splatsSelectionBlend.row);

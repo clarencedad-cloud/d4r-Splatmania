@@ -141,3 +141,15 @@
         display: none;
     }
 }
+
+// narrow windows: the menu bar stays inside the window (scrolls sideways)
+// and above the floating panels, so the View menu is always reachable
+#menu {
+    z-index: 20;
+}
+
+#menu-bar {
+    max-width: calc(100vw - 48px);
+    overflow-x: auto;
+    scrollbar-width: thin;
+}

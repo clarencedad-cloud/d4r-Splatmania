@@ -3,8 +3,9 @@ import { Container, Label } from '@playcanvas/pcui';
 import { Events } from '../events';
 import { CameraList } from './camera-list';
 import { CleanupPanel } from './cleanup-panel';
-import { CollapsibleSection } from './collapsible';
+import { CollapsibleSection, hiddenSections, onSectionsChanged, setSectionShown } from './collapsible';
 import { ColorPanel } from './color-panel';
+import { raiseOnPress } from './floating-panel';
 import { LayerAnimPanel } from './layer-anim-panel';
 import { i18n } from './localization';
 import { SplatList } from './splat-list';
@@ -326,7 +327,29 @@ class ScenePanel extends Container {
         ['scene.elementAdded', 'scene.elementRemoved', 'splat.name', 'shotCameras.changed', 'light.changed', 'light.selected'].forEach(name => events.on(name, sync));
         i18n.onChange(sync);
 
+        // sections switched off in the View menu: a way back that does not
+        // depend on reaching the menu (narrow windows, covered menu bar)
+        const hiddenRow = new Container({ class: 'sections-hidden-row' });
+        const hiddenLabel = new Label({ class: 'sections-hidden-label' });
+        const showAll = new Label({ class: 'sections-hidden-show' });
+        i18n.bindText(showAll, 'sm.view.show-all');
+        showAll.dom.addEventListener('click', () => hiddenSections().forEach(key => setSectionShown(key, true)));
+        hiddenRow.append(hiddenLabel);
+        hiddenRow.append(showAll);
+        const syncHidden = () => {
+            const count = hiddenSections().length;
+            hiddenRow.hidden = count === 0;
+            hiddenLabel.text = i18n.t('sm.view.hidden-count', { count });
+        };
+        onSectionsChanged(syncHidden);
+        i18n.onChange(syncHidden);
+
+        // pressing the panel brings it in front of floating panels that
+        // overlap it in narrow windows (src/ui/floating-panel.ts)
+        raiseOnPress(this.dom);
+
         this.append(sceneHeader);
+        this.append(hiddenRow);
         this.append(objectsSection);
         this.append(propsHeader);
         this.append(propsEmpty);

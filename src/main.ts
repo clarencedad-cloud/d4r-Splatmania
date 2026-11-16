@@ -3,6 +3,7 @@ import { Color, createGraphicsDevice } from 'playcanvas';
 
 import { registerAiShotsEvents } from './ai-shots/ai-shots';
 import { AlignTool } from './align/align-tool';
+import { registerBackgroundEvents } from './background';
 import { registerCameraPosesEvents } from './camera-poses';
 import { registerCleanupEvents } from './cleanup';
 import { CommandQueue } from './command-queue';
@@ -289,6 +290,7 @@ const main = async () => {
     registerLookEvents(events, scene);
     registerLightEvents(events, scene);
     registerObjectGizmo(events, scene);
+    registerBackgroundEvents(events, scene);
     editorUI.canvasContainer.append(new LightPanel(events, editorUI.tooltips));
     registerTitleEvents(events);
     registerAiShotsEvents(events, scene);

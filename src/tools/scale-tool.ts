@@ -8,9 +8,10 @@ class ScaleTool extends TransformTool {
     constructor(events: Events, scene: Scene) {
         const gizmo = new ScaleGizmo(scene.camera.camera, scene.gizmoLayer);
 
-        // disable everything except uniform scale
-        ['x', 'y', 'z', 'yz', 'xz', 'xy'].forEach((axis) => {
-            gizmo.enableShape(axis as 'x' | 'y' | 'z' | 'yz' | 'xz' | 'xy', false);
+        // uniform (centre) and per-axis handles; the plane handles stay off
+        // (two axes at once is rarely wanted and easy to grab by accident)
+        ['yz', 'xz', 'xy'].forEach((axis) => {
+            gizmo.enableShape(axis as 'yz' | 'xz' | 'xy', false);
         });
 
         // set lower bound on scale
