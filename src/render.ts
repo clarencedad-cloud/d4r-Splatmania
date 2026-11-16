@@ -3,6 +3,7 @@ import { BufferTarget, EncodedPacket, EncodedVideoPacketSource, MkvOutputFormat,
 import { Color, path, Quat, RenderTarget, Vec3 } from 'playcanvas';
 
 import type { CutFade } from './camera-poses';
+import { encodeDepthMap, type DepthMapSettings } from './depth-map';
 import { ElementType } from './element';
 import { EquirectRenderer } from './equirect-renderer';
 import { Events } from './events';
@@ -52,6 +53,9 @@ type ImageSettings = {
     quality?: number;           // 0..1, jpeg only
     // exr: add a Z channel (camera depth), standard projection only
     depth?: boolean;
+    // an extra 16-bit greyscale depth map (<name>_depth.png), standard
+    // projection only
+    depthMap?: DepthMapSettings;
     // 'stereo': omnidirectional stereo, top-bottom (left eye on top), 1:1
     projection?: 'standard' | 'equirect' | 'stereo';
     levelHorizon?: boolean;
@@ -778,7 +782,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 // read the rendered frame (immediate: see render.offscreen)
                 await workTarget.colorBuffer.read(0, 0, width, height, { renderTarget: workTarget, data, immediate: true });
 
-                if (format === 'exr' && withDepth) depthData = await captureDepth(width, height);
+                if ((format === 'exr' && withDepth) || imageSettings.depthMap) depthData = await captureDepth(width, height);
 
                 // titles (src/titles.ts) at the current frame
                 if (events.functions.has('titles.drawOnPixels')) {
@@ -791,7 +795,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             let mimeType: string;
 
             if (format === 'exr') {
-                bytes = await encodeExr(data, width, height, depthData) as Uint8Array<ArrayBuffer>;
+                bytes = await encodeExr(data, width, height, withDepth ? depthData : null) as Uint8Array<ArrayBuffer>;
                 extension = 'exr';
                 mimeType = 'image/x-exr';
             } else if (format === 'png') {
@@ -856,12 +860,18 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 }
             }
 
+            const name = imageSettings.filename ?? `${baseFilename()}${job?.suffix ?? ''}${isStereo ? '_TB' : ''}`;
             if (fileStream) {
                 await fileStream.write(bytes);
                 await fileStream.close();
             } else {
-                const name = imageSettings.filename ?? `${baseFilename()}${job?.suffix ?? ''}${isStereo ? '_TB' : ''}`;
                 downloadFile(bytes, `${name}.${extension}`, mimeType);
+            }
+
+            // the greyscale depth map goes out as its own png next to it
+            if (imageSettings.depthMap && depthData && !is360) {
+                const map = encodeDepthMap(depthData, width, height, imageSettings.depthMap);
+                downloadFile(await map.png, `${name}_depth.png`, 'image/png');
             }
 
             return true;
@@ -1162,15 +1172,29 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     return newSplat;
                 };
 
+                // greyscale depth maps of a sequence share one range (taken
+                // from the first frame when automatic), so they don't flicker
+                let depthMapRange: { near: number, far: number } | undefined;
+                const writeDepthMap = async (name: string, depth: Float32Array | null) => {
+                    const settings = videoSettings.depthMap;
+                    if (!settings || !sequence || is360) return;
+                    const map = encodeDepthMap(depth ?? await captureDepth(width, height), width, height, settings, depthMapRange);
+                    depthMapRange = map.range;
+                    await sequence.add(`${name}_depth.png`, await map.png);
+                };
+
                 // write the pixels in the data buffer as a png / exr frame
                 const writeRawFrame = async () => {
                     const index = rawIndex++;
                     const name = `${baseFilename()}${videoSettings.filenameSuffix ?? ''}_${String(index).padStart(5, '0')}`;
                     if (rawFormat === 'exr-seq') {
-                        const depth = videoSettings.depth && !is360 ? await captureDepth(width, height) : null;
-                        await sequence.add(`${name}.exr`, await encodeExr(data, width, height, depth));
+                        const needDepth = (videoSettings.depth || videoSettings.depthMap) && !is360;
+                        const depth = needDepth ? await captureDepth(width, height) : null;
+                        await sequence.add(`${name}.exr`, await encodeExr(data, width, height, videoSettings.depth ? depth : null));
+                        await writeDepthMap(name, depth);
                         return;
                     }
+                    if (rawFormat === 'png-seq') await writeDepthMap(name, null);
                     const png = await encodePng(straight ? unpremultiply(data, straight) : data, width, height);
                     if (movWriter) {
                         await movWriter.addFrame(png);

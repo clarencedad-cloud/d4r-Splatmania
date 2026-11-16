@@ -2,6 +2,7 @@ import { BooleanInput, Button, Container, Element, Label, NumericInput, SelectIn
 
 import { Events } from '../events';
 import { ImageSettings } from '../render';
+import { createDepthMapOptions } from './depth-map-options';
 import { i18n } from './localization';
 import sceneExport from './svg/export.svg';
 
@@ -268,8 +269,11 @@ class ImageSettingsDialog extends Container {
         depthRow.append(depthLabel);
         depthRow.append(depthBoolean);
         depthRow.hidden = true;
+        // greyscale depth map next to the image (any format, standard projection)
+        const depthMap = createDepthMapOptions();
         const syncDepth = () => {
             depthRow.hidden = !(formatSelect.value === 'exr' && projectionSelect.value === 'standard');
+            depthMap.setAvailable(projectionSelect.value === 'standard');
         };
 
         // content
@@ -282,6 +286,7 @@ class ImageSettingsDialog extends Container {
         content.append(qualityRow);
         content.append(transparentBgRow);
         content.append(depthRow);
+        depthMap.rows.forEach(r => content.append(r));
         content.append(showDebugRow);
         content.append(levelHorizonRow);
         content.append(ipdRow);
@@ -464,6 +469,7 @@ class ImageSettingsDialog extends Container {
                         format,
                         quality: format === 'jpeg' ? qualitySlider.value / 100 : undefined,
                         depth: !depthRow.hidden && depthBoolean.value,
+                        depthMap: depthMap.value(),
                         projection: (isStereo ? 'stereo' : (is360 ? 'equirect' : 'standard')) as ImageSettings['projection'],
                         levelHorizon: is360 && levelHorizonBoolean.value,
                         stereo: isStereo ? { ipd: ipdInput.value, poleStart: poleSlider.value, segments: parseInt(segmentSelect.value, 10) } : undefined,

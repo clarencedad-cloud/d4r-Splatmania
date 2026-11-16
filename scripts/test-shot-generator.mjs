@@ -357,6 +357,40 @@ const byTemplate = (list, t) => list.find(p => p.params.template === t);
     check(Math.abs(r2[0].params.distanceFactor / r1[0].params.distanceFactor - 1.5) < 0.01, 'distanceScale applies to Claude requests');
 }
 
+// --- camera height style and picked move ----------------------------------------
+{
+    const scene = makeScene({ size: [3, 4, 2] });
+    const o = scene.object;
+    const ground = o.center.y - o.halfExtents.y;
+    const top = o.center.y + o.halfExtents.y;
+    const run = extra => generateShots(o, { fps: 30, fov: 60, anchors: [], coverage: scene.coverage, ...extra });
+    const ctx = name => ({ fps: 30, object: o, name, distanceScale: 1.5 });
+
+    const groundShots = run({ style: 'ground' });
+    groundShots.forEach(p => checkProposal(p, ctx('ground')));
+    check(groundShots.every(p => !['crane', 'flyover'].includes(p.params.template)), 'ground: no crane or flyover');
+    const groundYs = groundShots.flatMap(p => p.keys.map(k => k.position.y - ground));
+    check(Math.max(...groundYs) < 2.5 && Math.min(...groundYs) > 0.2, `ground: camera stays near eye level (${Math.min(...groundYs).toFixed(2)}..${Math.max(...groundYs).toFixed(2)})`);
+
+    const aerialShots = run({ style: 'aerial' });
+    aerialShots.forEach(p => checkProposal(p, ctx('aerial')));
+    check(aerialShots.every(p => p.keys.every(k => k.position.y > top)), 'aerial: camera always above the object');
+
+    const lowShots = run({ style: 'low' });
+    lowShots.forEach(p => checkProposal(p, ctx('low')));
+    check(lowShots.every(p => p.keys.every(k => k.position.y - ground < 1)), 'low: camera close to the ground');
+
+    const orbits = run({ templates: ['orbit'] });
+    orbits.forEach(p => checkProposal(p, ctx('orbit variants')));
+    check(orbits.length === 6 && orbits.every(p => p.params.template === 'orbit'), `one picked move gives 6 variants of it (${orbits.length})`);
+    check(new Set(orbits.map(p => p.params.sweepDeg + p.params.direction)).size >= 4, 'variants differ in sweep and direction');
+
+    const pushes = run({ templates: ['pushIn'], style: 'ground' });
+    pushes.forEach(p => checkProposal(p, ctx('pushIn ground')));
+    check(new Set(pushes.map(p => Math.round(p.params.startAngleDeg / 10))).size >= 3, 'push-in variants come from different sides');
+    check(run({ templates: ['orbit', 'slide'] }).every(p => ['orbit', 'slide'].includes(p.params.template)), 'several picked moves: only those');
+}
+
 // --- requests (Claude) ---------------------------------------------------------
 {
     const scene = makeScene({ wall: true });

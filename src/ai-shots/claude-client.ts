@@ -41,6 +41,9 @@ type PlanInput = {
     object: { size: [number, number, number]; source: string };
     anchors: number;
     durationHint?: number;
+    // camera height preset and allowed moves chosen in the panel
+    style?: string;
+    templates?: string[];
     language: string;
 };
 
@@ -412,6 +415,14 @@ const planShots = async (input: PlanInput, signal?: AbortSignal): Promise<ShotPa
     if (isNumber(input.durationHint)) {
         lines.push(`Preferred duration: about ${Math.round(input.durationHint)} seconds per shot.`);
     }
+    const styleText: Record<string, string> = {
+        ground: 'eye level: the camera stays near the ground at standing height (heightFactor is fixed by the editor; prefer orbit, reveal, slide, pushIn)',
+        low: 'frog-eye view: the camera stays just above the ground looking up (height fixed by the editor; prefer orbit, reveal, slide, pushIn)',
+        high: 'raised: the camera stays above the top of the object',
+        aerial: 'aerial / drone shot: the camera stays well above the object and further out (prefer orbit, flyover, crane, slide)'
+    };
+    if (input.style && styleText[input.style]) lines.push(`Camera height chosen by the user: ${styleText[input.style]}.`);
+    if (input.templates?.length) lines.push(`Use only these templates: ${input.templates.join(', ')}. Vary them (sides, directions, sweeps).`);
     lines.push(`Write label and rationale in this language: ${input.language || 'en'}.`);
 
     const result: any = await requestJson('low', planSchema, planSystem, [{ type: 'text', text: lines.join('\n') }], signal);

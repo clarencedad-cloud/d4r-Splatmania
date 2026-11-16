@@ -1,6 +1,6 @@
 import { Vec3 } from 'playcanvas';
 
-import { SHOT_LIMITS, SHOT_TEMPLATES, type AnchorPose, type CoverageField, type GeneratedKey, type ShotObject, type ShotParams, type ShotProposal, type ShotTemplate } from './shot-types';
+import { SHOT_LIMITS, SHOT_STYLES, SHOT_TEMPLATES, STYLE_TEMPLATES, type AnchorPose, type CoverageField, type GeneratedKey, type ShotObject, type ShotParams, type ShotProposal, type ShotStyle, type ShotTemplate } from './shot-types';
 import { CubicSpline } from '../anim/spline';
 
 // Deterministic camera moves around an object. Every template is a path
@@ -22,6 +22,11 @@ type GenerateOptions = {
     // multiplier on the camera distance to the object (also on Claude's
     // requests), 0.5..3; default 1
     distanceScale?: number;
+    // camera height all moves keep (also Claude's); default 'auto'
+    style?: ShotStyle;
+    // only these moves; one move gives `count` variants of it (different
+    // sides, directions and sweeps)
+    templates?: ShotTemplate[];
 };
 
 const DISTANCE_SCALE: readonly [number, number] = [0.5, 3];
@@ -52,6 +57,8 @@ type Context = {
     mainAxis: Vec3;
     // user multiplier on all camera distances (GenerateOptions.distanceScale)
     distanceScale: number;
+    // camera height preset (GenerateOptions.style)
+    style: ShotStyle;
 };
 
 const DEG = Math.PI / 180;
@@ -188,7 +195,8 @@ const createContext = (obj: ShotObject, fov: number, anchors: AnchorPose[], cove
         anchors: list.slice(0, 3),
         coverage,
         mainAxis: half.x >= half.z ? new Vec3(1, 0, 0) : new Vec3(0, 0, 1),
-        distanceScale: 1
+        distanceScale: 1,
+        style: 'auto'
     };
 };
 
@@ -599,15 +607,82 @@ const uniform = (path: ShotPath): ShotPath => {
     };
 };
 
+// camera heights of a style, world y: the ground is the bottom of the
+// object; eye level is about 1.6 scene units (metres in a metric scan),
+// kept within a sensible share of the object's height
+const styleHeights = (ctx: Context) => {
+    const half = ctx.obj.halfExtents;
+    const height = Math.max(1e-3, 2 * half.y);
+    const ground = ctx.center.y - half.y;
+    const top = ctx.center.y + half.y;
+    const eye = clamp(1.6, 0.12 * height, 0.45 * height);
+    return { ground, top, eye, height };
+};
+
+// apply the style to a path: ground and low keep the camera at one height
+// near the ground, high and aerial keep it above the object
+const styled = (ctx: Context, path: ShotPath): ShotPath => {
+    if (ctx.style === 'auto') return path;
+    const { ground, top, eye, height } = styleHeights(ctx);
+    const r = ctx.radius;
+    const fix = (y: number) => {
+        switch (ctx.style) {
+            case 'ground': return ground + eye;
+            case 'low': return ground + 0.3 * eye;
+            case 'high': return Math.max(y, top + 0.25 * height);
+            case 'aerial': return Math.max(y, top + 0.6 * r + 0.25 * height);
+            default: return y;
+        }
+    };
+    return {
+        ...path,
+        pose: (s: number) => {
+            const pose = path.pose(s);
+            const position = pose.position.clone();
+            position.y = fix(position.y);
+            const target = pose.target.clone();
+            // from the ground the eye looks a little up the object, from
+            // low it looks up at it
+            if (ctx.style === 'low') target.y = Math.max(target.y, ground + 0.6 * height);
+            return { ...pose, position, target };
+        }
+    };
+};
+
 const buildPath = (ctx: Context, p: ShotParams, endDistance?: number): ShotPath => {
     switch (p.template) {
-        case 'orbit': return uniform(orbitPath(ctx, p));
-        case 'reveal': return uniform(revealPath(ctx, p));
-        case 'crane': return uniform(cranePath(ctx, p));
-        case 'slide': return uniform(slidePath(ctx, p));
-        case 'pushIn': return uniform(pushInPath(ctx, p, endDistance));
-        case 'flyover': return uniform(flyoverPath(ctx, p));
+        case 'orbit': return uniform(styled(ctx, orbitPath(ctx, p)));
+        case 'reveal': return uniform(styled(ctx, revealPath(ctx, p)));
+        case 'crane': return uniform(styled(ctx, cranePath(ctx, p)));
+        case 'slide': return uniform(styled(ctx, slidePath(ctx, p)));
+        case 'pushIn': return uniform(styled(ctx, pushInPath(ctx, p, endDistance)));
+        case 'flyover': return uniform(styled(ctx, flyoverPath(ctx, p)));
     }
+};
+
+// default height and extra distance of a style, applied to fresh params
+const applyStyle = (ctx: Context, p: ShotParams) => {
+    if (ctx.style === 'auto') return;
+    const { ground, top, eye } = styleHeights(ctx);
+    const r = ctx.radius;
+    const [hMin, hMax] = SHOT_LIMITS.heightFactor;
+    switch (ctx.style) {
+        case 'ground': p.heightFactor = clamp((ground + eye - ctx.center.y) / r, hMin, hMax); break;
+        case 'low': p.heightFactor = hMin; break;
+        case 'high': p.heightFactor = clamp(Math.max(p.heightFactor, (top - ctx.center.y) / r + 0.3), hMin, hMax); break;
+        case 'aerial':
+            p.heightFactor = hMax;
+            p.distanceFactor = clamp(p.distanceFactor * 1.35, SHOT_LIMITS.distanceFactor[0], SHOT_LIMITS.distanceFactor[1] * Math.max(1, ctx.distanceScale) * 1.35);
+            break;
+    }
+};
+
+// variations of one move: other sides come from the `used` repulsion,
+// direction and sweep alternate
+const VARIANT_SWEEP: Partial<Record<ShotTemplate, number[]>> = {
+    orbit: [150, 90, 220, 360, 120, 180],
+    slide: [50, 35, 70, 45, 60, 40],
+    reveal: [70, 50, 100, 60, 85, 45]
 };
 
 // --- keys ------------------------------------------------------------------
@@ -916,39 +991,70 @@ const generateShots = (object: ShotObject, opts: GenerateOptions): ShotProposal[
     const duration = finite(opts.durationSec) ? opts.durationSec : undefined;
     const scale = finite(opts.distanceScale) ? clamp(opts.distanceScale, DISTANCE_SCALE[0], DISTANCE_SCALE[1]) : 1;
     ctx.distanceScale = scale;
+    ctx.style = opts.style && SHOT_STYLES.includes(opts.style) ? opts.style : 'auto';
     const used: number[] = [];
+    // the style decides the height: anchors and requests do not override it
+    const heightLocked = ctx.style !== 'auto';
 
     if (opts.requests?.length) {
         const list = opts.requests
         .filter(r => r && SHOT_TEMPLATES.includes(r.template))
         .map((r, i) => {
             const params = sanitize(r.template, r, ctx, undefined, scale);
+            applyStyle(ctx, params);
             const anchor = ctx.anchors.length ? ctx.anchors[i % ctx.anchors.length] : undefined;
-            const proposal = buildProposal(ctx, fps, params, r, anchor, used, `${r.template}-${i}`);
+            const explicit = heightLocked ? { ...r, heightFactor: params.heightFactor } : r;
+            const proposal = buildProposal(ctx, fps, params, explicit, anchor, used, `${r.template}-${i}`);
             if (r.template !== 'orbit') used.push(proposal.params.startAngleDeg);
             return proposal;
         });
         return finite(opts.count) ? list.slice(0, Math.max(0, opts.count)) : list;
     }
 
+    const count = finite(opts.count) ? Math.max(0, Math.floor(opts.count)) : 6;
+    const picked = (opts.templates ?? []).filter(t => SHOT_TEMPLATES.includes(t));
+
+    // one move picked: variations of it
+    if (picked.length === 1) {
+        const template = picked[0];
+        const list: ShotProposal[] = [];
+        for (let i = 0; i < Math.max(1, count); i++) {
+            const params = sanitize(template, {}, ctx, duration, scale);
+            applyStyle(ctx, params);
+            params.direction = i % 2 === 0 ? 'ccw' : 'cw';
+            const sweeps = VARIANT_SWEEP[template];
+            if (sweeps) params.sweepDeg = clamp(sweeps[i % sweeps.length], SHOT_LIMITS.sweepDeg[0], template === 'orbit' ? 360 : 120);
+            if (template === 'orbit' && params.sweepDeg >= 360) params.easing = 'linear';
+            const anchor = ctx.anchors.length ? ctx.anchors[i % ctx.anchors.length] : undefined;
+            const explicit: Partial<ShotParams> = heightLocked ? { heightFactor: params.heightFactor } : {};
+            const proposal = buildProposal(ctx, fps, params, explicit, anchor, used, `${template}-v${i}`);
+            used.push(template === 'reveal' || template === 'crane' ? keysEndAzimuth(ctx, proposal) : proposal.params.startAngleDeg);
+            list.push(proposal);
+        }
+        list.sort((a, b) => b.score - a.score);
+        return list;
+    }
+
     // one of each, most promising first; best covered sides go to the
     // templates that depend most on them
-    const order: ShotTemplate[] = ['pushIn', 'reveal', 'crane', 'flyover', 'slide', 'orbit'];
+    const allowed = picked.length ? picked : STYLE_TEMPLATES[ctx.style];
+    const order: ShotTemplate[] = (['pushIn', 'reveal', 'crane', 'flyover', 'slide', 'orbit'] as ShotTemplate[]).filter(t => allowed.includes(t));
     const list: ShotProposal[] = [];
     let anchorIndex = 0;
     for (const template of order) {
         const params = sanitize(template, {}, ctx, duration, scale);
+        applyStyle(ctx, params);
         // a full turn should loop seamlessly
         if (template === 'orbit' && params.sweepDeg >= 360) params.easing = 'linear';
         const anchor = template !== 'orbit' && ctx.anchors.length ? ctx.anchors[anchorIndex++ % ctx.anchors.length] : undefined;
         const index = SHOT_TEMPLATES.indexOf(template);
-        const proposal = buildProposal(ctx, fps, params, {}, anchor, used, `${template}-${index}`);
+        const explicit: Partial<ShotParams> = heightLocked ? { heightFactor: params.heightFactor } : {};
+        const proposal = buildProposal(ctx, fps, params, explicit, anchor, used, `${template}-${index}`);
         if (template !== 'orbit') used.push(template === 'reveal' || template === 'crane' ? keysEndAzimuth(ctx, proposal) : proposal.params.startAngleDeg);
         list.push(proposal);
     }
 
     list.sort((a, b) => (b.score - a.score) || (SHOT_TEMPLATES.indexOf(a.params.template) - SHOT_TEMPLATES.indexOf(b.params.template)));
-    const count = finite(opts.count) ? Math.max(0, Math.floor(opts.count)) : 6;
     return list.slice(0, count);
 };
 

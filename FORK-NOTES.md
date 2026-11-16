@@ -979,3 +979,19 @@ Panel „Kamerafahrt-Vorschläge“ (rechte Leiste). Code in `src/ai-shots/` (`s
 
 - `src/ui/help.ts` + `src/ui/scss/help.scss`: „?“-Knopf im Kopf jedes Splatmania-Panels (13 Stück) öffnet eine kurze Anleitung; Menü Hilfe → „Splatmania-Werkzeuge erklärt“ zeigt alle 14 Themen.
 - Texte in den Locales unter `sm.help.<thema>.{title,intro,steps,tips}` (Schritte/Tipps zeilenweise), Deutsch und Englisch; andere Sprachen fallen auf Englisch zurück.
+
+## Kamerahöhe und Bewegungsart bei den Kamerafahrt-Vorschlägen (16.11.2026)
+
+- Panel: Auswahl **„Kamerahöhe“** (Automatisch, Augenhöhe, Froschperspektive, Erhöht, Luftaufnahme) und **„Bewegung“** (Alle oder eine Vorlage). Native `<select>`, damit die Liste nicht vom Panel abgeschnitten wird.
+- Generator (`GenerateOptions.style`, `templates`): Boden = Unterkante des Objekts; Augenhöhe ≈ 1,6 Szeneneinheiten, begrenzt auf 12–45 % der Objekthöhe. `styled()` hält die Kamerahöhe über die ganze Bahn (Augenhöhe/Frosch konstant, Erhöht/Luft mindestens über der Oberkante); Froschperspektive hebt das Ziel an. Die Höhe des Stils schlägt Anker und Claude-Werte.
+- Ohne gewählte Bewegung nimmt jeder Stil passende Vorlagen (Augenhöhe/Frosch: ohne Kran und Überflug). Eine gewählte Bewegung liefert 6 Varianten (Seiten, Richtung, Schwenkwinkel).
+- Claude bekommt Höhe und erlaubte Vorlagen im Prompt; Vorschläge mit anderen Vorlagen werden verworfen.
+- Tests: zusätzliche Prüfungen für Augenhöhe, Frosch, Luft und Varianten (131 504 Prüfungen grün).
+
+## Tiefenkarte als Graubild (16.11.2026)
+
+- Bild-Export (alle Formate) und PNG-/EXR-Sequenzen, nur Standard-Projektion: Option **„Tiefenkarte (Graubild)“** schreibt zusätzlich `<Name>_depth.png` (16-Bit-Graustufen, `encodePngGray16` in `png-writer.ts`), bei Sequenzen eine pro Frame.
+- **Tiefenbereich:** „Automatisch“ = 1.–99. Perzentil der sichtbaren Splat-Tiefen (leerer Hintergrund 1e10 und Ausreißer zählen nicht); eine Sequenz behält den Bereich des ersten Frames (kein Flackern). „Von Hand“: Nah/Fern in Szeneneinheiten.
+- **Nah = Weiß** (Standard, wie ControlNet/MiDaS) oder umgekehrt. Leerer Hintergrund = fern.
+- Code: `src/depth-map.ts`, Dialog-Zeilen `src/ui/depth-map-options.ts`. Der EXR-Z-Kanal bleibt unverändert (echte Abstände, kein Bereich nötig).
+- Getestet per `render.image` am Testhaus: PNG + 16-Bit-Graustufen-PNG, automatischer Bereich gegen 0–60 von Hand verglichen. Sequenz-Export nicht per Klick getestet.

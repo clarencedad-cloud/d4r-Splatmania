@@ -1,3 +1,5 @@
+import type { DepthMapSettings } from './depth-map';
+
 // png: QuickTime with PNG frames (lossless, alpha), written by src/mov-writer.ts
 type VideoCodecChoice = 'h264' | 'h265' | 'vp9' | 'av1' | 'png';
 
@@ -32,6 +34,9 @@ type VideoSettings = {
     motionBlur?: { samples: number, shutter: number };
     // exr sequence: add a Z channel (camera depth), standard projection only
     depth?: boolean;
+    // png / exr sequence: an extra greyscale depth map per frame
+    // (<name>_depth.png), standard projection only
+    depthMap?: DepthMapSettings;
     // image sequences: the folder the frames go into (else a zip download)
     directory?: FileSystemDirectoryHandle;
 };

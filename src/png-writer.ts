@@ -67,4 +67,39 @@ const encodePng = async (rgba: Uint8Array, width: number, height: number): Promi
     return result;
 };
 
-export { encodePng, chunk as pngChunk };
+// encode top-down 16-bit greyscale values as a png (depth maps)
+const encodePngGray16 = async (values: Uint16Array, width: number, height: number): Promise<Uint8Array<ArrayBuffer>> => {
+    const ihdr = new Uint8Array(13);
+    const ihdrView = new DataView(ihdr.buffer);
+    ihdrView.setUint32(0, width);
+    ihdrView.setUint32(4, height);
+    ihdr[8] = 16;   // bit depth
+    ihdr[9] = 0;    // color type: greyscale
+
+    // png stores 16-bit samples big-endian
+    const rowBytes = width * 2;
+    const raw = new Uint8Array((rowBytes + 1) * height);
+    const view = new DataView(raw.buffer);
+    for (let y = 0; y < height; y++) {
+        const rowStart = y * (rowBytes + 1);
+        for (let x = 0; x < width; x++) {
+            view.setUint16(rowStart + 1 + x * 2, values[y * width + x], false);
+        }
+    }
+
+    const compressed = new Uint8Array(await new Response(
+        new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))
+    ).arrayBuffer());
+
+    const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const chunks = [signature, chunk('IHDR', ihdr), chunk('IDAT', compressed), chunk('IEND', new Uint8Array(0))];
+    const result = new Uint8Array(chunks.reduce((total, c) => total + c.length, 0));
+    let offset = 0;
+    for (const c of chunks) {
+        result.set(c, offset);
+        offset += c.length;
+    }
+    return result;
+};
+
+export { encodePng, encodePngGray16, chunk as pngChunk };

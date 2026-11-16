@@ -4,7 +4,7 @@ import { BoundingBox, Mat4, Vec3 } from 'playcanvas';
 import { aiAvailable, ClaudeError, planShots, rankShots } from './claude-client';
 import { buildCoverageField } from './coverage';
 import { generateShots } from './shot-generator';
-import type { AnchorPose, CoverageField, GeneratedKey, ShotObject, ShotParams, ShotProposal } from './shot-types';
+import type { AnchorPose, CoverageField, GeneratedKey, ShotObject, ShotParams, ShotProposal, ShotStyle, ShotTemplate } from './shot-types';
 import { BoxShape } from '../box-shape';
 import { ElementType } from '../element';
 import { Events } from '../events';
@@ -28,6 +28,10 @@ type GenerateOptions = {
     durationSec?: number;
     // multiplier on the camera distance to the object, 0.5..3
     distanceScale?: number;
+    // camera height preset (src/ai-shots/shot-types.ts ShotStyle)
+    style?: ShotStyle;
+    // only these moves; one move gives variants of it
+    templates?: ShotTemplate[];
 };
 
 type ApplyOptions = {
@@ -414,8 +418,12 @@ const registerAiShotsEvents = (events: Events, scene: Scene) => {
                         object: { size: [2 * h.x, 2 * h.y, 2 * h.z], source: object.source },
                         anchors: anchors.length,
                         durationHint: durationSec,
+                        style: opts?.style,
+                        templates: opts?.templates,
                         language
                     }, ctl.signal);
+                    // a picked move is a hard limit, also for Claude
+                    if (requests && opts?.templates?.length) requests = requests.filter(r => opts.templates.includes(r.template));
                     if (!requests?.length) requests = undefined;
                 } catch (error) {
                     check();
@@ -432,7 +440,7 @@ const registerAiShotsEvents = (events: Events, scene: Scene) => {
             check();
             // the panel's duration applies to the generator's own set; Claude's
             // requests carry their own durations
-            const proposals = generateShots(object, { fps, fov, anchors: anchors.slice(), coverage: field, requests, durationSec, distanceScale: opts?.distanceScale });
+            const proposals = generateShots(object, { fps, fov, anchors: anchors.slice(), coverage: field, requests, durationSec, distanceScale: opts?.distanceScale, style: opts?.style, templates: opts?.templates });
             check();
 
             // a hidden tab renders no frames: the stills wait (status

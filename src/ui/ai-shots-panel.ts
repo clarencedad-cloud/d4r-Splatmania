@@ -2,7 +2,7 @@ import { BooleanInput, Button, Container, Label, SliderInput } from '@playcanvas
 
 import type { AiShotsStatus, ApplyOptions, GenerateOptions } from '../ai-shots/ai-shots';
 import { aiAvailable, keyStore } from '../ai-shots/claude-client';
-import { SHOT_LIMITS, type ShotObject, type ShotProposal } from '../ai-shots/shot-types';
+import { SHOT_LIMITS, SHOT_STYLES, SHOT_TEMPLATES, type ShotObject, type ShotProposal, type ShotStyle, type ShotTemplate } from '../ai-shots/shot-types';
 import { Events } from '../events';
 import { helpButton } from './help';
 import { i18n } from './localization';
@@ -221,6 +221,34 @@ class AiShotsPanel extends Container {
             value: 1
         });
         distanceRow.append(distance);
+
+        // camera height and kind of move, like the camera presets of video
+        // generators. Native selects: their list is never clipped by the panel
+        const select = (labelKey: string, tipKey: string, options: [string, string][]) => {
+            const container = row(labelKey, tipKey);
+            const el = document.createElement('select');
+            el.classList.add('ai-shots-select');
+            const build = () => {
+                const value = el.value;
+                el.innerHTML = '';
+                for (const [v, key] of options) {
+                    const option = document.createElement('option');
+                    option.value = v;
+                    option.textContent = i18n.t(key);
+                    el.appendChild(option);
+                }
+                el.value = value || options[0][0];
+            };
+            build();
+            i18n.onChange(build);
+            el.addEventListener('keydown', e => e.stopPropagation());
+            container.dom.appendChild(el);
+            return el;
+        };
+        const styleSelect = select('sm.aishots.style', 'sm.aishots.style-tip',
+            SHOT_STYLES.map(s => [s, `sm.aishots.style.${s}`] as [string, string]));
+        const moveSelect = select('sm.aishots.move', 'sm.aishots.move-tip',
+            [['all', 'sm.aishots.move.all'] as [string, string], ...SHOT_TEMPLATES.map(t => [t, `sm.aishots.template.${t}`] as [string, string])]);
 
         // claude
 
@@ -551,7 +579,9 @@ class AiShotsPanel extends Container {
                     wish: useAi.value ? wish.value.trim() || undefined : undefined,
                     useAi: useAi.value,
                     durationSec: duration.value,
-                    distanceScale: distance.value
+                    distanceScale: distance.value,
+                    style: styleSelect.value as ShotStyle,
+                    templates: moveSelect.value === 'all' ? undefined : [moveSelect.value as ShotTemplate]
                 };
                 const proposals = await events.invoke('aiShots.generate', options) as ShotProposal[] | null;
                 if (!cancelled) showProposals(proposals ?? []);

@@ -7,6 +7,25 @@ type ShotTemplate = 'orbit' | 'reveal' | 'crane' | 'slide' | 'pushIn' | 'flyover
 
 const SHOT_TEMPLATES: ShotTemplate[] = ['orbit', 'reveal', 'crane', 'slide', 'pushIn', 'flyover'];
 
+// camera height the moves keep: like the camera presets of video generators
+//   auto   - each move its own height
+//   ground - eye level, the camera stays near the ground
+//   low    - frog's eye, close to the ground looking up
+//   high   - raised, above the object's top
+//   aerial - drone shot, well above and further out
+type ShotStyle = 'auto' | 'ground' | 'low' | 'high' | 'aerial';
+
+const SHOT_STYLES: ShotStyle[] = ['auto', 'ground', 'low', 'high', 'aerial'];
+
+// the moves that make sense for a height (used when no move is picked)
+const STYLE_TEMPLATES: Record<ShotStyle, ShotTemplate[]> = {
+    auto: SHOT_TEMPLATES,
+    ground: ['orbit', 'reveal', 'slide', 'pushIn'],
+    low: ['orbit', 'reveal', 'slide', 'pushIn'],
+    high: ['orbit', 'reveal', 'crane', 'slide', 'pushIn', 'flyover'],
+    aerial: ['orbit', 'crane', 'slide', 'pushIn', 'flyover']
+};
+
 // valid parameter ranges, shared by the generator (clamping) and the Claude prompt/schema
 const SHOT_LIMITS = {
     durationSec: [3, 30],
@@ -111,6 +130,9 @@ interface CoverageField {
 
 export {
     SHOT_TEMPLATES,
+    SHOT_STYLES,
+    STYLE_TEMPLATES,
+    type ShotStyle,
     SHOT_LIMITS,
     SHOT_WARNINGS,
     type ShotTemplate,

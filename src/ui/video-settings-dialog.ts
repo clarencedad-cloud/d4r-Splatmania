@@ -2,6 +2,7 @@ import { BooleanInput, Button, Container, Element, Label, NumericInput, SelectIn
 
 import { Events } from '../events';
 import { buildVideoEncoderConfig, VideoCodecChoice, VideoSettings } from '../video-config';
+import { createDepthMapOptions } from './depth-map-options';
 import { i18n } from './localization';
 import sceneExport from './svg/export.svg';
 
@@ -443,6 +444,8 @@ class VideoSettingsDialog extends Container {
         // exr: camera depth as a Z channel
         const depthBoolean = new BooleanInput({ class: 'boolean', value: true });
         const depthRow = stereoRow('sm.video.depth', depthBoolean, 'sm.video.depth-tip');
+        // greyscale depth map per frame (png / exr sequences, standard projection)
+        const depthMap = createDepthMapOptions();
 
         // show debug overlays
 
@@ -460,6 +463,7 @@ class VideoSettingsDialog extends Container {
             const raw = isRaw();
             transparentBgRow.hidden = !(format === 'webm' || raw);
             depthRow.hidden = !(format === 'exr-seq' && projectionSelect.value === 'standard');
+            depthMap.setAvailable((format === 'exr-seq' || format === 'png-seq') && projectionSelect.value === 'standard');
             codecRow.hidden = format.endsWith('-seq');
             bitrateRow.hidden = raw;
         };
@@ -502,6 +506,7 @@ class VideoSettingsDialog extends Container {
         content.append(shutterRow);
         content.append(transparentBgRow);
         content.append(depthRow);
+        depthMap.rows.forEach(r => content.append(r));
         content.append(showDebugRow);
 
         const compatibilityMessage = new Label({
@@ -870,6 +875,7 @@ class VideoSettingsDialog extends Container {
                         ...encodingSettings,
                         transparentBg: !transparentBgRow.hidden && transparentBgBoolean.value,
                         depth: !depthRow.hidden && depthBoolean.value,
+                        depthMap: depthMap.value(),
                         showDebug: !is360 && showDebugBoolean.value,
                         format: formatSelect.value as VideoSettings['format'],
                         projection: isStereo ? 'stereo' : (is360 ? 'equirect' : 'standard'),

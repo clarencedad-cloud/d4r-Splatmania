@@ -360,3 +360,27 @@
         }
     }
 }
+
+// camera height and move pickers (native selects, never clipped)
+.ai-shots-select {
+    flex-grow: 1;
+    min-width: 0;
+    height: 24px;
+    padding: 0 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.25);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+
+    &:focus {
+        outline: none;
+        border-color: #c20e7e;
+    }
+
+    option {
+        background-color: #1e1a28;
+        color: #ddd;
+    }
+}
