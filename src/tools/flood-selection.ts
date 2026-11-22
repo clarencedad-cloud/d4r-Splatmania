@@ -2,6 +2,7 @@ import { Container, NumericInput } from '@playcanvas/pcui';
 
 import { Events } from '../events';
 import { opFromModifiers } from '../select-op';
+import { i18n } from '../ui/localization';
 
 type Pt = {x : number, y: number };
 
@@ -42,6 +43,7 @@ class FloodSelection {
             min: 0.001,
             max: 0.999
         });
+        i18n.bindDom(thresholdInput.dom, 'select-toolbar.flood-threshold-tip', 'title');
         selectToolbar.append(thresholdInput);
 
         canvasContainer.append(selectToolbar);

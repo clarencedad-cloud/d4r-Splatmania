@@ -217,6 +217,17 @@ class PublishSettingsDialog extends Container {
         fovRow.append(fovLabel);
         fovRow.append(fovSlider);
 
+        // roll-over explanations (animation, loop and fov as in the export dialog)
+        ([
+            [overwriteRow, 'popup.publish.destination-tip'],
+            [overrideModelRow, 'popup.publish.override-model-tip'],
+            [overrideAnimationRow, 'popup.publish.override-animation-tip'],
+            [animationRow, 'popup.export.animation-tip'],
+            [loopRow, 'popup.export.loop-mode-tip'],
+            [fovRow, 'popup.export.fov-tip'],
+            [generateLodsRow, 'popup.publish.generate-lods-tip']
+        ] as [Container, string][]).forEach(([row, key]) => i18n.bindDom(row.dom, key, 'title'));
+
         // content
 
         const content = new Container({ id: 'content' });

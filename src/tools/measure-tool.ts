@@ -57,6 +57,7 @@ class MeasureTool {
             min: 0.0001,
             value: 0
         });
+        i18n.bindDom(lengthInput.dom, 'measure.length-tip', 'title');
         let suppressUI = 0;
 
         const clearButton = new Button({ class: 'select-toolbar-button', enabled: false });

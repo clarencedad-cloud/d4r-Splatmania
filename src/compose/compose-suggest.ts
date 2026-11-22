@@ -1,5 +1,6 @@
 import { BUFFERUSAGE_COPY_DST, BUFFERUSAGE_COPY_SRC, Mat4, Quat, StorageBuffer, Vec3 } from 'playcanvas';
 
+import { BLUR, type BlurArea, type BlurResult } from './compose-blur';
 import { keyOf } from './compose-core';
 import {
     applyPaint,
@@ -37,12 +38,18 @@ import { i18n } from '../ui/localization';
 
 // Scan composition, phase 2 on the main thread (steps 3 "Analyse" and 4
 // "Vorschläge"): the analysis run (compact reads, the worker jobs
-// 'compose-cells', 'compose-detail' and 'compose-paint', the pure
-// paintInputs / applyPaint of compose-detail.ts), the suggestions ("cards")
-// with their status derived from the lock bits, the per-scan display bytes
-// the splat renderer reads through 'compose.renderParams' (map, previews,
-// marking, hover), the probe and the API. Accepting hides the coarser scan's
-// splats through undoable ops; nothing is deleted.
+// 'compose-blur', 'compose-cells', 'compose-detail' and 'compose-paint', the
+// pure paintInputs / applyPaint of compose-detail.ts), the suggestions
+// ("cards") with their status derived from the lock bits, the per-scan
+// display bytes the splat renderer reads through 'compose.renderParams'
+// (map, previews, marking, hover), the probe and the API. Accepting hides the
+// coarser scan's splats through undoable ops; nothing is deleted.
+//
+// Step 4 leads with the simple path: the large blurry areas of each scan
+// (compose-blur.ts, "Unscharfe Bereiche"), one card per area with Löschen /
+// Behalten / Auswählen. "Löschen" hides the area's splats with the same ops
+// as an accepted suggestion (one undo step, "Zurücknehmen"); the detailed
+// suggestions follow folded as "Feinvergleich".
 
 type GridMode = 'auto' | 'fine' | 'coarse';
 type PreviewMode = 'before' | 'after';
@@ -63,7 +70,10 @@ type SuggestContext = {
     // the sharpness view's render params for a scan (compose-tool, all
     // steps), null when it is off or not ready; a card preview in step 4
     // wins over it
-    sharpness?: (splat: Splat, hideLocked: boolean) => ComposeRenderParams | null
+    sharpness?: (splat: Splat, hideLocked: boolean) => ComposeRenderParams | null,
+    // an analysis hands the sharpness view the blurry-area detector's value
+    // per instance (SharpnessView.setExternal)
+    sharpSource?: (splat: Splat, value: { bytes: Uint8Array, median: number } | null) => void
 };
 
 // what makes an analysis of a scan stale: its world transform, its instance
@@ -169,11 +179,56 @@ type Analysis = {
     visited: boolean,
     // per global cell: the instances each card hides there, per loser
     // (built on first use by hidesIn, dropped by countTotals)
-    cellHides?: Map<number, CellHide[]> | null
+    cellHides?: Map<number, CellHide[]> | null,
+    // the large blurry areas (compose-blur), null when the detector failed
+    areas: AreaState | null
 };
 
 // instances of scan `scan` a card hides in one cell
 type CellHide = { card: number, scan: number, n: number };
+
+// a large blurry area of one scan (compose-blur.ts): one card of step 4's
+// "Unscharfe Bereiche". Its splats are the area's rows as instances (areaInst)
+type AreaCard = {
+    // the area's rank in the detector (BlurArea.id); the panel numbers the
+    // cards in their own order (AreaState.cards)
+    id: number,
+    // the area without its row list (mapped to instances, see AreaState)
+    area: Omit<BlurArea, 'rows'>,
+    scan: number,
+    // "Behalten": the user keeps it (not offered for deletion, out of the
+    // bulk delete); remembered across analyses (see areaKept)
+    kept: boolean,
+    // as Card: instances of the area, the ones compose hid, the ones locked
+    // otherwise, and hidden by hand
+    status: CardStatus,
+    total: number,
+    locked: number,
+    others: number,
+    handHidden: boolean
+};
+
+// the blurry areas of an analysis
+type AreaState = {
+    cell: number,
+    seconds: number,
+    // in display order: where another scan is sharp first, then
+    // free-floating islands, then the rest; larger first within each
+    cards: AreaCard[],
+    // per scan, per instance: area id + 1 (0: in no area)
+    areaInst: Uint16Array[],
+    // per scan, per instance: the detector's blur value as sharpness view
+    // bytes (see SharpnessView.setExternal), or null
+    sharpInst: Uint8Array[],
+    // per scan, per area id: instances, hidden by compose, locked otherwise
+    total: Uint32Array[],
+    lockedBy: Uint32Array[],
+    otherBy: Uint32Array[]
+};
+
+// an area kept with "Behalten", remembered across analyses: same scan, and
+// half of a new area's box inside its box
+type KeptMemory = { scan: Splat, min: V3, max: V3 };
 
 // a rejected card, remembered across analyses
 type RejectMemory = {
@@ -193,7 +248,7 @@ type Display = {
     params: ComposeRenderParams
 };
 
-type Hover = { kind: 'card', id: number } | { kind: 'skip', index: number };
+type Hover = { kind: 'card', id: number } | { kind: 'skip', index: number } | { kind: 'area', id: number };
 
 type ProbeView = {
     // the picked point, the view direction it was picked along, and whether
@@ -216,16 +271,26 @@ type AnalyseSummary = {
     clear: number,
     skipped: number,
     apartShare: number,
-    times: Record<string, number>
+    times: Record<string, number>,
+    // blurry areas, and of them the ones another scan is sharp in
+    areas: number,
+    areasSharp: number
 };
 
 const GRIDS: GridMode[] = ['auto', 'fine', 'coarse'];
 const LEADS = [1.4, 1.6, 2];
-// progress (percent) of the reads, the cell tables and the comparison; the
-// cover proof gets the rest
-const P_READ = 35;
+// progress (percent) of the reads, the blurry areas, the cell tables and the
+// comparison; the cover proof gets the rest
+const P_READ = 33;
+const P_BLUR = 5;
 const P_CELLS = 15;
 const P_DETAIL = 8;
+// how long a blurry area stays highlighted after a click on its card (ms)
+const AREA_FLASH_MS = 2600;
+// display order of the blurry areas: another scan is sharp there, then
+// free-floating islands, then areas only this scan has, then those where
+// the others are blurry too
+const AREA_GROUP = (area: Omit<BlurArea, 'rows'>) => (area.compare === 'otherSharp' ? 0 : area.kind === 'island' ? 1 : area.compare === 'alone' ? 2 : 3);
 // card status from the locked share of its hide set
 const ACCEPTED_SHARE = 0.95;
 const PARTLY_SHARE = 0.05;
@@ -531,6 +596,15 @@ const BLUR_OPAQUE = 51;
 // the default range in octaves above the scan's median footprint
 const BLUR_FROM = 3;
 const BLUR_TO = 6;
+// after an analysis the view shows the blurry-area detector's value instead
+// (ComposeSuggest.areaState): a splat's own and its voxel's octaves over the
+// scan's median, averaged (blur by area, not splat by splat), at most
+// BLUR.mapHi = 4. Its SHARP_PIVOT octaves sit where the range starts
+// (SHARP_FROM), stretched by SHARP_STRETCH, so the default range shows its
+// 2.5..4 octaves
+const SHARP_PIVOT = 2.5;
+const SHARP_STRETCH = 2;
+const SHARP_FROM = BLUR_FROM;
 // the median from a histogram of log2(footprint): 1/32 octave, 2^-30..2^20
 const BLUR_BINS_PER_OCTAVE = 32;
 const BLUR_LOG_MIN = -30;
@@ -608,7 +682,20 @@ type SharpEntry = {
     bytes: Uint8Array,
     buffer: StorageBuffer,
     median: number,
-    params: ComposeRenderParams
+    params: ComposeRenderParams,
+    // the analysis' bytes it was made from (see setExternal), null: the
+    // view's own measure
+    source: SharpExternal | null
+};
+
+// a scan's blur bytes from the analysis (compose-blur's per-row value as
+// instances), for the instance list of count and print at view version
+type SharpExternal = {
+    count: number,
+    print: number,
+    version: number,
+    bytes: Uint8Array,
+    median: number
 };
 
 // the per-scan blur bytes and their gpu buffers: computed when the view asks
@@ -623,6 +710,8 @@ class SharpnessView {
     private entries = new Map<Splat, SharpEntry>();
     private versions = new Map<Splat, number>();
     private pending = new Set<Splat>();
+    // the analysis' bytes per scan (see setExternal)
+    private external = new Map<Splat, SharpExternal>();
     private onReady: () => void;
 
     constructor(events: Events, scene: Scene, onReady: () => void) {
@@ -635,18 +724,55 @@ class SharpnessView {
         events.on('splat.replaced', bump);
     }
 
+    // the analysis' blur bytes of a scan while they fit it
+    private externalOf(splat: Splat) {
+        const x = this.external.get(splat);
+        return x && x.version === (this.versions.get(splat) ?? 0) && sameList(splat, x.count, x.print) ? x : null;
+    }
+
+    // an entry fits the scan: made from its current analysis bytes, or with
+    // none, from its own measure of the current data
     private fresh(splat: Splat, e: SharpEntry | undefined) {
-        return !!e && e.version === (this.versions.get(splat) ?? 0) && sameList(splat, e.count, e.print);
+        if (!e) return false;
+        const x = this.externalOf(splat);
+        if (x) return e.source === x;
+        return !e.source && e.version === (this.versions.get(splat) ?? 0) && sameList(splat, e.count, e.print);
+    }
+
+    // after an analysis: the blurry-area detector's value per instance
+    // (compose-blur: a splat's own and its voxel's octaves over the scan's
+    // median, averaged - blur by area, not splat by splat), encoded in the
+    // view's octaves (see ComposeSuggest.areaState). It replaces the own
+    // measure of the scan while it fits its instance list; null drops it
+    setExternal(splat: Splat, value: { bytes: Uint8Array, median: number } | null) {
+        if (!value) {
+            this.external.delete(splat);
+        } else {
+            this.external.set(splat, {
+                count: splat.instances.count,
+                print: listPrint(splat),
+                version: this.versions.get(splat) ?? 0,
+                bytes: value.bytes,
+                median: value.median
+            });
+        }
+        this.scene.forceRender = true;
     }
 
     // what the renderer binds for a scan while the view is on (null while
     // its bytes are being computed: the scan draws as usual for that moment)
     params(splat: Splat, hideLocked: boolean): ComposeRenderParams | null {
         if (!this.enabled) return null;
-        const e = this.entries.get(splat);
+        let e = this.entries.get(splat);
         if (!this.fresh(splat, e)) {
-            this.compute(splat);
-            return null;
+            const x = this.externalOf(splat);
+            if (!x) {
+                this.compute(splat);
+                return null;
+            }
+            e?.buffer.destroy();
+            e = this.entryOf(x.bytes, x.count, x.print, x.version, x.median, x);
+            this.entries.set(splat, e);
         }
         e.params.hideLocked = hideLocked;
         e.params.threshold = this.range.from;
@@ -654,14 +780,34 @@ class SharpnessView {
         return e.params;
     }
 
-    // median footprint and blurry share of a scan, null before it was computed
+    // median footprint and blurry share of a scan, null before it was
+    // computed; source: the analysis' value or the view's own measure
     stats(splat: Splat) {
         const e = this.entries.get(splat);
         if (!this.fresh(splat, e)) return null;
         const from = Math.round(this.range.from * BLUR_STEPS);
         let tinted = 0;
         for (let i = 0; i < e.count; i++) if (e.bytes[i] > from) tinted++;
-        return { median: e.median, blurry: e.count ? tinted / e.count : 0 };
+        return { median: e.median, blurry: e.count ? tinted / e.count : 0, source: e.source ? 'analysis' : 'own' };
+    }
+
+    // an entry over count bytes (copied, padded to whole u32 words)
+    private entryOf(values: Uint8Array, count: number, print: number, version: number, median: number, source: SharpExternal | null): SharpEntry {
+        const size = Math.max(4, Math.ceil(count / 4) * 4);
+        const bytes = new Uint8Array(size);
+        bytes.set(values.subarray(0, count));
+        const buffer = new StorageBuffer(this.scene.graphicsDevice, size, BUFFERUSAGE_COPY_DST | BUFFERUSAGE_COPY_SRC);
+        buffer.write(0, bytes, 0, size);
+        return {
+            count,
+            print,
+            version,
+            bytes,
+            buffer,
+            median,
+            params: { buffer, mode: 4, threshold: this.range.from, range: this.range.to, palette: null, hideLocked: false },
+            source
+        };
     }
 
     // a scan's bytes are being computed
@@ -727,23 +873,12 @@ class SharpnessView {
             opacity[i] = alpha >= 1 ? 255 : alpha > 0 ? Math.round(alpha * 255) : 0;
         }
         if (splat.resource !== resource) return null;
-        const size = Math.max(4, Math.ceil(count / 4) * 4);
-        const bytes = new Uint8Array(size);
-        const { median } = blurBytes(footprint, opacity, bytes.subarray(0, count));
-        const buffer = new StorageBuffer(this.scene.graphicsDevice, size, BUFFERUSAGE_COPY_DST | BUFFERUSAGE_COPY_SRC);
-        buffer.write(0, bytes, 0, size);
-        return {
-            count,
-            print: listPrint(splat),
-            version,
-            bytes,
-            buffer,
-            median,
-            params: { buffer, mode: 4, threshold: this.range.from, range: this.range.to, palette: null, hideLocked: false }
-        };
+        const { bytes, median } = blurBytes(footprint, opacity);
+        return this.entryOf(bytes, count, listPrint(splat), version, median, null);
     }
 
-    // the buffers go when the tool closes (computed again on the next use)
+    // the buffers go when the tool closes (computed again on the next use;
+    // the analysis' bytes stay with it)
     release() {
         this.entries.forEach(e => e.buffer.destroy());
         this.entries.clear();
@@ -753,6 +888,7 @@ class SharpnessView {
         this.entries.get(splat)?.buffer.destroy();
         this.entries.delete(splat);
         this.versions.delete(splat);
+        this.external.delete(splat);
     }
 }
 
@@ -785,6 +921,9 @@ class ComposeSuggest {
     // the hide switch alone, for layers without display classes
     private plain: ComposeRenderParams = { buffer: null, mode: 0, threshold: 0, palette: null, hideLocked: true };
     private autoCache: { datas: CompactData[], auto: AutoCell, diag: number } | null = null;
+    // the blurry-area detector's result for these reads (grid and lead do
+    // not change it)
+    private blurCache: { datas: CompactData[], upAxis: number, upSign: number, result: BlurResult } | null = null;
     private memory: RejectMemory[] = [];
     // what compose hid, per scan: one record per instance list, newest first
     private records = new Map<Splat, HiddenRecord[]>();
@@ -809,6 +948,18 @@ class ComposeSuggest {
     private stale = false;
     private rerunTimer: ReturnType<typeof setTimeout> | null = null;
     private rerunPending = false;
+
+    // blurry areas (step 4's "Unscharfe Bereiche"): the Vorher/Nachher
+    // preview (only one preview at a time: it and a card's exclude each
+    // other), all open areas marked red, the card picked last, the short
+    // highlight after a click, the waiting ops per area id, kept areas
+    areaPreview: { id: number, mode: PreviewMode } | null = null;
+    areaMark = false;
+    pickedArea: number | null = null;
+    private areaFlash: { id: number, until: number } | null = null;
+    private areaFlashTimer: ReturnType<typeof setTimeout> | null = null;
+    private areaQueued = new Map<number, ComposeOp>();
+    private kept: KeptMemory[] = [];
 
     constructor(events: Events, scene: Scene, ctx: SuggestContext) {
         this.events = events;
@@ -857,6 +1008,21 @@ class ComposeSuggest {
         events.on('compose.focusSuggestion', (id: number) => this.focus(id));
         events.on('compose.selectSuggestion', (id: number) => this.select(id));
         events.on('compose.force', (index: number) => this.force(index));
+
+        // blurry areas (ids: AreaCard.id, the detector's rank)
+        events.function('compose.areas', () => this.areasView());
+        events.function('compose.deleteAreas', (ids: number[] | number | 'sharp') => this.deleteAreas(ids));
+        events.function('compose.revertAreas', (id: number | 'all') => this.revertAreas(id));
+        events.function('compose.selectArea', (id: number) => this.selectArea(id));
+        events.on('compose.keepArea', (id: number, value?: boolean) => this.keepArea(id, value !== false));
+        events.on('compose.focusArea', (id: number) => this.focusArea(id));
+        events.on('compose.previewArea', (id: number | null, mode: PreviewMode) => this.setAreaPreview(id, mode));
+        events.on('compose.hoverArea', (id: number | null) => this.setHover(id === null || id === undefined || id < 0 ? null : { kind: 'area', id }));
+        events.on('compose.setAreaMark', (value: boolean) => {
+            this.areaMark = !!value;
+            this.scheduleDisplay();
+            this.ctx.onChange();
+        });
 
         // staleness and status
         const bump = (splat: Splat) => {
@@ -965,7 +1131,7 @@ class ComposeSuggest {
     suppressTint() {
         if (!this.analysis || !this.inSteps()) return false;
         if (this.map && !this.stale) return true;
-        return this.ctx.step() === 'suggest' && (!!this.preview || this.display === 'mark');
+        return this.ctx.step() === 'suggest' && (!!this.preview || !!this.areaPreview || this.display === 'mark' || this.areaMark);
     }
 
     // compose-tool's rebuild: the included scans may have changed
@@ -1007,6 +1173,8 @@ class ComposeSuggest {
             this.preview = null;
         } else {
             this.preview = { id: card.id, mode: mode === 'before' ? 'before' : 'after' };
+            // one preview at a time
+            this.areaPreview = null;
             this.picked = card.id;
             // a preview of a region out of sight shows nothing: fly there
             if (!this.onScreen(card)) this.focus(card.id);
@@ -1023,7 +1191,7 @@ class ComposeSuggest {
     // the result will look; the selection itself stays as it is and draws
     // again when the preview ends. "Auswahl zeigen" keeps it drawn
     selectionHidden() {
-        return !!this.preview && !this.showSelection && this.ctx.active() && this.ctx.step() === 'suggest' && !!this.analysis;
+        return (!!this.preview || !!this.areaPreview) && !this.showSelection && this.ctx.active() && this.ctx.step() === 'suggest' && !!this.analysis;
     }
 
     // the region's marker lies in front of the camera and inside the view
@@ -1043,7 +1211,7 @@ class ComposeSuggest {
     }
 
     setHover(hover: Hover | null) {
-        const key = (h: Hover | null) => (!h ? '' : h.kind === 'card' ? `card ${h.id}` : `skip ${h.index}`);
+        const key = (h: Hover | null) => (!h ? '' : h.kind === 'skip' ? `skip ${h.index}` : `${h.kind} ${h.id}`);
         if (key(hover) === key(this.hover)) return;
         this.hover = hover;
         this.scheduleDisplay();
@@ -1135,9 +1303,27 @@ class ComposeSuggest {
             }
             const datas = caches.map(c => c.data);
             times.read = (performance.now() - t) / 1000;
+            const up = upOf(this.ctx.reference());
+
+            // 1b. the large blurry areas per scan (the simple path of step
+            // 4): the rows are copied to the worker, the result comes back
+            // (independent of grid and lead: an option change reuses it)
+            t = performance.now();
+            const blurFresh = this.blurCache && this.blurCache.datas.length === S && this.blurCache.datas.every((d, i) => d === datas[i]) &&
+                this.blurCache.upAxis === up.upAxis && this.blurCache.upSign === up.upSign;
+            if (!blurFresh) {
+                progress(i18n.t('sm.compose.analyse.blur'), P_READ);
+                const result = await runAnalysis<BlurResult>('compose-blur', {
+                    scans: datas.map(d => ({ positions: d.positions, footprint: d.footprint, opacity: d.opacity })),
+                    options: { upAxis: up.upAxis, upSign: up.upSign }
+                });
+                check();
+                this.blurCache = { datas, upAxis: up.upAxis, upSign: up.upSign, result };
+            }
+            const blur = this.blurCache.result;
+            times.blur = (performance.now() - t) / 1000;
 
             // 2. the grid: auto from the sparsest scan, or finer / coarser
-            const up = upOf(this.ctx.reference());
             const base: DetailOptions = { lead, upAxis: up.upAxis, upSign: up.upSign };
             if (!this.autoCache || this.autoCache.datas.length !== S || this.autoCache.datas.some((d, i) => d !== datas[i])) {
                 const samples = datas.map(d => cellSample(d, base));
@@ -1166,7 +1352,7 @@ class ComposeSuggest {
             });
             const cells: ScanCells[] = [];
             for (let k = 0; k < S; k++) {
-                progress(i18n.t('sm.compose.analyse.cells', { name: this.ctx.nameOf(scans[k]) }), P_READ + P_CELLS * k / S);
+                progress(i18n.t('sm.compose.analyse.cells', { name: this.ctx.nameOf(scans[k]) }), P_READ + P_BLUR + P_CELLS * k / S);
                 const sc = await pending[k];
                 check();
                 caches[k].cells = sc;
@@ -1176,7 +1362,7 @@ class ComposeSuggest {
 
             // 4. the comparison
             t = performance.now();
-            progress(i18n.t('sm.compose.analyse.comparing'), P_READ + P_CELLS);
+            progress(i18n.t('sm.compose.analyse.comparing'), P_READ + P_BLUR + P_CELLS);
             const detail = await runAnalysis<DetailResult>('compose-detail', { scans: cells.map(tableOf), options });
             check();
             times.detail = (performance.now() - t) / 1000;
@@ -1187,7 +1373,7 @@ class ComposeSuggest {
             const jobs = paintInputs(detail, datas, rowCells, options);
             times.inputs = (performance.now() - t) / 1000;
             t = performance.now();
-            const results = await this.paint(jobs, scans, options, check, progress, P_READ + P_CELLS + P_DETAIL, 100 - P_READ - P_CELLS - P_DETAIL);
+            const results = await this.paint(jobs, scans, options, check, progress, P_READ + P_BLUR + P_CELLS + P_DETAIL, 100 - P_READ - P_BLUR - P_CELLS - P_DETAIL);
             times.paint = (performance.now() - t) / 1000;
             t = performance.now();
             const applied = applyPaint(detail, jobs, results, { ...options, rowCounts: datas.map(d => d.footprint.length) });
@@ -1221,8 +1407,9 @@ class ComposeSuggest {
                 times,
                 apartShare: 0,
                 sharedCells: detail.shared.length,
-                visited: false
-            });
+                visited: false,
+                areas: null
+            }, blur);
             summary = this.summary();
         } catch (error) {
             this.message = error instanceof AbortedError ? i18n.t('sm.compose.analyse.cancelled') :
@@ -1264,7 +1451,7 @@ class ComposeSuggest {
         return results;
     }
 
-    private commit(a: Analysis) {
+    private commit(a: Analysis, blur: BlurResult | null) {
         const S = a.scans.length;
         const { detail } = a;
         for (let s = 0; s < S; s++) {
@@ -1309,14 +1496,26 @@ class ComposeSuggest {
             }
         });
 
+        // the blurry areas as instances; their blur values go to the
+        // sharpness view
+        a.areas = blur ? this.areaState(a, blur) : null;
+        a.scans.forEach((splat, s) => {
+            const sharp = a.areas?.sharpInst[s];
+            this.ctx.sharpSource?.(splat, sharp ? { bytes: sharp, median: blur.scans[s].ref } : null);
+        });
+
         this.analysis = a;
         // card ids start anew; ops still queued keep their own instances
         this.queued.clear();
+        this.areaQueued.clear();
         this.countTotals();
         for (let s = 0; s < S; s++) this.recount(s);
         this.updateStatuses();
         this.preview = null;
         this.picked = null;
+        this.areaPreview = null;
+        this.pickedArea = null;
+        this.endFlash();
         this.hover = null;
         this.probeResult = null;
         this.stale = false;
@@ -1350,8 +1549,395 @@ class ComposeSuggest {
             clear: a.cards.filter(c => c.region.confidence === 'clear').length,
             skipped: a.detail.rejected.length,
             apartShare: a.apartShare,
-            times: a.times
+            times: a.times,
+            areas: a.areas?.cards.length ?? 0,
+            areasSharp: a.areas?.cards.filter(c => c.area.compare === 'otherSharp').length ?? 0
         };
+    }
+
+    // ------------------------------------------------------------ blurry areas
+
+    // the detector's areas as cards over instances: each area's rows
+    // (indices into its scan's read) become its instances, and the per-row
+    // blur value becomes the sharpness view's byte per instance
+    private areaState(a: Analysis, blur: BlurResult): AreaState {
+        const n = blur.areas.length;
+        const areaInst = a.counts.map(count => new Uint16Array(count));
+        const total = a.counts.map(() => new Uint32Array(n));
+        blur.areas.forEach((area) => {
+            const inst = a.rows[area.scan].instances;
+            const out = areaInst[area.scan];
+            const v = area.id + 1;
+            const rows = area.rows;
+            let k = 0;
+            for (let j = 0; j < rows.length; j++) {
+                const i = inst[rows[j]];
+                if (i < out.length) {
+                    out[i] = v;
+                    k++;
+                }
+            }
+            total[area.scan][area.id] = k;
+        });
+        // the detector's value (0..255 = BLUR.mapLo..mapHi octaves of the
+        // mean of a splat's own and its voxel's footprint over the scan's
+        // median) in the view's 1/32 octaves of the own measure: its range
+        // 3..6 shows the detector's 2.5..4 (e = 3 + 2 (b - 2.5)). Nuremberg:
+        // tinted from the start of the range 11.7 / 12.6 % of the splats of
+        // A / B (own measure 7.5 / 8.7 %), in the bridge box 98.7 % of A's
+        // visual weight (own 93 %); B there 9 % (own 6 %); A's white tree
+        // crowns by the bridge 77 / 85 % (59 / 50 % before the detector took
+        // the visual footprint, BLUR.mapVisShift)
+        const code = new Uint8Array(256);
+        for (let m = 0; m < 256; m++) {
+            const b = BLUR.mapLo + m / 255 * (BLUR.mapHi - BLUR.mapLo);
+            const e = m === 0 ? 0 : SHARP_FROM + SHARP_STRETCH * (b - SHARP_PIVOT);
+            code[m] = Math.max(0, Math.min(255, Math.round(e * BLUR_STEPS)));
+        }
+        const sharpInst = a.counts.map((count, s) => {
+            const out = new Uint8Array(count);
+            const map = blur.blur[s];
+            const inst = a.rows[s].instances;
+            if (!map) return null;
+            for (let r = 0; r < map.length && r < inst.length; r++) {
+                const i = inst[r];
+                if (i < count) out[i] = code[map[r]];
+            }
+            return out;
+        });
+        const cards = blur.areas.map((area): AreaCard => {
+            const { rows, ...info } = area;
+            return {
+                id: area.id,
+                area: info,
+                scan: area.scan,
+                kept: this.kept.some(m => this.keptCovers(m, a.scans[area.scan], info)),
+                status: 'open',
+                total: total[area.scan][area.id],
+                locked: 0,
+                others: 0,
+                handHidden: false
+            };
+        }).sort((x, y) => AREA_GROUP(x.area) - AREA_GROUP(y.area) || y.area.voxels - x.area.voxels || x.id - y.id);
+        return {
+            cell: blur.cell,
+            seconds: blur.seconds,
+            cards,
+            areaInst,
+            sharpInst,
+            total,
+            lockedBy: total.map(t => new Uint32Array(t.length)),
+            otherBy: total.map(t => new Uint32Array(t.length))
+        };
+    }
+
+    // a kept area's memory covers an area: same scan, half its box inside
+    private keptCovers(m: KeptMemory, splat: Splat, area: { min: V3, max: V3 }) {
+        if (m.scan !== splat) return false;
+        let inter = 1, volume = 1;
+        for (let k = 0; k < 3; k++) {
+            inter *= Math.max(0, Math.min(m.max[k], area.max[k]) - Math.max(m.min[k], area.min[k]));
+            volume *= Math.max(0, area.max[k] - area.min[k]);
+        }
+        return volume > 0 && inter >= 0.5 * volume;
+    }
+
+    areaCard(id: number) {
+        return this.analysis?.areas?.cards.find(c => c.id === id) ?? null;
+    }
+
+    // an area still offered for deletion: not kept, not deleted, not hidden
+    // by hand already
+    areaOpen(card: AreaCard) {
+        return !card.kept && card.status !== 'accepted' && !card.handHidden;
+    }
+
+    // no 'before' for an area that is hidden (deleted, or by hand): it would
+    // show the same as 'after'
+    areaBeforeBlocked(card: AreaCard) {
+        return card.status === 'accepted' || card.handHidden;
+    }
+
+    canRevertArea(id: number) {
+        const card = this.areaCard(id);
+        return !!card && card.locked > 0 && this.fits(card.scan);
+    }
+
+    private areaWaiting(card: AreaCard, kind: ComposeKind) {
+        return this.areaQueued.get(card.id)?.kind === kind;
+    }
+
+    // per scan of the cards: an op over their instances that pass `take`
+    // (picked when the op runs, as opsFor does for the suggestions)
+    private opsForAreas(cards: AreaCard[], take: (s: number, flags: Uint8Array) => (i: number) => boolean,
+        make: (splat: Splat, record: HiddenRecord, pick: () => IndexRanges) => ComposeHideOp | ComposeUnhideOp, ahead: (card: AreaCard) => boolean) {
+        const a = this.analysis;
+        const ar = a.areas;
+        const ops: (ComposeHideOp | ComposeUnhideOp)[] = [];
+        let now = 0;
+        for (let s = 0; s < a.scans.length; s++) {
+            const mine = cards.filter(c => c.scan === s);
+            if (!mine.length || !this.fits(s)) continue;
+            const want = new Uint8Array(ar.total[s].length + 1);
+            mine.forEach((c) => {
+                want[c.id + 1] = 1;
+            });
+            const later = mine.some(ahead);
+            const splat = a.scans[s];
+            const count = a.counts[s];
+            const print = a.sigs[s].print;
+            const inst = ar.areaInst[s];
+            const test = (flags: Uint8Array) => {
+                const pass = take(s, flags);
+                return (i: number) => want[inst[i]] === 1 && pass(i);
+            };
+            const hit = test(splat.instances.flags);
+            let n = 0;
+            for (let i = 0; i < count; i++) if (hit(i)) n++;
+            if (!n && !later) continue;
+            now += n;
+            ops.push(make(splat, a.records[s], () => (sameList(splat, count, print) ? IndexRanges.fromPredicate(count, test(splat.instances.flags)) : NO_RANGES)));
+        }
+        return { ops, now };
+    }
+
+    private enqueueAreas(kind: ComposeKind, cards: AreaCard[], ops: (ComposeHideOp | ComposeUnhideOp)[]) {
+        const ids = cards.map(c => c.id);
+        const op = new ComposeOp(kind, ops, () => {
+            ids.forEach((id) => {
+                if (this.areaQueued.get(id) === op) this.areaQueued.delete(id);
+            });
+        });
+        ids.forEach(id => this.areaQueued.set(id, op));
+        this.events.fire('edit.add', op);
+    }
+
+    // "Löschen": hide the areas' splats (ids, or 'sharp': every open area
+    // where another scan is sharp) - one undo step, the same ops as an
+    // accepted suggestion, so "Zurücknehmen" and Ctrl+Z bring them back.
+    // Only unlocked instances; `hidden` counts them as of now
+    deleteAreas(ids: number[] | number | 'sharp') {
+        const ar = this.analysis?.areas;
+        if (!ar || this.busy) return { hidden: 0 };
+        this.flushSync();
+        if (this.stale) return { hidden: 0, stale: true };
+        const list = (ids === 'sharp' ?
+            ar.cards.filter(c => c.area.compare === 'otherSharp' && this.areaOpen(c)) :
+            (Array.isArray(ids) ? ids : [ids]).map(id => this.areaCard(id)).filter(c => c && !c.handHidden))
+        .filter(c => !this.areaWaiting(c, 'accept'));
+        if (!list.length) return { hidden: 0 };
+        // a deleted area is kept no longer, and shows no 'before'
+        list.forEach((c) => {
+            if (c.kept) this.keepArea(c.id, false);
+        });
+        if (this.areaPreview?.mode === 'before' && list.some(c => c.id === this.areaPreview.id)) {
+            this.areaPreview = null;
+            this.scheduleDisplay();
+        }
+        const { ops, now } = this.opsForAreas(list, (_s, flags) => i => !(flags[i] & State.locked),
+            (splat, record, pick) => new ComposeHideOp(splat, record, pick), c => this.areaWaiting(c, 'revert'));
+        if (ops.length) this.enqueueAreas('accept', list, ops);
+        this.ctx.onChange();
+        return { hidden: now };
+    }
+
+    // show again what compose hid of the areas and is still hidden (its own
+    // undo step); splats hidden by hand or by another tool stay hidden
+    revertAreas(id: number | 'all') {
+        const a = this.analysis;
+        const ar = a?.areas;
+        if (!ar || this.busy) return { shown: 0 };
+        this.flushSync();
+        const list = (id === 'all' ? ar.cards : [this.areaCard(id)].filter(Boolean))
+        .filter(c => !this.areaWaiting(c, 'revert') && (c.locked > 0 || this.areaWaiting(c, 'accept')));
+        if (!list.length) return { shown: 0 };
+        const { ops, now } = this.opsForAreas(list, (s, flags) => {
+            const mark = a.records[s].mark;
+            return i => mark[i] === 1 && (flags[i] & State.locked) !== 0;
+        }, (splat, record, pick) => new ComposeUnhideOp(splat, record, pick), c => this.areaWaiting(c, 'accept'));
+        if (ops.length) this.enqueueAreas('revert', list, ops);
+        return { shown: now };
+    }
+
+    // "Behalten" (value true) or "Wieder anbieten" (false); remembered
+    // across analyses. UI state, no undo step
+    keepArea(id: number, value: boolean) {
+        const a = this.analysis;
+        const card = this.areaCard(id);
+        if (!a || !card || card.kept === value) return;
+        card.kept = value;
+        const splat = a.scans[card.scan];
+        if (value) {
+            this.kept.push({ scan: splat, min: card.area.min, max: card.area.max });
+            if (this.kept.length > MEMORY_SIZE) this.kept.splice(0, this.kept.length - MEMORY_SIZE);
+            if (this.areaPreview?.id === id) this.areaPreview = null;
+            if (this.hover?.kind === 'area' && this.hover.id === id) this.hover = null;
+        } else {
+            this.kept = this.kept.filter(m => !this.keptCovers(m, splat, card.area));
+        }
+        this.scheduleDisplay();
+        this.ctx.onChange();
+        this.events.fire('compose.suggestionsChanged');
+    }
+
+    // the area's splats (not hidden) into the normal, undoable selection
+    private selectArea(id: number) {
+        const a = this.analysis;
+        const card = this.areaCard(id);
+        if (!a || !card || !this.fits(card.scan)) return 0;
+        const s = card.scan;
+        const splat = a.scans[s];
+        const count = splat.instances.count;
+        const flags = splat.instances.flags;
+        const inst = a.areas.areaInst[s];
+        const value = card.id + 1;
+        const mask = new Uint8Array(count);
+        let n = 0;
+        for (let i = 0; i < count; i++) {
+            if (inst[i] === value && !(flags[i] & State.locked)) {
+                mask[i] = 255;
+                n++;
+            }
+        }
+        this.pickedArea = id;
+        if (this.events.invoke('selection') !== splat) this.events.fire('selection', splat);
+        this.events.fire('select.mask', 'set', mask);
+        this.ctx.onChange();
+        return n;
+    }
+
+    // scattered islands gathered into one area have no single place to
+    // look from: the camera shows their whole box
+    private areaScattered(card: AreaCard) {
+        return card.area.kind === 'island' && card.area.pieces > 1;
+    }
+
+    // fly to an area: from outside it, from the side of its scan's sharp
+    // part (the detector's view), or its whole box
+    private flyToArea(card: AreaCard) {
+        const a = this.analysis;
+        const area = card.area;
+        if (!this.areaScattered(card) && area.view) {
+            const { position, target } = area.view;
+            this.events.fire('camera.setPose', {
+                position: new Vec3(position[0], position[1], position[2]),
+                target: new Vec3(target[0], target[1], target[2])
+            }, 1);
+            return;
+        }
+        const radius = Math.max(a.areas.cell, 0.5 * Math.hypot(area.dims[0], area.dims[1], area.dims[2]));
+        const c = [0, 1, 2].map(k => (area.min[k] + area.max[k]) / 2);
+        this.scene.camera.focus({ focalPoint: new Vec3(c[0], c[1], c[2]), radius, speed: 1 });
+    }
+
+    // a click on an area's card: fly there and light the area up briefly
+    focusArea(id: number) {
+        const card = this.areaCard(id);
+        if (!card) return;
+        this.pickedArea = id;
+        this.flyToArea(card);
+        this.endFlash();
+        this.areaFlash = { id, until: performance.now() + AREA_FLASH_MS };
+        this.areaFlashTimer = setTimeout(() => {
+            this.areaFlashTimer = null;
+            this.areaFlash = null;
+            this.scheduleDisplay();
+            this.scene.forceRender = true;
+        }, AREA_FLASH_MS);
+        this.scheduleDisplay();
+        this.ctx.onChange();
+    }
+
+    private endFlash() {
+        if (this.areaFlashTimer) clearTimeout(this.areaFlashTimer);
+        this.areaFlashTimer = null;
+        this.areaFlash = null;
+    }
+
+    // the area's centre lies in front of the camera and inside the view
+    private areaOnScreen(card: AreaCard) {
+        const camera = this.scene.camera;
+        const main = camera.mainCamera;
+        if (!main) return true;
+        const m = card.area.centroid;
+        const p = new Vec3(m[0], m[1], m[2]);
+        if (p.clone().sub(main.getPosition()).dot(main.forward) <= 0) return false;
+        const screen = new Vec3();
+        camera.worldToScreen(p, screen);
+        return screen.x >= 0.05 && screen.x <= 0.95 && screen.y >= 0.05 && screen.y <= 0.95;
+    }
+
+    // Vorher: the scene as it is, in true colours; Nachher: without the
+    // area. One preview at a time (a card's ends)
+    private setAreaPreview(id: number | null, mode: PreviewMode) {
+        const card = id === null || id === undefined ? null : this.areaCard(id);
+        if (!card || card.kept || (mode === 'before' && this.areaBeforeBlocked(card))) {
+            this.areaPreview = null;
+        } else {
+            this.areaPreview = { id: card.id, mode: mode === 'before' ? 'before' : 'after' };
+            this.preview = null;
+            this.pickedArea = card.id;
+            this.endFlash();
+            if (!this.areaOnScreen(card)) this.flyToArea(card);
+        }
+        this.scheduleDisplay();
+        this.ctx.onChange();
+        this.scene.forceRender = true;
+    }
+
+    // a hovered or just clicked area of this scan draws red over the
+    // sharpness view (allocation-free: asked per layer and pass)
+    private areaLit(splat: Splat) {
+        const a = this.analysis;
+        if (!a?.areas || (!this.areaFlash && this.hover?.kind !== 'area') || this.ctx.step() !== 'suggest') return false;
+        const flash = this.areaFlash ? this.areaFlash.id : -1;
+        const hover = this.hover?.kind === 'area' ? this.hover.id : -1;
+        const cards = a.areas.cards;
+        for (let k = 0; k < cards.length; k++) {
+            const card = cards[k];
+            if ((card.id === flash || card.id === hover) && !card.kept && a.scans[card.scan] === splat) return true;
+        }
+        return false;
+    }
+
+    areasView() {
+        const a = this.analysis;
+        const ar = a?.areas;
+        if (!ar) return [];
+        this.flushSync();
+        const name = (s: number) => (s >= 0 ? a.scans[s].name : null);
+        return ar.cards.map((c, k) => ({
+            id: c.id,
+            number: k + 1,
+            scan: name(c.scan),
+            // the name the panel shows (numbered when two layers share it)
+            scanLabel: this.ctx.nameOf(a.scans[c.scan]),
+            kind: c.area.kind,
+            compare: c.area.compare,
+            sharpBy: name(c.area.sharpBy),
+            scattered: this.areaScattered(c),
+            splats: c.area.splats,
+            voxels: c.area.voxels,
+            dims: c.area.dims,
+            min: c.area.min,
+            max: c.area.max,
+            centroid: c.area.centroid,
+            view: c.area.view,
+            blur: c.area.blur,
+            lead: c.area.lead,
+            score: c.area.score,
+            pieces: c.area.pieces,
+            otherSharp: c.area.otherSharp,
+            otherBlurry: c.area.otherBlurry,
+            alone: c.area.alone,
+            kept: c.kept,
+            status: c.status,
+            handHidden: c.handHidden,
+            // instances of the area, hidden by compose, hidden otherwise
+            total: c.total,
+            locked: c.locked,
+            others: c.others
+        }));
     }
 
     // ------------------------------------------------------------ status
@@ -1514,6 +2100,22 @@ class ComposeSuggest {
                 else other[v - 1]++;
             }
         }
+        // the blurry areas of the scan, the same way
+        const ar = a.areas;
+        if (ar) {
+            const inst = ar.areaInst[s];
+            const aLocked = ar.lockedBy[s];
+            const aOther = ar.otherBy[s];
+            aLocked.fill(0);
+            aOther.fill(0);
+            for (let i = 0; i < inst.length; i++) {
+                const v = inst[i];
+                if (v && (flags[i] & State.locked)) {
+                    if (mark[i]) aLocked[v - 1]++;
+                    else aOther[v - 1]++;
+                }
+            }
+        }
         return true;
     }
 
@@ -1546,6 +2148,29 @@ class ComposeSuggest {
         const previewed = this.preview?.mode === 'before' ? this.card(this.preview.id) : null;
         if (previewed && this.beforeBlocked(previewed)) {
             this.preview = null;
+            changed = true;
+        }
+        // the blurry areas: deleted (compose hid them), partly, or hidden
+        // by hand, as the cards
+        const ar = a.areas;
+        ar?.cards.forEach((card) => {
+            const total = ar.total[card.scan][card.id] ?? 0;
+            const locked = ar.lockedBy[card.scan][card.id] ?? 0;
+            const others = ar.otherBy[card.scan][card.id] ?? 0;
+            const own = total - others;
+            const share = own > 0 ? locked / own : 0;
+            const status: CardStatus = share >= ACCEPTED_SHARE ? 'accepted' : share >= PARTLY_SHARE ? 'partly' : 'open';
+            const handHidden = status !== 'accepted' && total > 0 && locked + others >= ACCEPTED_SHARE * total;
+            if (status !== card.status || locked !== card.locked || total !== card.total || others !== card.others || handHidden !== card.handHidden) changed = true;
+            card.status = status;
+            card.total = total;
+            card.locked = locked;
+            card.others = others;
+            card.handHidden = handHidden;
+        });
+        const areaShown = this.areaPreview?.mode === 'before' ? this.areaCard(this.areaPreview.id) : null;
+        if (areaShown && this.areaBeforeBlocked(areaShown)) {
+            this.areaPreview = null;
             changed = true;
         }
         return changed;
@@ -2154,16 +2779,40 @@ class ComposeSuggest {
         // set (see beforeBlocked); updateStatuses drops it too
         const shown = suggestStep && this.preview ? this.card(this.preview.id) : null;
         const preview = shown && !shown.rejected && !(this.preview.mode === 'before' && this.beforeBlocked(shown)) ? shown : null;
+        // the same for a blurry area's preview ('before' is the scene as it
+        // is: nothing to draw but true colours)
+        const ar = a.areas;
+        const areaShown = suggestStep && this.areaPreview ? this.areaCard(this.areaPreview.id) : null;
+        const areaPreview = areaShown && !areaShown.kept && !(this.areaPreview.mode === 'before' && this.areaBeforeBlocked(areaShown)) ? areaShown : null;
+        const previewing = !!preview || !!areaPreview;
         // a preview shows the scene in its true colours, as the result will
         // look: no map, no marks, and no red of the hovered card (the pointer
         // rests on the card whose Vorher/Nachher it just clicked; its red
         // drew over the whole 'before' region). The hovered card keeps its
         // dashed box (compose-tool), the selection steps back too
         // (selectionHidden)
-        const mapOn = this.map && !stale && !preview;
-        const marked = suggestStep && !preview && this.display === 'mark' ? a.cards.filter(c => c.ticked && this.tickable(c)) : [];
-        const hovered = suggestStep && !preview && this.hover?.kind === 'card' ? this.card(this.hover.id) : null;
-        if (!mapOn && !preview && !marked.length && !hovered) {
+        const mapOn = this.map && !stale && !previewing;
+        const marked = suggestStep && !previewing && this.display === 'mark' ? a.cards.filter(c => c.ticked && this.tickable(c)) : [];
+        const hovered = suggestStep && !previewing && this.hover?.kind === 'card' ? this.card(this.hover.id) : null;
+        // blurry areas: the hovered one and the one just clicked in red;
+        // "Bereiche einfärben" all open ones, red where another scan is sharp
+        // or the area floats free (the ones worth deleting), grey where the
+        // others are blurry too or only this scan has something (the large
+        // rims of every scan: in red they covered most of the view)
+        const areaRed = new Set<number>();
+        const areaGrey = new Set<number>();
+        if (suggestStep && !previewing && ar) {
+            if (this.areaMark) {
+                ar.cards.forEach((c) => {
+                    if (!this.areaOpen(c)) return;
+                    if (AREA_GROUP(c.area) <= 1) areaRed.add(c.id);
+                    else areaGrey.add(c.id);
+                });
+            }
+            if (this.hover?.kind === 'area') areaRed.add(this.hover.id);
+            if (this.areaFlash) areaRed.add(this.areaFlash.id);
+        }
+        if (!mapOn && !previewing && !marked.length && !hovered && !areaRed.size && !areaGrey.size) {
             off();
             return;
         }
@@ -2287,6 +2936,29 @@ class ComposeSuggest {
                 const v = hovered.id + 1;
                 for (let i = 0; i < count; i++) if (paint[i] === v && bytes[i] !== CLS_HIDDEN) bytes[i] = CLS_RED;
             }
+            if (ar && (areaPreview || areaRed.size || areaGrey.size)) {
+                const inst = ar.areaInst[s];
+                if (areaPreview && areaPreview.scan === s && this.areaPreview.mode === 'after') {
+                    const v = areaPreview.id + 1;
+                    for (let i = 0; i < count; i++) if (inst[i] === v) bytes[i] = CLS_HIDDEN;
+                }
+                // class per area id + 1 (0: none); red over grey
+                const cls = new Uint8Array(ar.total[s].length + 1);
+                let any = false;
+                ar.cards.forEach((c) => {
+                    if (c.scan !== s || c.kept) return;
+                    const k = areaRed.has(c.id) ? CLS_RED : areaGrey.has(c.id) ? CLS_GREY : 0;
+                    if (!k) return;
+                    cls[c.id + 1] = k;
+                    any = true;
+                });
+                if (any) {
+                    for (let i = 0; i < count; i++) {
+                        const k = cls[inst[i]];
+                        if (k && bytes[i] !== CLS_HIDDEN) bytes[i] = k;
+                    }
+                }
+            }
             // written in place like quality-tool upload(); recreated only on a
             // size change
             if (!d.buffer || d.buffer.byteSize !== size) {
@@ -2312,8 +2984,9 @@ class ComposeSuggest {
         this.redrawOnLocks();
         // the sharpness view over map, marks and hover; a Vorher/Nachher
         // preview leaves splats out and shows true colours, so it wins
-        const previewing = !!this.preview && this.ctx.step() === 'suggest' && !!this.analysis;
-        const sharp = previewing ? null : this.ctx.sharpness?.(splat, this.hideLocked) ?? null;
+        // so does a hovered or just clicked blurry area of this scan (its red)
+        const previewing = (!!this.preview || !!this.areaPreview) && this.ctx.step() === 'suggest' && !!this.analysis;
+        const sharp = previewing || this.areaLit(splat) ? null : this.ctx.sharpness?.(splat, this.hideLocked) ?? null;
         if (sharp) return sharp;
         const d = this.displays.get(splat);
         if (d && d.active && d.buffer && d.count === splat.instances.count) {
@@ -2340,6 +3013,7 @@ class ComposeSuggest {
     private dropRows() {
         this.reads.clear();
         this.autoCache = null;
+        this.blurCache = null;
         const a = this.analysis;
         if (a) {
             a.rows.fill(null);
@@ -2363,6 +3037,8 @@ class ComposeSuggest {
         this.displays.forEach(d => d.buffer?.destroy());
         this.displays.clear();
         this.preview = null;
+        this.areaPreview = null;
+        this.endFlash();
         this.beforeLocks = null;
         this.hover = null;
         this.scene.forceRender = true;
@@ -2378,6 +3054,8 @@ class ComposeSuggest {
         d?.buffer?.destroy();
         this.displays.delete(splat);
         if (this.autoCache) this.autoCache = null;
+        this.blurCache = null;
+        this.kept = this.kept.filter(m => m.scan !== splat);
         if (this.analysis?.scans.includes(splat)) {
             this.analysis.scans.forEach((s) => {
                 const e = this.displays.get(s);
@@ -2386,7 +3064,11 @@ class ComposeSuggest {
             });
             this.analysis = null;
             this.queued.clear();
+            this.areaQueued.clear();
             this.preview = null;
+            this.areaPreview = null;
+            this.pickedArea = null;
+            this.endFlash();
             this.picked = null;
             this.beforeLocks = null;
             this.hover = null;
@@ -2436,7 +3118,13 @@ class ComposeSuggest {
             hideLocked: this.hideLocked,
             display: this.display,
             preview: this.preview,
-            options: { grid: this.grid, lead: this.lead }
+            options: { grid: this.grid, lead: this.lead },
+            // the blurry areas (step 4's first section)
+            areas: this.areasView(),
+            areaCell: a.areas?.cell ?? null,
+            areaSeconds: a.areas?.seconds ?? null,
+            areaPreview: this.areaPreview,
+            areaMark: this.areaMark
         };
     }
 
@@ -2487,4 +3175,4 @@ class ComposeSuggest {
     }
 }
 
-export { ComposeSuggest, SharpnessView, blurBytes, medianFootprint, BLUR_STEPS, type Card, type Analysis, type GridMode, type PreviewMode, type DisplayMode, type CardStatus, type Hover, type ProbeView, type SuggestContext, type AnalyseSummary };
+export { ComposeSuggest, SharpnessView, blurBytes, medianFootprint, BLUR_STEPS, type Card, type AreaCard, type Analysis, type GridMode, type PreviewMode, type DisplayMode, type CardStatus, type Hover, type ProbeView, type SuggestContext, type AnalyseSummary };

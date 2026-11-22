@@ -50,6 +50,7 @@ import { State } from './splat-state';
 type SerializeSettings = {
     maxSHBands?: number;            // specifies the maximum number of bands to be exported
     selected?: boolean;             // only export selected gaussians. used for copy/paste
+    skipLocked?: boolean;           // leave out locked (hidden) gaussians. used when the compose wizard merges scans
     minOpacity?: number;            // filter out gaussians with alpha less than or equal to minAlpha
     removeInvalid?: boolean;        // filter out gaussians with invalid data (NaN/Infinity)
 
@@ -256,6 +257,8 @@ const filteredIndices = async (splat: Splat, settings: SerializeSettings) => {
     const state = splat.instances.flags;
     const numInstances = splat.instances.count;
     const onlySelected = settings.selected ?? false;
+    const skipLocked = settings.skipLocked ?? false;
+    const wanted = (i: number) => (!onlySelected || state[i] === State.selected) && (!skipLocked || !(state[i] & State.locked));
     const minOpacity = settings.minOpacity ?? 0;
     const removeInvalid = settings.removeInvalid ?? false;
     const needsSource = minOpacity > 0 || removeInvalid;
@@ -263,11 +266,11 @@ const filteredIndices = async (splat: Splat, settings: SerializeSettings) => {
     if (!needsSource) {
         let count = 0;
         for (let i = 0; i < numInstances; ++i) {
-            if (!onlySelected || state[i] === State.selected) count++;
+            if (wanted(i)) count++;
         }
         const result = new Uint32Array(count);
         for (let i = 0, dst = 0; i < numInstances; ++i) {
-            if (!onlySelected || state[i] === State.selected) result[dst++] = i;
+            if (wanted(i)) result[dst++] = i;
         }
         return result;
     }
@@ -291,7 +294,7 @@ const filteredIndices = async (splat: Splat, settings: SerializeSettings) => {
                 const base = chunkIndex * source.meta.chunkSize;
                 for (let slot = starts[chunkIndex]; slot < starts[chunkIndex + 1]; ++slot) {
                     const instance = ordered[slot];
-                    if (onlySelected && state[instance] !== State.selected) continue;
+                    if (!wanted(instance)) continue;
                     const i = splat.instances.sourceRow[instance] - base;
                     if (minOpacity > 0 && sigmoid(opacity[i * 8 + 7]) < minOpacity) continue;
                     if (removeInvalid && (!validFloatLayer(position, i) || !validGeometric(geometric, i) ||

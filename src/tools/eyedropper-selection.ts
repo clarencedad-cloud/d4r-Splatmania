@@ -1,7 +1,8 @@
-import { Container, NumericInput } from '@playcanvas/pcui';
+import { BooleanInput, Container, Label, NumericInput } from '@playcanvas/pcui';
 
 import { Events } from '../events';
 import { opFromModifiers } from '../select-op';
+import { i18n } from '../ui/localization';
 
 type NormalizedPoint = { x: number, y: number };
 
@@ -14,6 +15,9 @@ class EyedropperSelection {
     constructor(events: Events, parent: HTMLElement, canvasContainer: Container) {
         let pointerId: number | null = null;
         let threshold = 0.2;
+        // "Farb-Floater": only the clump around the click (color-region.ts)
+        let connected = true;
+        let radius = 5;
 
         const selectToolbar = new Container({
             class: 'select-toolbar',
@@ -26,15 +30,42 @@ class EyedropperSelection {
 
         const thresholdInput = new NumericInput({
             value: threshold,
-            placeholder: 'Threshold',
             width: 120,
             precision: 3,
             min: 0,
             max: 1
         });
 
+        // labels and roll-over texts: the pipette is not self-explanatory
+        const label = (key: string, tip: string, target: { dom: HTMLElement }[]) => {
+            const l = new Label({ class: 'select-toolbar-label' });
+            i18n.bindText(l, key);
+            for (const t of [l, ...target]) i18n.bindDom(t.dom, tip, 'title');
+            return l;
+        };
+
+        const connectedInput = new BooleanInput({ type: 'toggle', value: connected });
+        const radiusInput = new NumericInput({
+            value: radius,
+            width: 80,
+            precision: 2,
+            min: 0
+        });
+
+        selectToolbar.append(label('select-toolbar.color-tolerance', 'select-toolbar.color-tolerance-tip', [thresholdInput]));
         selectToolbar.append(thresholdInput);
+        selectToolbar.append(label('select-toolbar.color-clump', 'select-toolbar.color-clump-tip', [connectedInput]));
+        selectToolbar.append(connectedInput);
+        selectToolbar.append(label('select-toolbar.color-radius', 'select-toolbar.color-radius-tip', [radiusInput]));
+        selectToolbar.append(radiusInput);
         canvasContainer.append(selectToolbar);
+
+        connectedInput.on('change', (value: boolean) => {
+            connected = value;
+        });
+        radiusInput.on('change', () => {
+            radius = Math.max(0, radiusInput.value ?? 0);
+        });
 
         // Convert pointer event to normalized coordinates within the parent element
         const toNormalizedPoint = (event: PointerEvent): NormalizedPoint => {
@@ -82,7 +113,8 @@ class EyedropperSelection {
                     'select.colorMatch',
                     opFromModifiers(event),
                     toNormalizedPoint(event),
-                    threshold
+                    threshold,
+                    { connected, radius }
                 );
 
                 resetPointer();

@@ -81,6 +81,16 @@
             background-color: rgba(150, 100, 10, 0.85);
         }
 
+        // a blurry area "U1" (border in its scan's colour): magenta where
+        // another scan is sharp there
+        &.area {
+            border-radius: 4px;
+        }
+
+        &.sharp {
+            background-color: rgba(160, 20, 100, 0.85);
+        }
+
         &.accepted {
             background-color: rgba(70, 70, 70, 0.85);
             color: $clr-default;
@@ -707,6 +717,98 @@
             background-color: $clr-hilight;
             color: $clr-active;
         }
+
+        // blurry areas: free-floating island or blurry surface
+        &.island {
+            background-color: rgba(130, 60, 170, 0.85);
+            color: $clr-active;
+        }
+    }
+
+    // step 4, blurry areas: the section title, the key hint, what the other
+    // scans have there, and the question with its answers
+    .compose-areas-title {
+        font-size: 13px;
+    }
+
+    // step 3: what the blurry-area search found
+    .compose-note.compose-areas-found {
+        color: $clr-active;
+    }
+
+    .compose-keys-hint {
+        align-self: flex-start;
+        padding: 1px 6px;
+        border-radius: 3px;
+        background-color: $bcg-primary;
+        font-size: 11px;
+        color: $clr-default;
+        white-space: normal;
+    }
+
+    .compose-area-compare {
+        white-space: normal;
+        color: $text-secondary;
+
+        &.c-otherSharp {
+            color: #3fb950;
+        }
+
+        &.c-alone {
+            color: #ffb347;
+        }
+    }
+
+    .compose-area-ask {
+        gap: 4px;
+    }
+
+    .compose-area-question {
+        margin-right: auto;
+        color: $clr-active;
+        white-space: nowrap;
+    }
+
+    // "Feinvergleich (Details)": the folded detailed suggestions
+    .compose-fold {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        margin-top: 4px;
+        padding: 5px 6px;
+        border-top: 1px solid $bcg-lighter;
+        border-radius: 4px;
+        font-size: 12px;
+        color: $clr-default;
+        cursor: pointer;
+        user-select: none;
+
+        &:hover,
+        &:focus-visible {
+            background-color: $bcg-primary;
+        }
+
+        &.open {
+            color: $clr-active;
+        }
+    }
+
+    .compose-fold-arrow {
+        width: 10px;
+    }
+
+    .compose-fold-count {
+        margin-left: auto;
+        font-size: 11px;
+        color: $text-secondary;
+    }
+
+    .compose-details {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding-left: 6px;
+        border-left: 2px solid $bcg-lighter;
     }
 
     // checklist: ✓ pass, ✗ fail, · info

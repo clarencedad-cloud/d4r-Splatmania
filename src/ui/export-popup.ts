@@ -330,6 +330,19 @@ class ExportPopup extends Container {
         filenameRow.append(filenameLabel);
         filenameRow.append(filenameField);
 
+        // roll-over explanations for the options that don't explain themselves
+        ([
+            [viewerTypeRow, 'popup.export.type-tip'],
+            [animationRow, 'popup.export.animation-tip'],
+            [loopRow, 'popup.export.loop-mode-tip'],
+            [fovRow, 'popup.export.fov-tip'],
+            [layerRow, 'sm.export.active-layer-tip'],
+            [compressRow, 'popup.export.compress-ply-tip'],
+            [bandsRow, 'popup.export.sh-bands-tip'],
+            [iterationsRow, 'popup.export.iterations-tip'],
+            [spzVersionRow, 'popup.export.spz-version-tip']
+        ] as [Container, string][]).forEach(([row, key]) => i18n.bindDom(row.dom, key, 'title'));
+
         // content
 
         content.append(locationRow);

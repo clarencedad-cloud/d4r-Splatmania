@@ -62,11 +62,12 @@ class TitlesPanel extends Container {
         const set = (id: number, patch: Partial<Title>) => events.fire('titles.update', id, patch);
 
         // a row of choice buttons; returns a function marking the active one
-        const choices = <T extends string>(parent: Container, options: [T, string][], onPick: (value: T) => void) => {
+        const choices = <T extends string>(parent: Container, options: [T, string, string?][], onPick: (value: T) => void) => {
             const group = new Container({ class: 'titles-choices' });
-            const buttons = options.map(([value, key]) => {
+            const buttons = options.map(([value, key, tipKey]) => {
                 const button = new Button({ class: 'titles-choice' });
                 i18n.bindText(button, key);
+                if (tipKey) tooltips.register(button, () => i18n.t(tipKey), 'top');
                 button.on('click', () => onPick(value));
                 group.append(button);
                 return { value, button };
@@ -75,10 +76,11 @@ class TitlesPanel extends Container {
             return (value: T) => buttons.forEach(b => b.button.class[b.value === value ? 'add' : 'remove']('active'));
         };
 
-        const row = (parent: Container, labelKey: string) => {
+        const row = (parent: Container, labelKey: string, tipKey?: string) => {
             const r = new Container({ class: 'titles-row' });
             const l = new Label({ class: 'titles-row-label' });
             i18n.bindText(l, labelKey);
+            if (tipKey) tooltips.register(l, () => i18n.t(tipKey), 'left');
             r.append(l);
             parent.append(r);
             return r;
@@ -100,7 +102,7 @@ class TitlesPanel extends Container {
             root.dom.appendChild(text);
 
             // timing
-            const timing = row(root, 'sm.titles.frames');
+            const timing = row(root, 'sm.titles.frames', 'sm.titles.frames-tip');
             const start = new NumericInput({ class: 'titles-num', precision: 0, min: 0 });
             const end = new NumericInput({ class: 'titles-num', precision: 0, min: 0 });
             const startHere = new Button({ class: 'titles-small', text: '⤓' });
@@ -117,7 +119,7 @@ class TitlesPanel extends Container {
             startHere.on('click', () => put({ start: currentFrame() }));
             endHere.on('click', () => put({ end: currentFrame() }));
 
-            const fadeRow = row(root, 'sm.titles.fade');
+            const fadeRow = row(root, 'sm.titles.fade', 'sm.titles.fade-tip');
             const fade = new SliderInput({ class: 'titles-slider', min: 0, max: 3, precision: 2, step: 0.05 });
             fadeRow.append(fade);
             fade.on('change', (v: number) => put({ fade: Math.round(v * fps()) }));
@@ -127,7 +129,7 @@ class TitlesPanel extends Container {
             const markPosition = choices(positionRow, [
                 ['top', 'sm.titles.pos-top'],
                 ['center', 'sm.titles.pos-center'],
-                ['lower-third', 'sm.titles.pos-lower'],
+                ['lower-third', 'sm.titles.pos-lower', 'sm.titles.pos-lower-tip'],
                 ['bottom', 'sm.titles.pos-bottom']
             ], value => put({ position: value }));
 
@@ -138,7 +140,7 @@ class TitlesPanel extends Container {
                 ['right', 'sm.titles.align-right']
             ], value => put({ align: value }));
 
-            const sizeRow = row(root, 'sm.titles.size');
+            const sizeRow = row(root, 'sm.titles.size', 'sm.titles.size-tip');
             const size = new SliderInput({ class: 'titles-slider', min: 1, max: 25, precision: 1, step: 0.5 });
             sizeRow.append(size);
             size.on('change', (v: number) => put({ size: v / 100 }));
@@ -160,6 +162,7 @@ class TitlesPanel extends Container {
             const bold = new BooleanInput({ class: 'titles-check' });
             const boxLabel = new Label({ class: 'titles-inline-label' });
             i18n.bindText(boxLabel, 'sm.titles.box');
+            tooltips.register(boxLabel, () => i18n.t('sm.titles.box-tip'), 'top');
             const box = new BooleanInput({ class: 'titles-check' });
             lookRow.append(boldLabel);
             lookRow.append(bold);
@@ -172,6 +175,7 @@ class TitlesPanel extends Container {
             const actions = new Container({ class: 'titles-actions' });
             const jump = new Button({ class: 'titles-small-text' });
             i18n.bindText(jump, 'sm.titles.jump');
+            tooltips.register(jump, () => i18n.t('sm.titles.jump-tip'), 'top');
             const remove = new Button({ class: ['titles-small-text', 'titles-remove'] });
             i18n.bindText(remove, 'sm.titles.remove');
             actions.append(jump);

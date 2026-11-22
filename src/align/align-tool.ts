@@ -140,6 +140,7 @@ class AlignTool {
         const scaleRow = new Container({ class: 'align-row' });
         const scaleLabel = new Label({ class: 'align-label' });
         i18n.bindText(scaleLabel, 'sm.align.scale');
+        i18n.bindDom(scaleRow.dom, 'sm.align.scale-tip', 'title');
         scaleRow.append(scaleLabel);
         const scaleInput = new BooleanInput({ value: true });
         scaleInput.on('change', (v: boolean) => {
@@ -381,6 +382,7 @@ class AlignTool {
                 const name = document.createElement('span');
                 name.classList.add('align-name');
                 name.textContent = `${splat.name}${splat === reference ? ` (${i18n.t('sm.align.reference')})` : ''}`;
+                name.title = i18n.t('sm.align.layer-pick-tip');
                 name.addEventListener('click', () => events.fire('selection', splat));
                 const info = document.createElement('span');
                 info.classList.add('align-info');

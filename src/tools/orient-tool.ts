@@ -63,6 +63,7 @@ class OrientTool {
 
         const alignButton = new Button({ class: 'select-toolbar-button', enabled: false });
         i18n.bindText(alignButton, 'orient.align');
+        i18n.bindDom(alignButton.dom, 'orient.align-tip', 'title');
 
         const clearButton = new Button({ class: 'select-toolbar-button', enabled: false });
         i18n.bindText(clearButton, 'orient.clear');

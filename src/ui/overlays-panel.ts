@@ -440,6 +440,12 @@ class OverlaysPanel extends Container {
         const cameraInfoShortcut = shortcutManager.formatShortcut('camera.toggleShowInfo');
         tooltips.register(showCameraInfoLabel, () => i18n.formatTooltipWithShortcut(i18n.t('panel.overlays.camera-info'), cameraInfoShortcut), 'left');
         tooltips.register(resetButton, () => i18n.t('panel.settings.reset'), 'left');
+        tooltips.register(gridPlanesLabel, () => i18n.t('panel.overlays.grid-planes.tooltip'), 'left');
+        tooltips.register(showBoundLabel, () => i18n.t('panel.overlays.bounding-box.tooltip'), 'left');
+        tooltips.register(showBoundDimensionsLabel, () => i18n.t('panel.overlays.dimensions.tooltip'), 'left');
+        tooltips.register(showCameraPosesLabel, () => i18n.t('panel.overlays.camera-poses.tooltip'), 'left');
+        tooltips.register(perfOverlayLabel, () => i18n.t('panel.overlays.frame-timings.tooltip'), 'left');
+        tooltips.register(overdrawLabel, () => i18n.t('panel.overlays.overdraw.tooltip'), 'left');
     }
 }
 

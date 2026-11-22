@@ -270,6 +270,15 @@ class DataPanel extends Container {
                 value: i18n.t('panel.splat-data.value')
             };
 
+            // explanations for the less obvious properties (shown on hover)
+            const propTips: { [key: string]: string } = {
+                distance: 'panel.splat-data.distance-tip',
+                'camera-depth': 'panel.splat-data.camera-depth-tip',
+                volume: 'panel.splat-data.volume-tip',
+                'surface-area': 'panel.splat-data.surface-area-tip',
+                hue: 'panel.splat-data.hue-tip'
+            };
+
             // "Show All" extras: raw DC coefficients first, then spherical
             // harmonics coefficients labelled with their channel (R/G/B) and
             // within-channel index. all filtered by the splat's actual SH band
@@ -324,6 +333,11 @@ class DataPanel extends Container {
                     item.classList.add('active');
                 }
                 item.textContent = localizations[prop] ?? extras[prop] ?? prop;
+                const tipKey = propTips[prop] ??
+                    (prop.startsWith('rot_') ? 'panel.splat-data.quaternion-tip' :
+                        prop.startsWith('f_dc_') ? 'panel.splat-data.dc-tip' :
+                            prop.startsWith('f_rest_') ? 'panel.splat-data.sh-tip' : null);
+                if (tipKey) item.title = i18n.t(tipKey);
 
                 item.addEventListener('click', () => {
                     selectedDataProp = prop;
@@ -373,6 +387,7 @@ class DataPanel extends Container {
         const histogramCanvasArea = document.createElement('div');
         histogramCanvasArea.id = 'histogram-canvas-area';
         histogramCanvasArea.appendChild(histogram.canvas);
+        i18n.bindDom(histogram.canvas, 'panel.splat-data.histogram-tip', 'title');
 
         // top-right stats overlay: shows the aggregate counts for the hovered
         // bucket or the drag range. pointer-events: none so it never blocks

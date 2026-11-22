@@ -291,8 +291,8 @@ class QualityTool {
 
         const modeRow = row('sm.quality.display');
         i18n.bindDom(modeRow.dom, 'sm.quality.display-tip', 'title');
-        const modeButtons = ([['off', 'sm.common.off'], ['heatmap', 'Heatmap'], ['threshold', 'sm.quality.below'], ['compare', 'sm.quality.compare']] as [QualityMode, string][]).map(([value, text]) => {
-            const b = button(modeRow, text, '', () => events.fire('quality.setMode', value));
+        const modeButtons = ([['off', 'sm.common.off', ''], ['heatmap', 'Heatmap', 'sm.quality.mode-heatmap-tip'], ['threshold', 'sm.quality.below', 'sm.quality.mode-threshold-tip'], ['compare', 'sm.quality.compare', 'sm.quality.mode-compare-tip']] as [QualityMode, string, string][]).map(([value, text, title]) => {
+            const b = button(modeRow, text, title, () => events.fire('quality.setMode', value));
             b.classList.add('quality-segment');
             b.dataset.value = value;
             return b;
@@ -303,6 +303,7 @@ class QualityTool {
         panel.append(heatmapHint);
 
         const thresholdRow = row('sm.transitions.threshold');
+        i18n.bindDom(thresholdRow.dom, 'sm.quality.threshold-tip', 'title');
         const thresholdSlider = new SliderInput({ min: 0, max: 1, sliderMin: 0, sliderMax: 1, precision: 2, step: 0.01, value: threshold });
         thresholdSlider.on('change', (v: number) => events.fire('quality.setThreshold', v));
         thresholdRow.append(thresholdSlider);

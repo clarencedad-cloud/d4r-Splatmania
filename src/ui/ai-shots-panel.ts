@@ -263,6 +263,7 @@ class AiShotsPanel extends Container {
         customRow.dom.appendChild(heightInput);
         customRow.append(heightUnit);
         tooltips.register(heightLabel, () => i18n.t('sm.scale.object-height-tip'), 'left');
+        tooltips.register(customLabel, () => i18n.t('sm.scale.unit-is-tip'), 'left');
         this.append(customRow);
         const scaleHint = info(['ai-shots-warn-text']);
 
@@ -315,7 +316,7 @@ class AiShotsPanel extends Container {
         const anchorRow = new Container({ class: 'ai-shots-row' });
         anchorRow.append(anchorLabel);
         const anchorAdd = button('sm.aishots.anchor-add', 'ai-shots-small', anchorRow, 'sm.aishots.anchor-add-tip');
-        const anchorClear = button('sm.aishots.anchor-clear', 'ai-shots-small', anchorRow);
+        const anchorClear = button('sm.aishots.anchor-clear', 'ai-shots-small', anchorRow, 'sm.aishots.anchor-clear-tip');
         this.append(anchorRow);
 
         let anchorCount = 0;
@@ -475,7 +476,7 @@ class AiShotsPanel extends Container {
         waypointRow.append(waypointInfo);
         const pickButton = button('sm.aishots.walk.pick', 'ai-shots-small', waypointRow, 'sm.aishots.walk.pick-tip');
         const autoButton = button('sm.aishots.walk.auto', 'ai-shots-small', waypointRow, 'sm.aishots.walk.auto-tip');
-        const clearButton = button('sm.aishots.walk.clear', 'ai-shots-small', waypointRow);
+        const clearButton = button('sm.aishots.walk.clear', 'ai-shots-small', waypointRow, 'sm.aishots.walk.clear-tip');
         this.append(waypointRow);
         const waypointHint = info(['ai-shots-hint']);
         const autoRoute = toggleRow('sm.aishots.walk.route', 'sm.aishots.walk.route-tip', DEFAULT_SETTINGS.autoRoute);
@@ -935,6 +936,7 @@ class AiShotsPanel extends Container {
 
             const head = new Container({ class: 'ai-shots-card-head' });
             const check = new BooleanInput({ class: 'ai-shots-check' });
+            tooltips.register(check, () => i18n.t('sm.aishots.card-check-tip'), 'left');
             const title = new Label({ class: 'ai-shots-card-title' });
             i18n.bindText(title, () => titleOf(proposal));
             const badge = new Label({ class: 'ai-shots-badge', hidden: true });

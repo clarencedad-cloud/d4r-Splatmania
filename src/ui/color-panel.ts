@@ -36,6 +36,7 @@ class ColorPanel extends Container {
             class: 'color-panel-row-label'
         });
         i18n.bindText(tintLabel, 'panel.colors.tint');
+        i18n.bindDom(tintLabel.dom, 'panel.colors.tint.tooltip', 'title');
 
         const tintPicker = new ColorPicker({
             class: 'color-panel-row-picker',
@@ -62,6 +63,7 @@ class ColorPanel extends Container {
             class: 'color-panel-row-label'
         });
         i18n.bindText(temperatureLabel, 'panel.colors.temperature');
+        i18n.bindDom(temperatureLabel.dom, 'panel.colors.temperature.tooltip', 'title');
 
         const temperatureSlider = new SliderInput({
             class: 'color-panel-row-slider',
@@ -128,6 +130,7 @@ class ColorPanel extends Container {
             class: 'color-panel-row-label'
         });
         i18n.bindText(blackPointLabel, 'panel.colors.black-point');
+        i18n.bindDom(blackPointLabel.dom, 'panel.colors.black-point.tooltip', 'title');
 
         const blackPointSlider = new SliderInput({
             class: 'color-panel-row-slider',
@@ -150,6 +153,7 @@ class ColorPanel extends Container {
             class: 'color-panel-row-label'
         });
         i18n.bindText(whitePointLabel, 'panel.colors.white-point');
+        i18n.bindDom(whitePointLabel.dom, 'panel.colors.white-point.tooltip', 'title');
 
         const whitePointSlider = new SliderInput({
             class: 'color-panel-row-slider',
@@ -172,6 +176,7 @@ class ColorPanel extends Container {
             class: 'color-panel-row-label'
         });
         i18n.bindText(transparencyLabel, 'panel.colors.transparency');
+        i18n.bindDom(transparencyLabel.dom, 'panel.colors.transparency.tooltip', 'title');
 
         const transparencySlider = new SliderInput({
             class: 'color-panel-row-slider',
@@ -198,12 +203,14 @@ class ColorPanel extends Container {
             class: 'color-panel-button'
         });
         i18n.bindText(apply, 'panel.colors.apply');
+        i18n.bindDom(apply.dom, 'panel.colors.apply.tooltip', 'title');
         apply.dom.style.setProperty('--icon', `url("${checkSvg}")`);
 
         const reset = new Button({
             class: 'color-panel-button'
         });
         i18n.bindText(reset, 'panel.colors.reset');
+        i18n.bindDom(reset.dom, 'panel.colors.reset.tooltip', 'title');
         reset.dom.style.setProperty('--icon', `url("${editUndoSvg}")`);
 
         controlRow.append(apply);

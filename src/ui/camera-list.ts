@@ -202,6 +202,10 @@ class CameraList extends Container {
         i18n.bindText(frustumLabel, 'sm.cameras.frustums');
         const pathLabel = new Label({ class: 'camera-list-label' });
         i18n.bindText(pathLabel, 'sm.cameras.paths');
+        i18n.bindDom(frustumLabel.dom, 'sm.cameras.frustums-tip', 'title');
+        i18n.bindDom(frustums.dom, 'sm.cameras.frustums-tip', 'title');
+        i18n.bindDom(pathLabel.dom, 'sm.cameras.paths-tip', 'title');
+        i18n.bindDom(paths.dom, 'sm.cameras.paths-tip', 'title');
         gizmoRow.append(frustumLabel);
         gizmoRow.append(frustums);
         gizmoRow.append(pathLabel);
@@ -416,6 +420,8 @@ class CameraList extends Container {
         const dofOnLabel = new Label({ class: 'camera-list-label' });
         i18n.bindText(dofOnLabel, 'sm.dof.title');
         const dofEnabled = new BooleanInput({ value: false });
+        i18n.bindDom(dofOnLabel.dom, 'sm.dof.enabled-tip', 'title');
+        i18n.bindDom(dofEnabled.dom, 'sm.dof.enabled-tip', 'title');
         dofEnabled.on('change', (value: boolean) => {
             if (!syncing) events.fire('dof.set', { enabled: value });
         });

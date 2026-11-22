@@ -1401,6 +1401,68 @@ if (has('unit')) {
             patchMin >= 160 && floorMax <= 40 && cmpPatch >= 128 && cmpFloor <= 40 && cmpB === 0,
             `blur: patch min ${patchMin}, floor max ${floorMax}; coarser than B: patch min ${cmpPatch}, floor max ${cmpFloor}, B max ${cmpB}`);
     }
+    // blurry to see, not by count (compose-blur BLUR.visOctaves, the white
+    // tree crowns by the Nuremberg bridge): both scans have a fine floor
+    // (2.5 cm splats); above it a 3 x 3 x 1.5 m crown. In A every 30 cm
+    // voxel of it holds 60 small splats (2.5 cm, alpha 0.5) and 2 large ones
+    // (25 cm): by count A is fine there (+0.2 octaves), to see it is a blob
+    // (+2.9). In B a thin branch runs through every voxel (2 cm splats, 1 cm
+    // apart), opaque in every other voxel and faint (alpha 0.15) in the rest:
+    // the faint voxels have no opaque rows but are visually clear. The pair
+    // must give one 'B is sharp here' area of A with the large crown splats
+    // and none of the small ones or the floor; the rule off (visOctaves
+    // Infinity) leaves the crown alone, the twins never say 'other sharp'
+    {
+        const rnd = rng(17);
+        const cell = 0.3;
+        const floor = (pts) => {
+            for (let x = 0.025; x < 10; x += 0.05) for (let y = 0.025; y < 10; y += 0.05) pts.push([x, y, 0.004 * (rnd() - 0.5), 0.025, 230, 0]);
+        };
+        const crownA = [], crownB = [];
+        floor(crownA);
+        floor(crownB);
+        for (let ix = 0; ix < 10; ix++) {
+            for (let iy = 0; iy < 10; iy++) {
+                for (let iz = 0; iz < 5; iz++) {
+                    const x0 = 3 + ix * cell, y0 = 3 + iy * cell, z0 = 3 + iz * cell;
+                    for (let k = 0; k < 60; k++) crownA.push([x0 + cell * rnd(), y0 + cell * rnd(), z0 + cell * rnd(), 0.025, 128, 1]);
+                    for (let k = 0; k < 2; k++) crownA.push([x0 + cell * (0.25 + 0.5 * rnd()), y0 + cell * (0.25 + 0.5 * rnd()), z0 + cell * (0.25 + 0.5 * rnd()), 0.25, 230, 2]);
+                    const alpha = (ix + iz) % 2 ? 38 : 230;
+                    for (let k = 0; k < 30; k++) crownB.push([x0 + 0.005 + k * 0.01, y0 + cell / 2, z0 + cell / 2, 0.02, alpha, 3]);
+                }
+            }
+        }
+        const rowsOf = (pts) => {
+            const n = pts.length;
+            const r = { positions: new Float32Array(n * 3), footprint: new Float32Array(n), opacity: new Uint8Array(n), truth: new Uint8Array(n) };
+            pts.forEach((p, i) => {
+                r.positions.set(p.slice(0, 3), i * 3);
+                r.footprint[i] = p[3];
+                r.opacity[i] = p[4];
+                r.truth[i] = p[5];
+            });
+            return r;
+        };
+        const A = rowsOf(crownA), B = rowsOf(crownB);
+        const of = (area, kind) => {
+            let c = 0;
+            for (const i of area.rows) c += A.truth[i] === kind ? 1 : 0;
+            return c;
+        };
+        const nLarge = A.truth.reduce((a, v) => a + (v === 2 ? 1 : 0), 0);
+        const opts = { upAxis: 2, cell };
+        const pair = BL.composeBlur([A, B], opts);
+        const crown = pair.areas.find(a => a.scan === 0 && of(a, 2) > nLarge / 2);
+        report('blur areas, blurry to see: A\'s crown of small splats under a few large ones is one "B is sharp here" area of its large splats; B none',
+            crown?.compare === 'otherSharp' && crown.sharpBy === 1 && of(crown, 2) >= 0.9 * nLarge && of(crown, 1) === 0 && of(crown, 0) === 0 && crown.lead >= 2 &&
+            !pair.areas.some(a => a.scan === 1),
+            crown ? `${crown.kind} ${crown.compare} by ${crown.sharpBy}: large ${of(crown, 2)} of ${nLarge}, small ${of(crown, 1)}, floor ${of(crown, 0)}, other sharp ${pct(crown.otherSharp)}, lead ${crown.lead.toFixed(2)} oct; areas of B ${pair.areas.filter(a => a.scan === 1).length}` : `no area (${pair.areas.length} areas)`);
+        const off = BL.composeBlur([A, B], { ...opts, visOctaves: Infinity });
+        const twins = BL.composeBlur([A, A], opts);
+        report('blur areas, blurry to see: without the visual rule the crown is not found (by count A is fine there); twins never "other sharp"',
+            !off.areas.some(a => of(a, 2) > 0.1 * nLarge) && !twins.areas.some(a => a.otherSharp > 0 || a.compare === 'otherSharp'),
+            `rule off: ${off.areas.length} areas, largest share of the large crown splats ${Math.max(0, ...off.areas.filter(a => a.scan === 0).map(a => of(a, 2)))} of ${nLarge}; twins ${twins.areas.length} areas, other sharp ${twins.areas.filter(a => a.otherSharp > 0).length}`);
+    }
     report('contract: CellState.uncovered is 10, apart 9', D.CellState.uncovered === 10 && D.CellState.apart === 9, `${D.CellState.uncovered}, ${D.CellState.apart}`);
     process.exit(failed ? 1 : 0);
 }

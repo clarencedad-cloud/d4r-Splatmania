@@ -64,6 +64,14 @@ const refreshRecentMenu = async <T extends { name: string }>(panel: MenuPanel, s
     }
 };
 
+// roll-over explanations for menu rows, by item index (a panel has one row
+// per item, separators included)
+const tipRows = (panel: MenuPanel, tips: Record<number, string>) => {
+    Object.entries(tips).forEach(([index, key]) => {
+        i18n.bindDom(panel.dom.children.item(Number(index)) as HTMLElement, key, 'title');
+    });
+};
+
 // publishing uploads to the PlayCanvas cloud and needs its login, which only
 // exists on playcanvas.com - a local or installed editor hides the entry
 const canPublish = () => /(?:^|\.)playcanvas\.com$/.test(location.hostname);
@@ -133,6 +141,8 @@ class Menu extends Container {
         arrow.dom.classList.add('menu-icon');
         arrow.dom.setAttribute('id', 'menu-arrow');
         arrow.dom.addEventListener('click', toggleCollapsed);
+        i18n.bindDom(collapse.dom, 'menu.collapse-tip', 'title');
+        i18n.bindDom(arrow.dom, 'menu.collapse-tip', 'title');
 
         // Splatmania home: leftmost, before File. Mark + wordmark; the
         // wordmark hides when the menubar is collapsed.
@@ -487,6 +497,23 @@ class Menu extends Container {
             icon: 'E138',
             onSelect: () => events.fire('show.about')
         }]);
+
+        tipRows(exportMenuPanel, {
+            0: 'menu.file.export.ply-tip',
+            1: 'menu.file.export.sog-tip',
+            2: 'menu.file.export.spz-tip',
+            3: 'menu.file.export.splat-tip',
+            5: 'menu.file.export.viewer-tip'
+        });
+        tipRows(fileMenuPanel, { 11: 'menu.file.reexport-tip' });
+        tipRows(editMenuPanel, { 3: 'menu.edit.duplicate-tip', 4: 'menu.edit.separate-tip' });
+        tipRows(selectionMenuPanel, {
+            4: 'menu.select.lock-tip',
+            5: 'menu.select.unlock-tip',
+            6: 'menu.select.delete-tip',
+            7: 'menu.select.reset-tip'
+        });
+        tipRows(renderMenuPanel, { 2: 'sm.player.open-tip' });
 
         this.append(menubar);
         this.append(fileMenuPanel);

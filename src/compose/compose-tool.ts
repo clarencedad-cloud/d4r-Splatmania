@@ -2,7 +2,8 @@ import { BooleanInput, Container, Label, SelectInput } from '@playcanvas/pcui';
 import { Mat4, Vec3 } from 'playcanvas';
 
 import type { ComposeAlignResult, OverlapResult, ZoneReport } from './compose-core';
-import { button, el, formatCount, inView, scanName } from './compose-dom';
+import { button, el, formatCount, formatInt, inView, scanName } from './compose-dom';
+import { FAINT_OPACITY, mergeCounts, mergeScans, type MergeResult } from './compose-merge';
 import { ComposeSuggest, SharpnessView } from './compose-suggest';
 import { SuggestPanel } from './compose-suggest-ui';
 import { matrixOps } from '../align/align-ops';
@@ -42,7 +43,7 @@ const LUMA = [0.299, 0.587, 0.114];
 
 const STEPS = ['load', 'align', 'analyse', 'suggest', 'gaps', 'result'] as const;
 type Step = typeof STEPS[number];
-const READY_STEPS = new Set<Step>(['load', 'align', 'analyse', 'suggest']);
+const READY_STEPS = new Set<Step>(['load', 'align', 'analyse', 'suggest', 'result']);
 // the steps of phase 2 (map, previews and the hide switch apply there)
 const isWizardStep = (step: Step) => step === 'analyse' || step === 'suggest';
 // keys the panel's buttons, checkboxes and selects handle themselves (the
@@ -139,6 +140,9 @@ class ComposeTool {
         let message = '';
         // layers the user took out of the composition
         const excluded = new Set<Splat>();
+        // layers made by "Zusammenführen": never a scan of the composition, also
+        // after an undo and redo
+        const mergedLayers = new WeakSet<Splat>();
         let manualReference: Splat | null = null;
         // the first suggestion for a set of scans stays the reference: once the
         // scans moved apart, a new overlap measurement means nothing
@@ -160,7 +164,7 @@ class ComposeTool {
         const len = (v: number) => formatLength(v, sceneScale());
 
         const layers = () => (scene.getElementsByType(ElementType.splat) as Splat[]);
-        const included = () => layers().filter(s => !excluded.has(s)).slice(0, MAX_SCANS);
+        const included = () => layers().filter(s => !excluded.has(s) && !mergedLayers.has(s)).slice(0, MAX_SCANS);
         // a scan's name in the compose texts (numbered when two layers share it)
         const nameOf = (splat: Splat) => scanName(splat, layers());
         const colorOf = (splat: Splat) => COLORS[Math.max(0, included().indexOf(splat)) % COLORS.length];
@@ -200,7 +204,10 @@ class ComposeTool {
             nameOf,
             colors: COLORS,
             onChange: changed,
-            sharpness: (splat: Splat, hideLocked: boolean) => sharpness.params(splat, hideLocked)
+            sharpness: (splat: Splat, hideLocked: boolean) => sharpness.params(splat, hideLocked),
+            // after an analysis the view shows the blurry-area detector's
+            // value (blur by area)
+            sharpSource: (splat: Splat, value: { bytes: Uint8Array, median: number } | null) => sharpness.setExternal(splat, value)
         });
 
         const tints = new Map<string, Float32Array>();
@@ -262,6 +269,7 @@ class ComposeTool {
         const colorsInput = new BooleanInput({ value: showColors });
         const colorsLabel = new Label({ class: 'compose-view-label' });
         i18n.bindText(colorsLabel, 'sm.compose.view.colors');
+        i18n.bindDom(colorsLabel.dom, 'sm.compose.view.colors-tip', 'title');
         colorsInput.on('change', (value: boolean) => {
             showColors = value;
             changed();
@@ -274,6 +282,8 @@ class ComposeTool {
         // zone markers in steps 1-2, suggestion pills in steps 3-4
         const zonesText = () => i18n.t(isWizardStep(step) ? 'sm.compose.view.markers' : 'sm.compose.view.zones');
         i18n.bindText(zonesLabel, zonesText);
+        const zonesTip = () => i18n.t(isWizardStep(step) ? 'sm.compose.view.markers-tip' : 'sm.compose.view.zones-tip');
+        i18n.bindDom(zonesLabel.dom, zonesTip, 'title');
         zonesInput.on('change', (value: boolean) => {
             showZones = value;
             changed();
@@ -546,6 +556,7 @@ class ComposeTool {
             options.append(posRow);
             const scaleRow = new Container({ class: 'compose-row' });
             const scaleLabel = new Label({ class: 'compose-label', text: i18n.t('sm.compose.align.scale') });
+            scaleLabel.dom.title = i18n.t('sm.compose.align.scale-tip');
             const scaleInput = new BooleanInput({ value: useScale });
             scaleInput.on('change', (value: boolean) => {
                 useScale = value;
@@ -634,6 +645,105 @@ class ComposeTool {
             body.appendChild(nav);
         };
 
+        // step 6 "Zusammenführen": the included scans become one layer without
+        // their hidden splats (compose-merge.ts)
+        let merging = false;
+        let dropFaint = true;
+        let merged: (MergeResult & { scans: number, before: number }) | null = null;
+        let mergeError = '';
+
+        const rebuildResult = () => {
+            const t = (key: string, args?: Record<string, unknown>) => i18n.t(`sm.compose.merge.${key}`, args);
+            body.appendChild(el('div', 'compose-hint', t('hint')));
+            const scans = included();
+            const counts = mergeCounts(scans);
+            const list = el('div');
+            let total = 0, hidden = 0;
+            for (const c of counts) {
+                total += c.total;
+                hidden += c.hidden;
+                const row = el('div', 'compose-note');
+                const sw = el('span', 'compose-swatch');
+                sw.style.backgroundColor = colorOf(c.splat);
+                sw.style.display = 'inline-block';
+                sw.style.marginRight = '6px';
+                row.append(sw, el('span', '', t('scan', {
+                    name: nameOf(c.splat),
+                    total: formatCount(c.total),
+                    hidden: formatCount(c.hidden)
+                })));
+                list.appendChild(row);
+            }
+            body.appendChild(list);
+            if (scans.length) {
+                const pct = total ? Math.round(100 * hidden / total) : 0;
+                body.appendChild(el('div', 'compose-note', t('sum', {
+                    before: formatCount(total), after: formatCount(total - hidden), pct
+                })));
+            }
+
+            const row = el('label', 'compose-row');
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = dropFaint;
+            box.disabled = merging;
+            box.dataset.key = 'merge-faint';
+            box.addEventListener('change', () => {
+                dropFaint = box.checked;
+            });
+            row.append(box, el('span', '', t('faint', { pct: Math.round(FAINT_OPACITY * 100) })));
+            body.appendChild(row);
+
+            if (merging) body.appendChild(el('div', 'compose-note', t('busy')));
+            if (mergeError) body.appendChild(el('div', ['compose-note', 'warn'], mergeError));
+            if (merged) {
+                const gone = merged.before - merged.count;
+                body.appendChild(el('div', 'compose-note', t('done', {
+                    name: merged.layer.name,
+                    count: formatInt(merged.count),
+                    gone: formatInt(Math.max(0, gone)),
+                    pct: merged.before ? Math.round(100 * gone / merged.before) : 0,
+                    mb: Math.round(merged.bytes / 1048576)
+                })));
+            }
+
+            const nav = el('div', 'compose-row');
+            nav.appendChild(button(i18n.t('sm.compose.back'), () => events.fire('compose.setStep', 'suggest'), [], undefined, 'nav:result:back'));
+            // merged and not undone: once is enough (Strg+Z brings the scans back)
+            const done = !!merged?.layer.scene;
+            nav.appendChild(button(t('run'), () => runMerge(), ['primary', ...(merging || done || scans.length < 2 ? ['disabled'] : [])], scans.length < 2 ? t('need-two') : done ? t('run-done') : t('run-tip'), 'merge:run'));
+            if (merged && merged.layer.scene) {
+                nav.appendChild(button(t('export'), () => events.invoke('scene.export', 'ply'), [], t('export-tip'), 'merge:export'));
+            }
+            body.appendChild(nav);
+        };
+
+        async function runMerge() {
+            const scans = included();
+            if (merging || scans.length < 2 || merged?.layer.scene) return;
+            merging = true;
+            mergeError = '';
+            merged = null;
+            // all scans shown again (the merge hides them in one undo step)
+            solo = null;
+            changed();
+            try {
+                const before = scans.reduce((n, s) => n + s.instances.count, 0);
+                const name = i18n.t('sm.compose.merge.layer-name');
+                const result = await mergeScans(events, scene, scans, name, dropFaint, layer => mergedLayers.add(layer));
+                if (result) {
+                    merged = { ...result, scans: scans.length, before };
+                } else {
+                    mergeError = i18n.t('sm.compose.merge.failed', { error: '' });
+                }
+            } catch (err) {
+                mergeError = i18n.t('sm.compose.merge.failed', { error: err?.message ?? String(err) });
+            } finally {
+                merging = false;
+                changed();
+            }
+        }
+
         // the focused control of the body, by its key (data-key, see
         // compose-dom button): a rebuild replaces it, and focus left on
         // <body> would hand the next Space to the editor (timeline playback)
@@ -668,10 +778,12 @@ class ComposeTool {
             if (step === 'load') rebuildLoad();
             else if (step === 'align') rebuildAlign();
             else if (step === 'analyse') suggestUi.buildAnalyse(body, transient);
+            else if (step === 'result') rebuildResult();
             else suggestUi.buildSuggest(body);
             refocus(focusKey);
             const wizard = isWizardStep(step);
             zonesLabel.text = zonesText();
+            zonesLabel.dom.title = zonesTip();
             mapItem.hidden = !wizard;
             hiddenItem.hidden = !wizard;
             if (mapInput.value !== suggest.map) mapInput.value = suggest.map;

@@ -260,6 +260,12 @@ class ImageSettingsDialog extends Container {
         showDebugRow.append(showDebugLabel);
         showDebugRow.append(showDebugBoolean);
 
+        i18n.bindDom(projectionRow.dom, 'popup.render-image.projection-tip', 'title');
+        i18n.bindDom(formatRow.dom, 'popup.render-image.format-tip', 'title');
+        i18n.bindDom(levelHorizonRow.dom, 'popup.render-image.level-horizon-tip', 'title');
+        i18n.bindDom(transparentBgRow.dom, 'popup.render-image.transparent-background-tip', 'title');
+        i18n.bindDom(showDebugRow.dom, 'popup.render-image.show-debug-overlays-tip', 'title');
+
         // exr: camera depth as a Z channel (standard projection)
         const depthLabel = new Label({ class: 'label' });
         i18n.bindText(depthLabel, 'sm.video.depth');

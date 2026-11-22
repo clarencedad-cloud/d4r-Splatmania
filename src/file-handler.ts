@@ -291,7 +291,8 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
     };
 
     // import splat model(s) - handles single files, SOG, and LCC formats
-    const importSplatModel = async (files: ImportFile[], animationFrame: boolean) => {
+    // (add = false: loaded only, the caller adds it, e.g. through an undoable op)
+    const importSplatModel = async (files: ImportFile[], animationFrame: boolean, add = true) => {
         try {
             const filenames = files.map(f => f.filename.toLowerCase());
 
@@ -321,7 +322,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 return null;
             }
             model.resource.fileSources = fileSystem.sources;
-            await scene.add(model);
+            if (add) await scene.add(model);
             return model;
         } catch (error) {
             const displayName = files[0]?.filename ?? 'unknown';
@@ -385,6 +386,12 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
 
     events.function('import', (files: ImportFile[], animationFrame = false) => {
         return importFiles(files, animationFrame);
+    });
+
+    // load one splat file made in the app (the merged scans of the compose
+    // wizard) as a layer that is not yet in the scene and not in Import Recent
+    events.function('import.loadSplat', (file: File) => {
+        return importSplatModel([{ filename: file.name, contents: file }], false, false);
     });
 
     // create a file selector element as fallback when showOpenFilePicker isn't available

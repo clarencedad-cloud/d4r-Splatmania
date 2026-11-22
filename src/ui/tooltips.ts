@@ -32,6 +32,8 @@ class Tooltips extends Container {
         let timer: number = 0;
 
         this.register = (target: Element, textString: TooltipText, direction: Direction = 'bottom') => {
+            // marks the control as explained (the UI checks look for it)
+            if (target.dom) target.dom.dataset.tip = '';
 
             const activate = () => {
                 // the target may have been destroyed while the show timer ran

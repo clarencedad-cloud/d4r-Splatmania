@@ -2,7 +2,7 @@ import { Container, Label, SelectInput } from '@playcanvas/pcui';
 
 import { biasOf, CellState, DETAIL, gridCell, type CellProbe, type LoserNumbers, type PairInfo, type ProbePair, type Rejected } from './compose-detail';
 import { button, el, formatArea, formatDims, formatFactor, formatInt, inView, percent, percentText, scrollIntoPanel, segmented, splatLen, swatch } from './compose-dom';
-import type { Card, ComposeSuggest, GridMode } from './compose-suggest';
+import type { AreaCard, Card, ComposeSuggest, GridMode } from './compose-suggest';
 import { Events } from '../events';
 import { formatNumber, type SceneScale } from '../scene-scale';
 import type { Splat } from '../splat';
@@ -37,6 +37,9 @@ type Box = { min: number[], max: number[], color: string };
 // cards shown before the rest folds away; rejected clusters listed
 const CARDS_SHOWN = 30;
 const SKIP_SHOWN = 8;
+// blurry-area cards shown before the rest folds away (a handful: the
+// detector finds 5-11 areas in the real pairs)
+const AREAS_SHOWN = 8;
 // other cards' hides listed in a probe and on a skip row (largest first)
 const PROBE_HIDES = 3;
 const SKIP_HIDES = 2;
@@ -54,6 +57,14 @@ class SuggestPanel {
     private pills: HTMLElement[] = [];
     // cards in the panel right now (their pills show)
     private shownIds = new Set<number>();
+    // step 4: the detailed suggestions unfolded ("Feinvergleich"), all
+    // blurry areas shown, the area card to scroll to, the areas in the panel
+    // (their pills show)
+    private detailsOpen = false;
+    private areasAll = false;
+    private scrollToArea = -1;
+    private areaPills: HTMLElement[] = [];
+    private shownAreas = new Set<number>();
 
     constructor(c: PanelContext) {
         this.c = c;
@@ -105,6 +116,16 @@ class SuggestPanel {
         }
         const stale = suggest.isStale();
         if (stale) body.appendChild(el('div', ['compose-note', 'warn'], t('analyse.stale')));
+
+        // the blurry areas first (step 4's first section), then the details
+        const areas = a.areas?.cards ?? [];
+        if (a.areas) {
+            body.appendChild(el('div', ['compose-note', 'compose-areas-found'], t('analyse.areas', {
+                count: areas.length,
+                sharp: areas.filter(c => c.area.compare === 'otherSharp').length
+            })));
+            body.appendChild(this.keysHint());
+        }
 
         // per scan
         body.appendChild(el('div', 'compose-subheading', t('analyse.result')));
@@ -161,7 +182,10 @@ class SuggestPanel {
         body.appendChild(el('div', 'compose-note', t('probe.hint')));
         if (suggest.probeResult) body.appendChild(this.probeBox(suggest.probeResult.probe));
 
-        this.nav(body, i18n.t('sm.compose.back'), 'align', { step: 'suggest', text: t('analyse.next', { count: a.cards.filter(c => !c.rejected).length }) });
+        const next = a.areas ?
+            t('analyse.next-areas', { count: areas.length }) :
+            t('analyse.next', { count: a.cards.filter(c => !c.rejected).length });
+        this.nav(body, i18n.t('sm.compose.back'), 'align', { step: 'suggest', text: next });
     }
 
     private selectRow(label: string, tip: string, value: string, options: { v: string, t: string }[], disabled: boolean, onChange: (v: string) => void) {
@@ -383,18 +407,245 @@ class SuggestPanel {
 
     // ------------------------------------------------------------ step 4
 
+    // step 4: the blurry areas first (the simple path: a handful of large
+    // areas, Löschen / Behalten), then the detailed suggestions folded as
+    // "Feinvergleich", unchanged inside
     buildSuggest(body: HTMLElement) {
-        const { suggest, events } = this.c;
+        const { suggest } = this.c;
         const a = suggest.analysis;
         const busy = this.c.busy();
-        body.appendChild(el('div', 'compose-hint', t('suggest.hint')));
+        this.shownIds.clear();
+        this.shownAreas.clear();
         if (!a) {
+            body.appendChild(el('div', 'compose-hint', t('areas.hint')));
             body.appendChild(el('div', 'compose-note', t('suggest.none-yet')));
             this.nav(body, t('suggest.back'), 'analyse', this.gapsNext());
             return;
         }
         const stale = suggest.isStale();
         if (stale) body.appendChild(el('div', ['compose-note', 'warn'], t('analyse.stale')));
+
+        this.areaSection(body, stale, busy);
+
+        // the detailed suggestions, folded
+        const fold = el('div', ['compose-fold', ...(this.detailsOpen ? ['open'] : [])]);
+        fold.setAttribute('role', 'button');
+        fold.tabIndex = 0;
+        fold.dataset.key = 'details-fold';
+        fold.title = t('details.tip');
+        fold.append(el('span', 'compose-fold-arrow', this.detailsOpen ? '▾' : '▸'), el('span', 'compose-fold-title', t('details.title')),
+            el('span', 'compose-fold-count', t('details.count', { count: a.cards.length, accepted: a.cards.filter(c => c.status === 'accepted').length })));
+        const toggle = () => {
+            this.detailsOpen = !this.detailsOpen;
+            this.c.onChange();
+        };
+        fold.addEventListener('click', toggle);
+        fold.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();
+            toggle();
+        });
+        body.appendChild(fold);
+        if (this.detailsOpen) {
+            const details = el('div', 'compose-details');
+            this.buildDetails(details, stale, busy);
+            body.appendChild(details);
+        }
+
+        this.nav(body, t('suggest.back'), 'analyse', this.gapsNext());
+
+        // a card opened from a pill or the probe, or made with "Trotzdem
+        // übernehmen": looked up again at the next frame (a rebuild in
+        // between replaces it), and only the panel scrolls
+        if (this.scrollTo >= 0 || this.scrollToArea >= 0) {
+            const selector = this.scrollTo >= 0 ? `[data-card="${this.scrollTo}"]` : `[data-area="${this.scrollToArea}"]`;
+            this.scrollTo = -1;
+            this.scrollToArea = -1;
+            requestAnimationFrame(() => {
+                const target = body.querySelector<HTMLElement>(selector);
+                if (target) scrollIntoPanel(target);
+            });
+        }
+    }
+
+    // ------------------------------------------------------------ blurry areas
+
+    private areaSection(body: HTMLElement, stale: boolean, busy: boolean) {
+        const { suggest, events } = this.c;
+        const a = suggest.analysis;
+        const ar = a.areas;
+        body.appendChild(el('div', ['compose-subheading', 'compose-areas-title'], t('areas.title')));
+        body.appendChild(el('div', 'compose-hint', t('areas.hint')));
+        body.appendChild(this.keysHint());
+        if (!ar) {
+            body.appendChild(el('div', ['compose-note', 'warn'], t('areas.failed')));
+            return;
+        }
+        const cards = ar.cards;
+        if (!cards.length) {
+            body.appendChild(el('div', 'compose-note', t('areas.none')));
+            return;
+        }
+        const deleted = cards.filter(c => c.status === 'accepted').length;
+        const kept = cards.filter(c => c.kept).length;
+        body.appendChild(el('div', 'compose-note', t('areas.summary', { count: cards.length, d: deleted, k: kept, s: formatNumber(ar.seconds, 1) })));
+
+        // bulk: every open area where another scan is sharp; all back
+        const sharp = cards.filter(c => c.area.compare === 'otherSharp' && suggest.areaOpen(c));
+        const bulk = el('div', ['compose-row', 'compose-area-bulk']);
+        bulk.appendChild(button(t('areas.delete-sharp', { n: sharp.length }), () => events.invoke('compose.deleteAreas', 'sharp'),
+            ['primary', ...(!sharp.length || stale || busy ? ['disabled'] : [])], stale ? t('analyse.stale') : t('areas.delete-sharp-tip'), 'areas:delete-sharp'));
+        bulk.appendChild(button(t('areas.revert-all'), () => events.invoke('compose.revertAreas', 'all'),
+            ['small', ...(!cards.some(c => suggest.canRevertArea(c.id)) || busy ? ['disabled'] : [])], t('areas.revert-all-tip'), 'areas:revert-all'));
+        const markLabel = el('label', 'compose-hide-selection');
+        markLabel.title = t('areas.mark-tip');
+        const mark = document.createElement('input');
+        mark.type = 'checkbox';
+        mark.checked = suggest.areaMark;
+        mark.dataset.key = 'areas:mark';
+        mark.addEventListener('change', () => events.fire('compose.setAreaMark', mark.checked));
+        markLabel.append(mark, el('span', '', t('areas.mark')));
+        bulk.appendChild(markLabel);
+        body.appendChild(bulk);
+
+        const shown = this.areasAll ? cards : cards.slice(0, AREAS_SHOWN);
+        shown.forEach((card) => {
+            body.appendChild(this.areaView(card, cards.indexOf(card), stale, busy));
+            this.shownAreas.add(card.id);
+        });
+        const rest = cards.length - shown.length;
+        if (rest > 0) {
+            const splats = cards.slice(shown.length).reduce((sum, c) => sum + c.area.splats, 0);
+            const more = el('div', 'compose-row');
+            more.appendChild(button(t('areas.more', { count: rest, splats: formatInt(splats) }), () => {
+                this.areasAll = true;
+                this.c.onChange();
+            }, ['small'], undefined, 'areas:more'));
+            body.appendChild(more);
+        }
+        body.appendChild(el('div', 'compose-note', t('areas.note')));
+    }
+
+    // "Bild↑ / Bild↓: Scans umschalten" (the quick switch of compose-tool)
+    private keysHint() {
+        return el('div', 'compose-keys-hint', t('areas.keys'));
+    }
+
+    // the name of an area's scan, of the scan sharp there, of the others
+    private areaNames(card: AreaCard) {
+        const a = this.c.suggest.analysis;
+        const own = this.c.nameOf(a.scans[card.scan]);
+        const sharp = card.area.sharpBy >= 0 ? this.c.nameOf(a.scans[card.area.sharpBy]) : '';
+        const others = a.scans.filter((_, s) => s !== card.scan).map(s => this.c.nameOf(s)).join(', ');
+        return { own, sharp, others };
+    }
+
+    // what the other scans have there
+    private compareText(card: AreaCard) {
+        const { sharp, others } = this.areaNames(card);
+        switch (card.area.compare) {
+            case 'otherSharp': return t('areas.other-sharp', { name: sharp || others });
+            case 'otherBlurry': return t('areas.other-blurry', { names: others });
+            case 'alone': return t('areas.alone');
+            default: return '';
+        }
+    }
+
+    private areaView(card: AreaCard, index: number, stale: boolean, busy: boolean) {
+        const { suggest, events } = this.c;
+        const a = suggest.analysis;
+        const area = card.area;
+        const scale = this.c.sceneScale();
+        const splat = a.scans[card.scan];
+        const accepted = card.status === 'accepted';
+        const hand = card.handHidden;
+        const scattered = area.kind === 'island' && area.pieces > 1;
+        const box = el('div', ['compose-card', 'compose-area', `c-${area.compare}`,
+            card.kept ? 'rejected' : accepted ? 'accepted' : hand ? 'hand' : card.status === 'partly' ? 'partial' : '',
+            suggest.pickedArea === card.id ? 'picked' : '']);
+        box.style.borderLeftColor = this.c.colorOf(splat);
+        box.dataset.area = String(card.id);
+        box.addEventListener('pointerenter', () => events.fire('compose.hoverArea', card.id));
+        box.addEventListener('pointerleave', () => events.fire('compose.hoverArea', null));
+        box.addEventListener('click', (e) => {
+            const target = e.target instanceof Element ? e.target : null;
+            if (target?.closest('.compose-button, .compose-seg, .compose-link, input, label, select, textarea, a, [role="button"]')) return;
+            const selected = window.getSelection?.();
+            if (selected && !selected.isCollapsed && box.contains(selected.anchorNode)) return;
+            this.markPicked(box);
+            events.fire('compose.focusArea', card.id);
+        });
+        const key = (action: string) => `area:${card.id}:${action}`;
+
+        const head = el('div', 'compose-card-head');
+        head.appendChild(el('span', ['compose-badge', 'num'], String(index + 1)));
+        head.appendChild(swatch(this.c.colorOf(splat)));
+        const title = el('span', 'compose-card-title', this.c.nameOf(splat));
+        title.title = t('areas.pick-tip');
+        head.appendChild(title);
+        head.appendChild(el('span', ['compose-badge', area.kind === 'island' ? 'island' : 'surface'], t(area.kind === 'island' ? 'areas.island' : 'areas.surface')));
+        head.appendChild(button('⌖', () => {
+            this.markPicked(box);
+            events.fire('compose.focusArea', card.id);
+        }, ['small'], t('card.fly-tip'), key('fly')));
+        box.appendChild(head);
+
+        const size = scattered ?
+            t('areas.scattered', { count: area.pieces, n: formatInt(area.splats) }) :
+            t('areas.size', { dims: formatDims(area.dims, scale), n: formatInt(area.splats) });
+        box.appendChild(el('div', 'compose-info', size));
+        const compare = this.compareText(card);
+        if (compare) box.appendChild(el('div', ['compose-area-compare', `c-${area.compare}`], compare));
+
+        if (card.kept) {
+            const status = el('div', 'compose-card-status');
+            status.appendChild(el('span', '', t('areas.kept')));
+            status.appendChild(button(t('areas.restore'), () => events.fire('compose.keepArea', card.id, false), ['small'], undefined, key('restore')));
+            box.appendChild(status);
+            return box;
+        }
+        if (accepted || hand || card.status === 'partly') {
+            const status = el('div', 'compose-card-status');
+            status.appendChild(el('span', '', t(accepted ? 'areas.deleted' : hand ? 'card.hand' : 'card.partly')));
+            if (!hand || card.locked > 0) {
+                status.appendChild(button(t('card.revert'), () => events.invoke('compose.revertAreas', card.id),
+                    ['small', ...(!suggest.canRevertArea(card.id) || busy ? ['disabled'] : [])], accepted ? t('areas.deleted-tip') : undefined, key('revert')));
+            }
+            box.appendChild(status);
+        }
+
+        // the question and its answers (open, or partly hidden)
+        if (!accepted && !hand) {
+            const ask = el('div', ['compose-row', 'compose-area-ask']);
+            ask.appendChild(el('span', 'compose-area-question', t('areas.question')));
+            const strong = area.compare === 'otherSharp' || area.kind === 'island';
+            ask.appendChild(button(t('areas.delete'), () => events.invoke('compose.deleteAreas', [card.id]),
+                ['small', ...(strong ? ['primary'] : []), ...(stale || busy ? ['disabled'] : [])], stale ? t('analyse.stale') : t('areas.delete-tip'), key('delete')));
+            ask.appendChild(button(t('areas.keep'), () => events.fire('compose.keepArea', card.id, true), ['small'], t('areas.keep-tip'), key('keep')));
+            ask.appendChild(button(t('card.select'), () => events.invoke('compose.selectArea', card.id), ['small'], t('areas.select-tip'), key('select')));
+            box.appendChild(ask);
+        }
+
+        const actions = el('div', 'compose-row');
+        const current = suggest.areaPreview?.id === card.id ? suggest.areaPreview.mode : null;
+        const blocked = accepted || hand;
+        actions.appendChild(segmented([
+            { value: 'before', text: t('card.before'), disabled: blocked, title: blocked ? t('areas.deleted-tip') : undefined },
+            { value: 'after', text: t('card.after') }
+        ], current, (v: string) => events.fire('compose.previewArea', current === v ? null : card.id, v), t('areas.preview-tip'), key('preview')));
+        if (current) actions.appendChild(this.selectionToggle(key('hide-selection')));
+        box.appendChild(actions);
+        return box;
+    }
+
+    // ------------------------------------------------------------ details
+
+    // the detailed suggestions ("Feinvergleich"), as step 4 showed them
+    // before the blurry areas came first
+    private buildDetails(body: HTMLElement, stale: boolean, busy: boolean) {
+        const { suggest, events } = this.c;
+        const a = suggest.analysis;
+        body.appendChild(el('div', 'compose-hint', t('suggest.hint')));
 
         const cards = a.cards;
         const accepted = cards.filter(c => c.status === 'accepted').length;
@@ -448,36 +699,21 @@ class SuggestPanel {
             const ticked = cards.filter(takes).length;
             const footer = el('div', 'compose-row');
             footer.appendChild(button(t('suggest.accept-ticked', { n: ticked }), () => events.invoke('compose.accept', 'ticked'),
-                ['primary', ...(!ticked || stale || busy ? ['disabled'] : [])], stale ? t('analyse.stale') : undefined, 'accept-ticked'));
+                ['primary', ...(!ticked || stale || busy ? ['disabled'] : [])], stale ? t('analyse.stale') : t('suggest.accept-ticked-tip'), 'accept-ticked'));
             // like each card's "Zurücknehmen": something compose hid is still
             // hidden, in an instance list the analysis still fits
             footer.appendChild(button(t('suggest.revert-all'), () => events.invoke('compose.revert', 'all'),
-                [...(!cards.some(c => suggest.canRevert(c.id)) || busy ? ['disabled'] : [])], undefined, 'revert-all'));
+                [...(!cards.some(c => suggest.canRevert(c.id)) || busy ? ['disabled'] : [])], t('suggest.revert-all-tip'), 'revert-all'));
             body.appendChild(footer);
             body.appendChild(el('div', 'compose-note', t('suggest.note-export')));
             body.appendChild(el('div', 'compose-note', t('suggest.note-unhide')));
         }
 
         this.skipList(body, stale, busy);
-
-        this.nav(body, t('suggest.back'), 'analyse', this.gapsNext());
-        body.appendChild(el('div', 'compose-note', t('later')));
-
-        // a card opened from a pill or the probe, or made with "Trotzdem
-        // übernehmen": looked up again at the next frame (a rebuild in
-        // between replaces it), and only the panel scrolls
-        if (this.scrollTo >= 0) {
-            const id = this.scrollTo;
-            this.scrollTo = -1;
-            requestAnimationFrame(() => {
-                const target = body.querySelector<HTMLElement>(`[data-card="${id}"]`);
-                if (target) scrollIntoPanel(target);
-            });
-        }
     }
 
     private gapsNext() {
-        return { step: 'gaps', text: t('next', { step: t('step.gaps') }), disabled: true, title: t('step-later') };
+        return { step: 'result', text: t('next', { step: t('step.result') }) };
     }
 
     private hiddenOf(card: Card) {
@@ -621,9 +857,9 @@ class SuggestPanel {
         // an accepted card is reverted first (rejecting would leave it hidden)
         if (!accepted) {
             actions.appendChild(button(t('card.select'), () => events.fire('compose.selectSuggestion', card.id), ['small'], t('card.select-tip'), key('select')));
-            if (card.status === 'open') actions.appendChild(button(t('card.reject'), () => events.fire('compose.reject', card.id), ['small'], undefined, key('reject')));
+            if (card.status === 'open') actions.appendChild(button(t('card.reject'), () => events.fire('compose.reject', card.id), ['small'], t('card.reject-tip'), key('reject')));
             actions.appendChild(button(t('card.accept'), () => events.invoke('compose.accept', [card.id]),
-                ['small', 'primary', ...(stale || busy || hand ? ['disabled'] : [])], stale ? t('analyse.stale') : handTip, key('accept')));
+                ['small', 'primary', ...(stale || busy || hand ? ['disabled'] : [])], stale ? t('analyse.stale') : handTip ?? t('card.accept-tip'), key('accept')));
         }
         box.appendChild(actions);
         return box;
@@ -831,8 +1067,21 @@ class SuggestPanel {
         if (!a) return false;
         const local = a.cards.filter(c => c.region.scope !== 'base');
         if (local.findIndex(c => c.id === id) >= CARDS_SHOWN) this.showAll = true;
+        // the suggestions live in the folded "Feinvergleich"
+        this.detailsOpen = true;
         this.scrollTo = id;
         return true;
+    }
+
+    // show a blurry area's card (unfolded) and fly there
+    openArea(id: number) {
+        const ar = this.c.suggest.analysis?.areas;
+        if (!ar) return;
+        if (ar.cards.findIndex(c => c.id === id) >= AREAS_SHOWN) this.areasAll = true;
+        this.scrollToArea = id;
+        this.c.events.fire('compose.focusArea', id);
+        if (this.c.step() !== 'suggest') this.c.events.fire('compose.setStep', 'suggest');
+        else this.c.onChange();
     }
 
     // pills "n · f×" over the region markers of the cards in the panel
@@ -875,6 +1124,45 @@ class SuggestPanel {
             i++;
         }
         for (; i < this.pills.length; i++) this.pills[i].style.display = 'none';
+        this.updateAreaPills(overlay, show, w, h, project);
+    }
+
+    // pills "U1" over the blurry areas in the panel (at their centre), in
+    // the scan's colour; grey once deleted
+    private updateAreaPills(overlay: HTMLElement, show: boolean, w: number, h: number, project: (p: number[], w: number, h: number) => Projected) {
+        const { suggest, events } = this.c;
+        const a = suggest.analysis;
+        const ar = a?.areas;
+        const cards = show && ar && this.c.step() === 'suggest' && !suggest.staleState ? ar.cards.filter(c => !c.kept && this.shownAreas.has(c.id)) : [];
+        let i = 0;
+        for (const card of cards) {
+            let pill = this.areaPills[i];
+            if (!pill) {
+                const created = document.createElement('div');
+                created.addEventListener('click', () => this.openArea(Number(created.dataset.area)));
+                created.addEventListener('pointerenter', () => events.fire('compose.hoverArea', Number(created.dataset.area)));
+                created.addEventListener('pointerleave', () => events.fire('compose.hoverArea', null));
+                overlay.appendChild(created);
+                this.areaPills.push(created);
+                pill = created;
+            }
+            const area = card.area;
+            const p = project(area.centroid, w, h);
+            pill.style.display = inView(p, w, h) ? '' : 'none';
+            pill.style.left = `${p.x}px`;
+            pill.style.top = `${p.y}px`;
+            pill.style.borderColor = this.c.colorOf(a.scans[card.scan]);
+            const deleted = card.status === 'accepted' || card.handHidden;
+            const cls = `compose-pill area ${deleted ? 'accepted' : area.compare === 'otherSharp' ? 'sharp' : 'check'}`;
+            if (pill.className !== cls) pill.className = cls;
+            const text = `${deleted ? '✓ ' : ''}${t('areas.pill', { n: ar.cards.indexOf(card) + 1 })}`;
+            if (pill.textContent !== text) pill.textContent = text;
+            const title = `${this.c.nameOf(a.scans[card.scan])}: ${t('areas.question')} ${this.compareText(card)}`.trim();
+            if (pill.title !== title) pill.title = title;
+            pill.dataset.area = String(card.id);
+            i++;
+        }
+        for (; i < this.areaPills.length; i++) this.areaPills[i].style.display = 'none';
     }
 
     // the dashed box of the hovered card or rejected cluster
@@ -887,15 +1175,21 @@ class SuggestPanel {
             const card = suggest.card(hover.id);
             return card ? { min: card.region.min, max: card.region.max, color: this.c.colorOf(a.scans[card.region.winner]) } : null;
         }
+        if (hover.kind === 'area') {
+            const card = suggest.areaCard(hover.id);
+            return card ? { min: card.area.min, max: card.area.max, color: this.c.colorOf(a.scans[card.scan]) } : null;
+        }
         const r = a.detail.rejected[hover.index];
         if (!r) return null;
         return { min: r.min, max: r.max, color: r.winner >= 0 ? this.c.colorOf(a.scans[r.winner]) : '#ff6b6b' };
     }
 
-    // a new analysis starts folded
+    // a new analysis starts folded (the "Feinvergleich" stays as it was)
     reset() {
         this.showAll = false;
+        this.areasAll = false;
         this.scrollTo = -1;
+        this.scrollToArea = -1;
     }
 }
 

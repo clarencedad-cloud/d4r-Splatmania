@@ -1,5 +1,6 @@
 import { Color, Mat4, Quat, Texture, Vec3 } from 'playcanvas';
 
+import { readLayerData, type LayerData } from './analysis/splat-data';
 import { createGradeTerms, gradeTerms, type GradeParams } from './color-grade';
 import { EditHistory } from './edit-history';
 import { selectedRanges, SelectAllOp, SelectNoneOp, SelectInvertOp, SelectOp, HideSelectionOp, UnhideAllOp, RemoveInstancesOp, RestoreMissingInstancesOp, MultiOp, AddSplatOp, SetLocalFrameOp, SplatsColorOp } from './edit-ops';
@@ -8,6 +9,7 @@ import { Events } from './events';
 import type { GridPlane } from './infinite-grid';
 import { Scene } from './scene';
 import { Splat } from './splat';
+import { colorRegion, type RegionOptions } from './tools/color-region';
 
 // register for editor and scene events
 const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: Scene) => {
@@ -831,7 +833,20 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     // TO DO:
     // -  alternative distance metrics such as HSV.
     // -  alternative UI for threshold, two handles for min/max?
-    events.function('select.colorMatch', async (op: 'add'|'remove'|'set'|'intersect', point: { x: number, y: number }, threshold = 0) => {
+    // world centres and sizes per layer for the pipette's "Farb-Floater" mode,
+    // read once and dropped when the layer moves or its gaussians change
+    const regionData = new Map<Splat, { data: LayerData, count: number, locked: number }>();
+    ['splat.moved', 'splat.positionsChanged'].forEach(name => events.on(name, (splat: Splat) => regionData.delete(splat)));
+    events.on('scene.elementRemoved', (element: Splat) => regionData.delete(element));
+    const layerData = async (splat: Splat) => {
+        const cached = regionData.get(splat);
+        if (cached && cached.count === splat.instances.count && cached.locked === splat.instances.numLocked) return cached.data;
+        const data = await readLayerData(splat);
+        regionData.set(splat, { data, count: splat.instances.count, locked: splat.instances.numLocked });
+        return data;
+    };
+
+    events.function('select.colorMatch', async (op: 'add'|'remove'|'set'|'intersect', point: { x: number, y: number }, threshold = 0, region?: RegionOptions) => {
         const splats = selectedSplats();
         const targetSize = scene.targetSize;
         if (!splats.length || !targetSize || !point) {
@@ -865,6 +880,15 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
                     entityMatrix: splat.entity.getWorldTransform(),
                     cameraPos: scene.camera.position
                 });
+                if (region && (region.connected || region.radius > 0)) {
+                    // only the clump around the clicked splat (color-region.ts)
+                    const hits = mask.slice();
+                    scene.dataProcessor.releaseMask(mask);
+                    const data = await layerData(splat);
+                    const picked = colorRegion(data, i => hits[i] === 255, pickId, region);
+                    if (picked) events.fire('edit.add', new SelectOp(splat, op, picked));
+                    return;
+                }
                 events.fire('edit.add', new SelectOp(splat, op, mask));
                 scene.dataProcessor.releaseMask(mask);
             });

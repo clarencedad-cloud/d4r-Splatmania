@@ -9,19 +9,25 @@
 // scan B tens of thousands; 1 m voxels of A's bridge band hold a median of 16
 // centres (splat-weighted footprint 45 mm, A's own median 15 mm), B's 52
 // (11 mm). Every scan has a sharp core around its capture path and a coarse
-// rim (far facades 10-30 cm, 3-4 octaves over its median).
+// rim (far facades 10-30 cm, 3-4 octaves over its median). Blur can also hide
+// among many small splats: A's white tree crowns by the bridge are a few
+// large splats over many of A's usual size: blurry to see, not by count (see
+// visOctaves).
 //
 // 1. per scan its reference footprint (median opaque footprint) - blur is
 //    relative to the scan itself, so units do not matter;
 // 2. one coarse voxel grid for all scans (64 x the finest reference, at most
 //    1/100 of the scene diagonal, a nice value: 1 m in Nuremberg, 0.5 m in
 //    the bus); per voxel and scan: rows, opacity mass, the opacity-weighted
-//    geometric mean footprint, sharp opaque rows;
+//    geometric mean footprint, the visual footprint (weighted by the area a
+//    splat covers), sharp opaque rows;
 // 3. per scan: a voxel is blurry when its mean footprint is >= 4x the
 //    scan's own reference - or, with other scans, >= 1.4x where another scan
 //    is sharp and at least 2x finer there (relative blur: a 3x blurred ball
 //    is not blurry by the scan's own standard, but the other scan shows it
-//    sharp). Blurry voxels at most 2 voxels apart form an area (gaps of one
+//    sharp), or when it looks blurry (visual footprint >= 4x the reference)
+//    where another scan is visually clear and 2x finer to see. Blurry voxels
+//    at most 2 voxels apart form an area (gaps of one
 //    voxel close), split by the comparison: where another scan is sharp the
 //    voxels form areas of their own. Small pieces join the neighbouring area
 //    they touch most; small islands are gathered, the rest is dropped;
@@ -34,14 +40,16 @@
 //
 // Measured (scripts/test-compose-detail.mjs --blur, node): Nuremberg A + B
 // (4.1 + 1.7 M splats) 2.2-2.4 s, 11 areas: per scan the part the other scan
-// has sharply (A: bridge and its north end, 70 714 splats, 78 % of A's rows
-// and 74 % of their visual weight in the bridge box; B: the park, 61 034),
-// the blurry rim both have (463 316 / 209 267), islands and two small
-// patches. Bus + bus-blur (3x blurred ball): one 'A is sharp here' area with
-// 68 % of the ball's rows and 94 other rows (0.005 %); a gross ball (1/8 of
-// the rows, 8x larger) 82 %; twins: the areas of the scan alone, never
-// 'other sharp'. Alone, a blurred spot touching the scan's blurry rim is part
-// of the rim's area: connected blur is one area; only the comparison splits.
+// has sharply (A: bridge, its north end and the white tree crowns there,
+// 78 074 splats, 78 % of A's rows and 74 % of their visual weight in the
+// bridge box, 72 % of A's visual weight in the two crown boxes - 0 and 41 %
+// without the visual rule; B: the park, 62 017), the blurry rim both have
+// (462 910 / 209 263), islands and two small patches. Bus + bus-blur (3x
+// blurred ball): one 'A is sharp here' area with 72 % of the ball's rows and
+// 544 other rows (0.03 %); a gross ball (1/8 of the rows, 8x larger) 94 %
+// (0.06 %); twins: the areas of the scan alone, never 'other sharp'. Alone,
+// a blurred spot touching the scan's blurry rim is part of the rim's area:
+// connected blur is one area; only the comparison splits.
 //
 // Pure typed-array code for the analysis worker (job 'compose-blur') and
 // node. Deterministic: every loop runs in ascending index order, ties are
@@ -84,6 +92,22 @@ const BLUR = {
     // with other scans, a voxel only relOctaves over the reference is
     // blurry too where another scan is sharp and compareOctaves finer there
     relOctaves: 0.5,
+    // what one sees: a voxel's visual footprint is its mean footprint
+    // weighted by alpha x footprint^2 (the area a splat covers), so the few
+    // large splats that cover most of the view count and the many small ones
+    // under them do not. With other scans, a voxel whose visual footprint is
+    // >= 2^visOctaves x the reference is blurry too where another scan is
+    // visually clear there and its visual footprint compareOctaves finer.
+    // Nuremberg, A's white tree crowns by the bridge: 2-4 % large splats
+    // over many of 17-25 mm; opacity-weighted 0.5-1.3 octaves over A's
+    // reference (not blurry), visually 2.3-4.3; B's thin branches there
+    // visually 0.4-1.2 octaves over B's reference
+    visOctaves: 2,
+    // another scan is visually clear in a voxel: present, not blurry, its
+    // visual footprint <= 2^clearOctaves x its reference, and sharp in the
+    // voxel or in one of its 26 neighbours (thin branches have few opaque
+    // rows: the sharp-rows test alone misses them)
+    clearOctaves: 1.5,
     // blurry voxels at most linkReach voxels apart (Chebyshev) are one area
     linkReach: 2,
     // passes of the majority vote that smooths 'another scan is sharp here'
@@ -99,10 +123,13 @@ const BLUR = {
     rowOctaves: 1,
     rowRelOctaves: 0.5,
     // colour view: (own + voxel) / 2 octaves over the reference, 0 at mapLo,
-    // 255 at mapHi; the comparison view: 255 at coarserHi octaves coarser
-    // than the finest other scan
+    // 255 at mapHi; the voxel's value is its mean footprint or its visual
+    // footprint less mapVisShift, the larger (the visual one runs about 0.3
+    // -0.8 octaves over the mean on sharp voxels). The comparison view: 255
+    // at coarserHi octaves coarser than the finest other scan
     mapLo: 1,
     mapHi: 4,
+    mapVisShift: 0.5,
     coarserHi: 2,
     // view hint: elevation (degrees) of the camera over the area centre, and
     // its distance as a multiple of the area's largest horizontal extent
@@ -355,8 +382,8 @@ const offsetsOf = (r: number) => {
     return Int32Array.from(out);
 };
 
-// voxel flags per (voxel, scan)
-const PRESENT = 1, BLURRY = 2, SHARP = 4;
+// voxel flags per (voxel, scan); CLEAR: visually clear (BLUR.clearOctaves)
+const PRESENT = 1, BLURRY = 2, SHARP = 4, CLEAR = 8;
 // comparison class of a blurry voxel
 const ALONE = 0, OTHER_BLURRY = 1, OTHER_SHARP = 2;
 
@@ -410,10 +437,12 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
     const VX = index.x, VY = index.y, VZ = index.z;
 
     // per (voxel, scan): opacity mass, sum alpha log2 footprint, sharp opaque
-    // rows
+    // rows; covered area (sum alpha footprint^2) and its log2 footprint sum
     const mass = new Float32Array(V * S);
     const logSum = new Float64Array(V * S);
     const nSharp = new Uint32Array(V * S);
+    const cover = new Float64Array(V * S);
+    const coverLog = new Float64Array(V * S);
     const logRef = refs.map(r => Math.log2(r > 0 ? r : 1));
     scans.forEach((rows, s) => {
         const rv = rowVoxel[s];
@@ -426,39 +455,79 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
             const f = footprint[i];
             if (!(f > 0) || !Number.isFinite(f)) continue;
             const a = opacity[i] / 255;
+            const lf = Math.log2(f);
             mass[j] += a;
-            logSum[j] += a * Math.log2(f);
+            logSum[j] += a * lf;
+            const w = a * f * f;
+            cover[j] += w;
+            coverLog[j] += w * lf;
             if (opacity[i] >= k.opaque && f <= sharpBound) nSharp[j]++;
         }
     });
 
-    // flags and mean footprint (log2, world units) per (voxel, scan)
+    // flags, mean and visual footprint (log2, world units) per (voxel, scan)
     const flags = new Uint8Array(V * S);
     const meanLog = new Float32Array(V * S).fill(NaN);
+    const visLog = new Float32Array(V * S).fill(NaN);
     for (let v = 0; v < V; v++) {
         for (let s = 0; s < S; s++) {
             const j = v * S + s;
             if (!(mass[j] >= k.presentMass)) continue;
             const m = logSum[j] / mass[j];
             meanLog[j] = m;
+            visLog[j] = cover[j] > 0 ? coverLog[j] / cover[j] : m;
             let f = PRESENT;
             if (m - logRef[s] >= k.blurOctaves) f |= BLURRY;
             else if (nSharp[j] >= k.sharpRows) f |= SHARP;
             flags[j] = f;
         }
     }
+
+    const near = offsetsOf(1);
+    const link = offsetsOf(k.linkReach);
+    const neighbour = (v: number, off: Int32Array, q: number) => index.find(VX[v] + off[q], VY[v] + off[q + 1], VZ[v] + off[q + 2]);
+
+    // visually clear (see clearOctaves): sharp in the voxel or a neighbour,
+    // not blurry, visual footprint small
+    if (S > 1) {
+        for (let v = 0; v < V; v++) {
+            for (let s = 0; s < S; s++) {
+                const j = v * S + s;
+                const f = flags[j];
+                if (!f || (f & BLURRY) || visLog[j] - logRef[s] > k.clearOctaves) continue;
+                let ok = (f & SHARP) !== 0;
+                for (let q = 0; q < near.length && !ok; q += 3) {
+                    const u = neighbour(v, near, q);
+                    if (u >= 0 && (flags[u * S + s] & SHARP)) ok = true;
+                }
+                if (ok) flags[j] |= CLEAR;
+            }
+        }
+    }
+    // another scan t is finer than scan s in a voxel: sharp there and its
+    // mean footprint compareOctaves finer, or visually clear there while s
+    // looks blurry (visOctaves) and t's visual footprint is compareOctaves
+    // finer
+    const finerByMean = (j: number, jt: number) => (flags[jt] & SHARP) !== 0 && meanLog[jt] <= meanLog[j] - k.compareOctaves;
+    const finerToSee = (s: number, j: number, jt: number) => (flags[jt] & CLEAR) !== 0 && visLog[j] - logRef[s] >= k.visOctaves &&
+        visLog[jt] <= visLog[j] - k.compareOctaves;
+
     // relative blur: a voxel at least relOctaves over the scan's reference
-    // is blurry too where another scan is sharp and compareOctaves finer
-    // (the two can never be that for each other, so the order is free)
+    // is blurry too where another scan is sharp and compareOctaves finer, a
+    // voxel that looks blurry (visOctaves) where another is finer to see.
+    // Decided on the flags before the pass and applied after it, so the
+    // order is free
     if (S > 1) {
         const relative: number[] = [];
         for (let v = 0; v < V; v++) {
             for (let s = 0; s < S; s++) {
                 const j = v * S + s;
-                if (!flags[j] || (flags[j] & BLURRY) || meanLog[j] - logRef[s] < k.relOctaves) continue;
+                if (!flags[j] || (flags[j] & BLURRY)) continue;
+                const byMean = meanLog[j] - logRef[s] >= k.relOctaves;
+                if (!byMean && visLog[j] - logRef[s] < k.visOctaves) continue;
                 for (let t = 0; t < S; t++) {
                     const jt = v * S + t;
-                    if (t !== s && (flags[jt] & SHARP) && meanLog[jt] <= meanLog[j] - k.compareOctaves) {
+                    if (t !== s && ((byMean && finerByMean(j, jt)) || finerToSee(s, j, jt))) {
                         relative.push(j);
                         break;
                     }
@@ -478,15 +547,14 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
         }
     }
 
-    const near = offsetsOf(1);
-    const link = offsetsOf(k.linkReach);
-    const neighbour = (v: number, off: Int32Array, q: number) => index.find(VX[v] + off[q], VY[v] + off[q + 1], VZ[v] + off[q + 2]);
-
     // comparison class of a blurry voxel of scan s, and which scan is sharp
+    // (finer by its mean footprint or to see)
     const classOf = new Uint8Array(V * S);
     const sharpWho = new Int8Array(V * S).fill(-1);
-    // the sharp other scan's mean footprint (log2) there
+    // the sharp other scan's mean footprint (log2) there, and how many
+    // octaves coarser s is (the larger of the mean and the visual lead)
     const sharpLog = new Float32Array(V * S).fill(NaN);
+    const leadOf = new Float32Array(V * S).fill(NaN);
     if (S > 1) {
         for (let v = 0; v < V; v++) {
             for (let s = 0; s < S; s++) {
@@ -498,7 +566,7 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
                     const jt = v * S + t;
                     if (!flags[jt]) continue;
                     if (cls < OTHER_BLURRY) cls = OTHER_BLURRY;
-                    if ((flags[jt] & SHARP) && meanLog[jt] <= meanLog[j] - k.compareOctaves) {
+                    if (finerByMean(j, jt) || finerToSee(s, j, jt)) {
                         cls = OTHER_SHARP;
                         if (meanLog[jt] < whoLog) {
                             whoLog = meanLog[jt];
@@ -522,7 +590,11 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
                 }
                 classOf[j] = cls;
                 sharpWho[j] = who;
-                if (who >= 0) sharpLog[j] = whoLog;
+                if (who >= 0) {
+                    const jw = v * S + who;
+                    sharpLog[j] = whoLog;
+                    leadOf[j] = Math.max(meanLog[j] - meanLog[jw], visLog[j] - visLog[jw]);
+                }
             }
         }
     }
@@ -790,7 +862,7 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
                 const j = v * S + s;
                 if (classOf[j] === OTHER_SHARP) {
                     nSh++;
-                    leadSum += meanLog[j] - sharpLog[j];
+                    leadSum += leadOf[j];
                     if (sharpWho[j] >= 0) who[sharpWho[j]]++;
                 } else if (classOf[j] === OTHER_BLURRY) nBl++;
                 else nAl++;
@@ -868,7 +940,8 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
         }
 
         // colour view: the mean of the row's own and its voxel's octaves
-        // over the reference
+        // over the reference (the voxel's: mean or visual footprint, see
+        // mapVisShift)
         const map = new Uint8Array(n);
         for (let i = 0; i < n; i++) {
             const f = rows.footprint[i];
@@ -876,7 +949,7 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
             let b = Math.log2(f) - logRef[s];
             const v = rv[i];
             if (v >= 0) {
-                const m = meanLog[v * S + s];
+                const m = Math.max(meanLog[v * S + s], visLog[v * S + s] - k.mapVisShift);
                 if (Number.isFinite(m)) b = 0.5 * (b + m - logRef[s]);
             }
             const u = (b - k.mapLo) / span;
@@ -885,16 +958,19 @@ const composeBlur = (scans: BlurRows[], options: BlurOptions = {}): BlurResult =
         blurMaps.push(map);
 
         // comparison view: per voxel the octaves over the finest other scan
-        // present there
+        // present there (mean or visual footprint, the larger lead)
         for (let v = 0; v < V; v++) {
             const j = v * S + s;
-            let best = Infinity;
+            let best = Infinity, bestVis = Infinity;
             if (flags[j]) {
                 for (let t = 0; t < S; t++) {
-                    if (t !== s && flags[v * S + t] && meanLog[v * S + t] < best) best = meanLog[v * S + t];
+                    const jt = v * S + t;
+                    if (t === s || !flags[jt]) continue;
+                    if (meanLog[jt] < best) best = meanLog[jt];
+                    if (visLog[jt] < bestVis) bestVis = visLog[jt];
                 }
             }
-            const u = (meanLog[j] - best) / k.coarserHi;
+            const u = Math.max(meanLog[j] - best, visLog[j] - bestVis) / k.coarserHi;
             voxCoarser[v] = u > 0 ? (u >= 1 ? 255 : Math.round(u * 255)) : 0;
         }
         const cmap = new Uint8Array(n);

@@ -4,6 +4,7 @@ import { SplatRenameOp } from '../edit-ops';
 import { Element, ElementType } from '../element';
 import { Events } from '../events';
 import { Splat } from '../splat';
+import { i18n } from './localization';
 import deleteSvg from './svg/delete.svg';
 import hiddenSvg from './svg/hidden.svg';
 import shownSvg from './svg/shown.svg';
@@ -50,6 +51,11 @@ class SplatItem extends Container {
             dom: createSvg(deleteSvg),
             class: 'splat-item-delete'
         });
+
+        i18n.bindDom(text.dom, 'sm.splats.rename-tip', 'title');
+        i18n.bindDom(visible.dom, 'sm.splats.visibility-tip', 'title');
+        i18n.bindDom(invisible.dom, 'sm.splats.visibility-tip', 'title');
+        i18n.bindDom(remove.dom, 'sm.splats.remove-tip', 'title');
 
         this.append(text);
         this.append(visible);

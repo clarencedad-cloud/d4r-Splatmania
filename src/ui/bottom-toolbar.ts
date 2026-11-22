@@ -36,6 +36,7 @@ type ToolGroupItem = {
     tool: string;       // tool manager name
     svg: string;        // toolbar icon
     localeKey: string;  // tooltip / popup row text
+    hintKey?: string;   // optional explanation appended to the tooltip
 };
 
 class BottomToolbar extends Container {
@@ -53,15 +54,16 @@ class BottomToolbar extends Container {
 
         // Helper to compose localized tooltip text with shortcut
         const shortcutManager: ShortcutManager = events.invoke('shortcutManager');
-        const tooltip = (localeKey: string, shortcutId?: string) => () => {
-            const text = i18n.t(localeKey);
+        // hintKey: an optional sentence explaining what the button does
+        const tooltip = (localeKey: string, shortcutId?: string, hintKey?: string) => () => {
+            let text = i18n.t(localeKey);
             if (shortcutId) {
                 const shortcut = shortcutManager.formatShortcut(shortcutId);
                 if (shortcut) {
-                    return i18n.formatTooltipWithShortcut(text, shortcut);
+                    text = i18n.formatTooltipWithShortcut(text, shortcut);
                 }
             }
-            return text;
+            return hintKey ? `${text} – ${i18n.t(hintKey)}` : text;
         };
 
         // a button standing in for a group of tools. it shows the group's
@@ -192,7 +194,7 @@ class BottomToolbar extends Container {
                 button.class[item ? 'add' : 'remove']('active');
             });
 
-            tooltips.register(button, () => tooltip(current.localeKey, `tool.${current.tool}`)());
+            tooltips.register(button, () => `${tooltip(current.localeKey, `tool.${current.tool}`, current.hintKey)()}${current.hintKey ? ' ' : ' – '}${i18n.t('sm.toolbar.group-hold-tip')}`);
 
             return button;
         };
@@ -251,8 +253,8 @@ class BottomToolbar extends Container {
         ]);
 
         const eyedropper = toolGroup('bottom-toolbar-eyedropper', [
-            { tool: 'eyedropperSelection', svg: eyedropperSvg, localeKey: 'tooltip.bottom-toolbar.eyedropper-selection' },
-            { tool: 'floodSelection', svg: floodSvg, localeKey: 'tooltip.bottom-toolbar.flood-selection' }
+            { tool: 'eyedropperSelection', svg: eyedropperSvg, localeKey: 'tooltip.bottom-toolbar.eyedropper-selection', hintKey: 'sm.toolbar.eyedropper-tip' },
+            { tool: 'floodSelection', svg: floodSvg, localeKey: 'tooltip.bottom-toolbar.flood-selection', hintKey: 'sm.toolbar.flood-tip' }
         ]);
 
         const sphereBrush = new Button({
@@ -441,19 +443,19 @@ class BottomToolbar extends Container {
         // register tooltips
         tooltips.register(undo, tooltip('tooltip.bottom-toolbar.undo', 'edit.undo'));
         tooltips.register(redo, tooltip('tooltip.bottom-toolbar.redo', 'edit.redo'));
-        tooltips.register(selectionMode, tooltip('tooltip.bottom-toolbar.use-depth', 'selection.toggleUseDepth'));
-        tooltips.register(footprintMode, tooltip('tooltip.bottom-toolbar.footprint', 'selection.toggleFootprint'));
+        tooltips.register(selectionMode, tooltip('tooltip.bottom-toolbar.use-depth', 'selection.toggleUseDepth', 'sm.toolbar.use-depth-tip'));
+        tooltips.register(footprintMode, tooltip('tooltip.bottom-toolbar.footprint', 'selection.toggleFootprint', 'sm.toolbar.footprint-tip'));
         tooltips.register(picker, tooltip('tooltip.bottom-toolbar.rectangle-selection', 'tool.rectSelection'));
         tooltips.register(brush, tooltip('tooltip.bottom-toolbar.brush-selection', 'tool.brushSelection'));
-        tooltips.register(sphereBrush, tooltip('tooltip.bottom-toolbar.sphere-brush-selection', 'tool.sphereBrushSelection'));
+        tooltips.register(sphereBrush, tooltip('tooltip.bottom-toolbar.sphere-brush-selection', 'tool.sphereBrushSelection', 'sm.toolbar.sphere-brush-tip'));
         tooltips.register(sphere, tooltip('tooltip.bottom-toolbar.sphere-selection'));
         tooltips.register(box, tooltip('tooltip.bottom-toolbar.box-selection'));
         tooltips.register(move, tooltip('tooltip.bottom-toolbar.move', 'tool.moveShortcut'));
         tooltips.register(rotate, tooltip('tooltip.bottom-toolbar.rotate', 'tool.rotateShortcut'));
         tooltips.register(scale, tooltip('tooltip.bottom-toolbar.scale', 'tool.scaleShortcut'));
         tooltips.register(measure, tooltip('tooltip.bottom-toolbar.measure'));
-        tooltips.register(orient, tooltip('tooltip.bottom-toolbar.orient'));
-        tooltips.register(coordSpace, tooltip('tooltip.bottom-toolbar.local-space', 'tool.toggleCoordSpace'));
+        tooltips.register(orient, tooltip('tooltip.bottom-toolbar.orient', undefined, 'sm.toolbar.orient-tip'));
+        tooltips.register(coordSpace, tooltip('tooltip.bottom-toolbar.local-space', 'tool.toggleCoordSpace', 'sm.toolbar.local-space-tip'));
         tooltips.register(origin, () => i18n.t(
             events.invoke('tool.active') === 'orient' ? 'orient.set-pivot' : 'tooltip.bottom-toolbar.reset-pivot'
         ));

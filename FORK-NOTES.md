@@ -1309,3 +1309,46 @@ Anlass: Nürnberg-Brücke (zwei Scans, einer in Brückenrichtung kaum abgedeckt 
 - Bus: falsch 1,61 → 1,59 %, neutral 7,43 → 7,22 %; Schleier-Zeilen selbst 0,9 % falsch. Bus-Unschärfe 87,1 → 89,6 %, außerhalb 0,095 %. LOD 83,0/72,0 %, Zwillinge 0 Vorschläge, Swap identisch, Steinbeis 12,6 s (Ziel ≤ 13 s).
 
 **Offen:** Riesen-Blobs über dem Wasser und unter dem Deck bleiben, weil B dort gar nichts hat (Ausblenden ergäbe Leere). Einzelne Schlieren an Deck-/Brüstungskanten. Eine Aktion „ganze unscharfe Ansicht von A verwerfen“ gibt es nicht.
+
+### Einfacher Weg: Unscharfe Bereiche, Scans umschalten, Schärfe-Ansicht (22.11.2026, spät)
+
+Anlass: Die Feinvergleich-Karten waren zu kleinteilig. Gewünscht: große unscharfe Flächen als Ganzes finden und fragen „unscharf – behalten?“, schnell zwischen den Scans umschalten, auf einen Blick sehen, wo welcher Scan scharf ist.
+
+**Erkennung (`src/compose/compose-blur.ts`, Worker-Job `compose-blur`, Konstanten in BLUR):**
+- Grobes Raster pro Szene (Nürnberg 1 m, Bus 0,5 m). Ein Voxel ist unscharf, wenn die Splats dort ≥ 4× so groß sind wie der Median des eigenen Scans. Mit zweitem Scan reicht ≥ 1,4×, wenn der andere dort scharf und ≥ 2× feiner ist. Zusätzlich zählt die sichtbare Größe (nach bedeckter Fläche gewichtet), damit Baumkronen aus wenigen großen Blobs zwischen vielen normalen mitkommen.
+- Unscharfe Voxel werden zu Bereichen verbunden, kleine Stücke angehängt, frei schwebende Inseln gesammelt. Ein Bereich nimmt nur die groben Splats.
+- Punktwolke: Ja, die Unschärfe ist als dünne Besetzung sichtbar (Brückendeck: A ~1.200 Punkte, B Zehntausende). Aber auch jeder ferne Rand eines Scans ist dünn. Allein sagt die Dichte deshalb „unscharf“, nicht „kaputt“.
+
+**Bedienung:**
+- Schritt 3 meldet „Unscharfe Bereiche: n gefunden“. Schritt 4 zeigt sie zuerst als Karten: Scan, unscharfe Fläche oder frei schwebend, Größe, Vergleich („(2) ist hier scharf“ / „Auch (2) ist hier unscharf“ / „Nur dieser Scan hat hier etwas“). Buttons Löschen (blendet aus wie Übernehmen, ein Undo-Schritt), Behalten, Auswählen, Vorher/Nachher, „Alle löschen, wo der andere scharf ist“. Ein Klick auf die Karte fliegt die Kamera hin und lässt den Bereich kurz rot aufblinken.
+- Bild↑/Bild↓ (auch ←/→) im Werkzeug: alle → nur Scan 1 → nur Scan 2 → alle, mit Anzeige, ohne Undo. Beim Verlassen kommt die Sichtbarkeit zurück.
+- Schärfe-Ansicht: unscharfe Splats werden magenta eingefärbt, in Renders nie sichtbar.
+- Der alte Feinvergleich liegt unverändert eingeklappt darunter („Feinvergleich (Details)“).
+
+**Gemessen:** Nürnberg 11 Bereiche (3 „anderer scharf“), Suche ~2 s. A-Brücke ein Bereich mit 78.074 Splats inklusive Baumkronen-Blobs. Steinbeis 8 Bereiche. Bus-Unschärfe-Kugel ein Bereich, 72 % der Zeilen, 0,03 % daneben. Zwillinge nie „anderer scharf“. Der alte Weg ist bytegleich (bus-main, Steinbeis, Nürnberg-Swap).
+
+**Offen:** „Löschen“ blendet nur aus; erst ein Zusammenführen-Schritt entfernt endgültig. Mit nur einem Scan lässt sich ein unscharfes Objekt nicht vom unscharfen Rand des Scans trennen. Kamera der Bereichskarten steht hoch und weit weg. Ein Teil von A unter dem Deck und über dem Wasser bleibt im grauen Randbereich, weil B dort nichts hat. Redo ist Strg+Umschalt+Z.
+
+### Schritt 6 „Zusammenführen“ (23.11.2026)
+
+Anlass: „Löschen“ blendete nur aus; gewünscht ist eine dünnere, zusammengeführte Datei.
+
+- `src/compose/compose-merge.ts`: die einbezogenen Scans werden mit dem normalen Export (Weltlage, Farbkorrektur, SH-Drehung) in eine PLY im Speicher geschrieben (Blob, kein zweiter JS-Puffer) und als neue Ebene „Zusammengeführt“ geladen (`import.loadSplat` in file-handler, ohne Import-Verlauf). Ausgeblendete (gesperrte) Splats fallen weg (`SerializeSettings.skipLocked`), optional Splats mit Deckkraft unter 1 % (Standard an). Die Original-Scans werden ausgeblendet; neue Ebene + Ausblenden sind ein Undo-Schritt.
+- Die neue Ebene zählt nie als Scan der Komposition (`mergedLayers`), auch nach Undo/Redo. Ein zweites Zusammenführen ist gesperrt, solange das Ergebnis in der Szene ist.
+- Schritt 4 „Weiter“ führt jetzt zu Schritt 6; Schritt 5 „Lücken“ bleibt später.
+- Gemessen (Nürnberg, headless): nach „Alle löschen, wo der andere scharf ist“ 5.843.795 → 5.698.026 Splats (−145.769, davon 143.022 ausgeblendet, 2.747 fast unsichtbar), 22 s, 304 MB PLY; Bild vorher/nachher gleich. Undo zeigt die Scans wieder, Redo stellt das Ergebnis her.
+
+### Pipette: Farb-Floater im Bereich (23.11.2026)
+
+Anlass: himmelfarbene Splats, die sich in Gebäudekanten und Baumkronen verhakt haben. Die Pipette wählte jede passende Farbe der ganzen Szene, also auch den echten Himmel.
+
+- Pipetten-Leiste mit Beschriftung und Roll-over-Texten: „Farbtoleranz“, „Nur zusammenhängende“ (Standard an), „Umkreis“ (Standard 5, Szenen-Einheiten, 0 = ohne Grenze).
+- `src/tools/color-region.ts`: die GPU-Farbtreffer (wie bisher) werden auf den Umkreis um den angeklickten Splat beschränkt; mit „zusammenhängend“ bleibt nur der Klumpen, der mit ihm verbunden ist. Zwei Treffer hängen zusammen, wenn ihre Mitten näher sind als 2 × (Größe a + Größe b), höchstens 4 × die Größe des 90.-Perzentils. Weltlagen kommen aus `readLayerData`, im Editor pro Ebene zwischengespeichert (verworfen bei Bewegen/Positionsänderung/Anzahl).
+- Synthetisch (Himmelskuppel + Gebäude + drei blaue Klumpen): zusammenhängend = genau der angeklickte Klumpen, 0 Himmel; ohne „zusammenhängend“ mit Umkreis 5 = die zwei nahen Klumpen, 0 Himmel. Nürnberg A: Umkreis 5 ≈ 0,6 s pro Klick, ohne Grenze ~8–10 s (deshalb Standard 5).
+- Umschalt/Strg-Klick erweitern bzw. entfernen wie bei allen Auswahlwerkzeugen.
+
+### Erklärtexte in der Oberfläche (23.11.2026)
+
+Anlass: Viele Funktionen erklärten sich nicht selbst. Alle Panels, Dialoge, Menüs und Werkzeugleisten wurden durchgesehen; wo eine Beschriftung für Nicht-Programmierer unklar ist, gibt es jetzt einen Roll-over-Text (de/en, ~140 neue Schlüssel). Mechanismus wie gehabt: `tooltips.register` (setzt jetzt `data-tip` am Element, für UI-Prüfungen) oder `title` über `i18n.bindDom`. Menüeinträge bekommen Titel über einen kleinen Helfer in menu.ts.
+- Korrigiert: „menu.select.delete“ hieß auf Deutsch „Selektion aufheben“, löscht aber → „Auswahl löschen“. Der Kamera-auf-Auswahl-Knopf rechts hieß „Rechteckselektion“ → neuer Schlüssel `sm.toolbar.frame-selection` „Auswahl einpassen“.
+- Selbsterklärendes (OK, Löschen, X/Y/Z, Auflösung …) bekam bewusst nichts. Headless-Prüfung: keine rohen Schlüssel als Titel, Tooltip z. B. bei „SH Bänder“ erscheint.

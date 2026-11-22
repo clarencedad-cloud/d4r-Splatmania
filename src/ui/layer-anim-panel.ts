@@ -118,7 +118,7 @@ class LayerAnimPanel extends Container {
         scaleOn.on('change', (v: boolean) => !syncing && layer() && events.fire('layerAnim.setSplatScale', layer(), v ? scale.value : null));
         scale.on('change', (v: number) => !syncing && layer() && scaleOn.value && events.fire('layerAnim.setSplatScale', layer(), v));
 
-        const interpRow = row(layerControls, 'sm.anim.interpolation');
+        const interpRow = row(layerControls, 'sm.anim.interpolation', 'sm.anim.interpolation-tip');
         const syncInterp = segmented(interpRow, [
             ['linear', 'Linear'],
             ['smooth', 'Smooth']
@@ -132,6 +132,7 @@ class LayerAnimPanel extends Container {
         const fadeRow = new Container({ class: 'layer-anim-buttons' });
         layerControls.append(fadeRow);
         const duration = new NumericInput({ min: 1, max: 10000, precision: 0, value: 30, class: 'layer-anim-duration' });
+        i18n.bindDom(duration.dom, 'sm.anim.fade-duration-tip', 'title');
         button(fadeRow, 'sm.anim.fade-in', 'sm.anim.fade-in-tip', () => layer() && events.fire('layerAnim.fadeIn', layer(), duration.value));
         button(fadeRow, 'sm.anim.fade-out', 'sm.anim.fade-out-tip', () => layer() && events.fire('layerAnim.fadeOut', layer(), duration.value));
         fadeRow.append(duration);
@@ -180,12 +181,13 @@ class LayerAnimPanel extends Container {
             const b = document.createElement('span');
             b.classList.add('layer-anim-segment');
             b.textContent = TRANSITION_LABELS[effect];
+            i18n.bindDom(b, `sm.transitions.effect.${effect}-tip`, 'title');
             b.addEventListener('click', () => update({ effect }));
             effectGrid.dom.appendChild(b);
             return { effect, b };
         });
 
-        const timingRow = row(editor, 'sm.transitions.timing');
+        const timingRow = row(editor, 'sm.transitions.timing', 'sm.transitions.timing-tip');
         const startInput = new NumericInput({ min: 0, max: 100000, precision: 0, value: 0, class: 'layer-anim-duration' });
         const durationInput = new NumericInput({ min: 1, max: 100000, precision: 0, value: 30, class: 'layer-anim-duration' });
         timingRow.append(startInput);
@@ -193,7 +195,7 @@ class LayerAnimPanel extends Container {
         startInput.on('change', (v: number) => update({ start: v }));
         durationInput.on('change', (v: number) => update({ duration: v }));
 
-        const syncEasing = segmented(row(editor, 'sm.transitions.easing'), [
+        const syncEasing = segmented(row(editor, 'sm.transitions.easing', 'sm.transitions.easing-tip'), [
             ['linear', 'Linear'],
             ['in', 'In'],
             ['out', 'Out'],
@@ -247,12 +249,15 @@ class LayerAnimPanel extends Container {
 
         const extraRow = row(adv, 'sm.cleanup.seed');
         const seedInput = new NumericInput({ min: 0, max: 100000, precision: 0, value: 1, class: 'layer-anim-duration' });
+        i18n.bindDom(seedInput.dom, 'sm.transitions.seed-tip', 'title');
         extraRow.append(seedInput);
         seedInput.on('change', (v: number) => update({ seed: v }));
         const pointsFirstLabel = new Label({ class: 'layer-anim-label' });
         i18n.bindText(pointsFirstLabel, 'sm.transitions.points-first');
         extraRow.append(pointsFirstLabel);
         const pointPhase = new BooleanInput({ value: false });
+        i18n.bindDom(pointsFirstLabel.dom, 'sm.transitions.points-first-tip', 'title');
+        i18n.bindDom(pointPhase.dom, 'sm.transitions.points-first-tip', 'title');
         extraRow.append(pointPhase);
         pointPhase.on('change', (v: boolean) => update({ pointPhase: v }));
 
@@ -385,7 +390,7 @@ class LayerAnimPanel extends Container {
             ['world', 'sm.points.world']
         ], value => setPoints({ sizeMode: value as PointCloudSettings['sizeMode'] }));
 
-        const colorRow = row(pc, 'sm.points.color');
+        const colorRow = row(pc, 'sm.points.color', 'sm.points.color-tip');
         const syncColorMode = segmented(colorRow, [
             ['original', 'sm.points.original'],
             ['uniform', 'sm.points.uniform']
@@ -400,7 +405,7 @@ class LayerAnimPanel extends Container {
         });
 
         const pointOpacity = new SliderInput({ min: 0, max: 1, sliderMin: 0, sliderMax: 1, precision: 2, step: 0.01, value: 1 });
-        row(pc, 'sm.anim.opacity').append(pointOpacity);
+        row(pc, 'sm.anim.opacity', 'sm.points.opacity-tip').append(pointOpacity);
         pointOpacity.on('change', (v: number) => setPoints({ opacity: v }));
 
         const glow = new SliderInput({ min: 0, max: 1, sliderMin: 0, sliderMax: 1, precision: 2, step: 0.01, value: 0 });

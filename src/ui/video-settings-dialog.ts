@@ -456,6 +456,17 @@ class VideoSettingsDialog extends Container {
         showDebugRow.append(showDebugLabel);
         showDebugRow.append(showDebugBoolean);
 
+        // roll-over explanations (projection, horizon and overlays as in the image dialog)
+        ([
+            [shotRow, 'sm.video.shot-tip'],
+            [projectionRow, 'popup.render-image.projection-tip'],
+            [codecRow, 'popup.render-video.codec-tip'],
+            [bitrateRow, 'popup.render-video.bitrate-tip'],
+            [portraitRow, 'popup.render-video.portrait-tip'],
+            [levelHorizonRow, 'popup.render-image.level-horizon-tip'],
+            [showDebugRow, 'popup.render-image.show-debug-overlays-tip']
+        ] as [Container, string][]).forEach(([row, key]) => i18n.bindDom(row.dom, key, 'title'));
+
         // transparency: webm (vp9 / av1 with an alpha stream), quicktime
         // png and the sequences; depth: exr in standard projection
         const syncOutputRows = () => {

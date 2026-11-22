@@ -127,6 +127,7 @@ class LightPanel extends Container {
         (['sun', 'point', 'spot'] as LightType[]).forEach((type) => {
             const b = new Button({ class: 'light-add' });
             i18n.bindText(b, `sm.light.add-${type}`);
+            tooltips.register(b, () => i18n.t(`sm.light.add-${type}-tip`), 'top');
             b.on('click', () => events.invoke('light.add', type));
             addRow.append(b);
         });
@@ -143,6 +144,7 @@ class LightPanel extends Container {
             const title = new Container({ class: 'light-card-title' });
             const enabled = new BooleanInput({ class: 'light-check' });
             enabled.on('change', (v: boolean) => put({ enabled: v }));
+            tooltips.register(enabled, () => i18n.t('sm.light.toggle-tip'), 'top');
             const name = new Label({ class: 'light-card-name' });
             i18n.bindText(name, `sm.light.type-${type}`);
             const remove = new Button({ class: 'light-small', text: '✕' });

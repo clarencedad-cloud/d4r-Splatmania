@@ -149,6 +149,7 @@ class TimelineTracks extends Container {
         const channelRow = (name: string, keyButton: HTMLElement, onPointerDown: (event: PointerEvent) => void) => {
             const row = document.createElement('div');
             row.classList.add('track-row', 'channel-track');
+            row.title = i18n.t('sm.timeline.channel-row-tip');
             const label = document.createElement('div');
             label.classList.add('track-label');
             const text = document.createElement('span');
@@ -220,6 +221,7 @@ class TimelineTracks extends Container {
                 row.classList.add('track-row', 'camera-track');
                 if (camera === selected) row.classList.add('selected');
                 if (keyTarget?.kind === 'camera' && camera === selected) row.classList.add('key-target');
+                row.title = `${camera.name}: ${i18n.t('sm.timeline.camera-row-tip')}`;
 
                 const label = document.createElement('div');
                 label.classList.add('track-label');

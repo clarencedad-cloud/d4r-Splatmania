@@ -593,6 +593,11 @@ class SettingsPanel extends Container {
 
         // tooltips
         tooltips.register(resetButton, () => i18n.t('panel.settings.reset'), 'left');
+        tooltips.register(stochasticLabel, () => i18n.t('panel.settings.stochastic-alpha.tooltip'), 'left');
+        tooltips.register(tonemappingLabel, () => i18n.t('panel.settings.tone-mapping.tooltip'), 'left');
+        tooltips.register(shBandsLabel, () => i18n.t('panel.settings.sh-bands.tooltip'), 'left');
+        tooltips.register(cameraFlySpeedLabel, () => i18n.t('panel.settings.fly-speed.tooltip'), 'left');
+        tooltips.register(fovDollyLabel, () => i18n.t('panel.settings.fov-dolly.tooltip'), 'left');
     }
 }
 

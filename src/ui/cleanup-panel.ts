@@ -222,6 +222,9 @@ class CleanupPanel extends Container {
         const cRes = numeric(cRow, 1.0, 0.01, 100, 2);
         const cOpacity = numeric(cRow, 0.999, 0, 1, 3);
         const cMin = numeric(cRow, 0.1, 0, 1, 3);
+        i18n.bindDom(cRes.dom, 'sm.cleanup.cluster-res-tip', 'title');
+        i18n.bindDom(cOpacity.dom, 'sm.cleanup.cluster-opacity-tip', 'title');
+        i18n.bindDom(cMin.dom, 'sm.cleanup.cluster-min-tip', 'title');
         const seedRow = row(body, 'sm.cleanup.seed', 'sm.cleanup.seed-tip');
         const sx = numeric(seedRow, 0, -1e6, 1e6, 2);
         const sy = numeric(seedRow, 0, -1e6, 1e6, 2);
@@ -250,6 +253,7 @@ class CleanupPanel extends Container {
         i18n.bindText(countLabel, 'sm.cleanup.or-count');
         dRow.append(countLabel);
         const dCount = numeric(dRow, 0, 0, 1e9, 0);
+        i18n.bindDom(dCount.dom, 'sm.cleanup.count-tip', 'title');
         const dOpt = row(body, 'sm.cleanup.adaptive', 'sm.cleanup.adaptive-tip');
         const dAdaptive = new BooleanInput({ value: false });
         dOpt.append(dAdaptive);

@@ -147,7 +147,7 @@ class RightToolbar extends Container {
             [compose, 'sm.compose.title'],
             [orbitMode, 'tooltip.right-toolbar.orbit-camera'],
             [flyMode, 'tooltip.right-toolbar.fly-camera'],
-            [cameraFrameSelection, 'tooltip.right-toolbar.frame-selection'],
+            [cameraFrameSelection, 'sm.toolbar.frame-selection'],
             [cameraReset, 'tooltip.right-toolbar.reset-camera'],
             [settings, 'panel.settings']
         ];
@@ -177,27 +177,28 @@ class RightToolbar extends Container {
 
         // Helper to compose localized tooltip text with shortcut
         const shortcutManager: ShortcutManager = events.invoke('shortcutManager');
-        const tooltip = (localeKey: string, shortcutId?: string) => () => {
-            const text = i18n.t(localeKey);
+        // hintKey: an optional sentence explaining what the button does
+        const tooltip = (localeKey: string, shortcutId?: string, hintKey?: string) => () => {
+            let text = i18n.t(localeKey);
             if (shortcutId) {
                 const shortcut = shortcutManager.formatShortcut(shortcutId);
                 if (shortcut) {
-                    return i18n.formatTooltipWithShortcut(text, shortcut);
+                    text = i18n.formatTooltipWithShortcut(text, shortcut);
                 }
             }
-            return text;
+            return hintKey ? `${text} – ${i18n.t(hintKey)}` : text;
         };
 
-        tooltips.register(appearance, tooltip('panel.appearance'), 'left');
-        tooltips.register(orbitMode, tooltip('tooltip.right-toolbar.orbit-camera', 'camera.toggleControlMode'), 'left');
-        tooltips.register(flyMode, tooltip('tooltip.right-toolbar.fly-camera', 'camera.toggleControlMode'), 'left');
-        tooltips.register(cameraFrameSelection, tooltip('tooltip.right-toolbar.frame-selection', 'camera.focus'), 'left');
+        tooltips.register(appearance, tooltip('panel.appearance', undefined, 'sm.toolbar.appearance-tip'), 'left');
+        tooltips.register(orbitMode, tooltip('tooltip.right-toolbar.orbit-camera', 'camera.toggleControlMode', 'sm.toolbar.orbit-tip'), 'left');
+        tooltips.register(flyMode, tooltip('tooltip.right-toolbar.fly-camera', 'camera.toggleControlMode', 'sm.toolbar.fly-tip'), 'left');
+        tooltips.register(cameraFrameSelection, tooltip('sm.toolbar.frame-selection', 'camera.focus', 'sm.toolbar.frame-selection-tip'), 'left');
         tooltips.register(cameraReset, tooltip('tooltip.right-toolbar.reset-camera', 'camera.reset'), 'left');
-        tooltips.register(overlays, tooltip('panel.overlays'), 'left');
-        tooltips.register(look, tooltip('sm.look.title'), 'left');
-        tooltips.register(light, tooltip('sm.light.title'), 'left');
-        tooltips.register(titles, tooltip('sm.titles.title'), 'left');
-        tooltips.register(aiShots, tooltip('sm.aishots.title'), 'left');
+        tooltips.register(overlays, tooltip('panel.overlays', undefined, 'sm.toolbar.overlays-tip'), 'left');
+        tooltips.register(look, tooltip('sm.look.title', undefined, 'sm.toolbar.look-tip'), 'left');
+        tooltips.register(light, tooltip('sm.light.title', undefined, 'sm.toolbar.light-tip'), 'left');
+        tooltips.register(titles, tooltip('sm.titles.title', undefined, 'sm.toolbar.titles-tip'), 'left');
+        tooltips.register(aiShots, tooltip('sm.aishots.title', undefined, 'sm.toolbar.aishots-tip'), 'left');
         tooltips.register(settings, tooltip('panel.settings'), 'left');
         tooltips.register(align, tooltip('tooltip.right-toolbar.align', 'tool.align'), 'left');
         tooltips.register(compose, tooltip('sm.compose.tooltip'), 'left');
