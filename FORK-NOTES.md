@@ -1020,3 +1020,292 @@ Panel „Kamerafahrt-Vorschläge“ (rechte Leiste). Code in `src/ai-shots/` (`s
 - `src/ui/scene-panel.ts`: Sobald etwas ausgeblendet ist, zeigt eine Zeile unter „Scene Manager“ „X Bereich(e) ausgeblendet · alle einblenden“ (`sm.view.hidden-count`, `sm.view.show-all`).
 - `src/ui/scss/menu.scss`: Die Menüleiste liegt über den schwebenden Panels (z-index 20), bleibt im Fenster und scrollt bei Bedarf waagrecht.
 - `src/ui/floating-panel.ts`: `raiseOnPress` holt das zuletzt angeklickte Panel nach vorn. Das gilt für die schwebenden Panels und für das Scene-Panel.
+
+## Auto-Ausrichten ohne Ankerpunkte (21.11.2026)
+
+Kern: `src/align/global-align.ts` (`autoAlign`), läuft im Analyse-Worker (Job `auto`). Anbindung im Ausrichten-Panel (`src/align/align-tool.ts`), Panel-Titel jetzt „Ausrichten“.
+- **Ablauf pro Layer** (alle sichtbaren Nicht-Referenz-Layer, ein Undo-Schritt):
+  1. Beide Wolken normieren (robuste Mitte, Median-Radius), damit Scans unterschiedlicher Größe vergleichbar sind. Ist die Größenschätzung bei kleiner Überlappung daneben, folgen weitere Skalen-Versuche (×0,7 / 1,4 / 0,5 / 2).
+  2. Voxel-Ausdünnung auf ~4000 Punkte, PCA-Normalen, FPFH-Deskriptoren (33 Bins) plus mittlere Farbe der Umgebung (pro Scan standardisiert, damit Belichtung und Weißabgleich egal sind).
+  3. Gegenseitig nächste Deskriptoren → RANSAC über Tripel mit Kantenlängen-Check (Ähnlichkeits- bzw. starre Transformation über `alignPoints`).
+  4. Die 400 besten Hypothesen werden auf den Wolken selbst bewertet: Anteil der bewegten Punkte auf der Referenzoberfläche **und** Anteil der Referenz, die abgedeckt ist (geometrisches Mittel, Farbe muss passen). Damit fallen geschrumpfte oder spiegelsymmetrisch falsche Lösungen heraus.
+  5. Bis zu 4 unterschiedliche Kandidaten bekommen ICP (`refineAlignment`), der Sieger zusätzlich die volle Feinausrichtung.
+- **Panel**: Großer Button „Auto-Ausrichten“, darunter „Manuell: Ankerpunkte“ (bisheriger Weg). Pro Layer steht „auto · Übereinstimmung xx %“. Ist die Lösung unsicher (zweiter Kandidat fast gleich gut oder Übereinstimmung < 15 %), steht „bitte prüfen“ in Orange, und „Andere Lösung“ wechselt reihum zum nächsten Kandidaten (Undo-fähig).
+- `readLayerData` liefert jetzt auch `colors` (Grundfarbe).
+- **Gemessen (Node, Bus-Scan, 330k Punkte, Kopie um 130° gedreht, ×1,7, verschoben, 1 cm Rauschen):**
+
+  | Fall | Ergebnis | Zeit |
+  |---|---|---|
+  | volle Überlappung | Restfehler 5 mm, Skalierung exakt | ~19 s |
+  | 40 % Überlappung (Teilstücke) | Restfehler 5 mm | ~21 s |
+  | 20 % Überlappung, 200°, ×0,4 | **falsch** (Lage um 9 Einheiten daneben) | ~40 s |
+
+  Grenze also: Die Scans sollten sich deutlich überlappen (Faustregel ≥ ⅓). Sonst Ankerpunkte setzen.
+- **Im Browser geprüft:** Bus doppelt geladen, Kopie 120° um eine schiefe Achse gedreht, (3, 1, −2) verschoben, ×1,6. „Auto-Ausrichten“ im Panel geklickt: nach 17 s deckungsgleich (Fehler < 0,1 mm, Skalierung 1,000), Anzeige „auto · fit 96 %“. Undo stellt die verdrehte Lage in einem Schritt wieder her.
+- **Offen:** Echte Zweitscans (unterschiedliche Aufnahmen) noch nicht getestet; Claude-Bildprüfung bei mehrdeutigen Fällen wäre ein möglicher nächster Schritt.
+
+## Kamerafahrt-Vorschläge: Meter, Live-Vorschau, Aufräumen, Begehung (21.11.2026)
+
+Panel „Kamerafahrt-Vorschläge“ überarbeitet. Neu: `src/scene-scale.ts`, `src/camera-modifier.ts`, `src/ai-shots/shot-draft.ts`, `shot-preview.ts`, `shot-cleanup.ts`, `walk-path.ts`, Test `scripts/test-shot-draft.mjs`. Geändert: `ai-shots.ts`, `shot-generator.ts` (Exporte, `makeKeys` mit Key-Limit), `shot-types.ts`, `ui/ai-shots-panel.ts`, `camera-poses.ts`, `ui/camera-list.ts`, `ui/timeline-tracks.ts`, `track-manager.ts`, `export-options.ts`, `camera-pose-gizmos.ts`, `doc.ts`, `main.ts`, Styles in `ui/scss/ai-shots-panel.scss`, Locales en/de.
+
+**1. Maßstab und Abstand in Metern**
+- `sceneScale` (Projekt-Key `sceneScale`): automatisch metrisch, wenn ein sichtbarer Layer aus `.lcc/.lcc2` (XGRIDS/PortalCam) kommt, sonst **unbekannt**. Im Panel: Automatisch / „Metrisch: 1 Einh. = 1 m“ / „Eigener Maßstab“ (1 Einh. = x m, oder echte Objekthöhe eingeben).
+- Unbekannter Maßstab wird ehrlich angezeigt: alle Längen als „Einh.“, oranger Hinweis. `formatLength` (m, cm oder Einh., Dezimalkomma je Sprache).
+- Abstand: Log-Regler (intern weiter `distanceScale` 0,5–3) plus Zahlenfeld in m/Einh.; darunter „9,0 m · 1,3 × Objektgröße (größte Seite 7,0 m)“. Bezug = der Punkt, den der Generator meint (Orbit: Radius, Push-in/Überflug: Start, Reveal/Kran: Ende, Seitenfahrt: nächster Punkt) – steht unter „Bewegung“ je Fahrt erklärt. Weicht der tatsächliche Abstand ab (Lieblingswinkel, Geometrie, Höhe), steht „– tatsächlich …“ dabei.
+- Übrige Regler: Objektgröße in m, „Kamera 4,2 m – 5,0 m über dem Boden“, Dauer mit Frames/fps und ob sie in die Timeline passt.
+
+**2. Live-Vorschau** (`shot-draft.ts`, `shot-preview.ts`)
+- Bei jeder Einstellungsänderung rechnet der deterministische Generator den Entwurf neu (gebündelt per rAF + 50-ms-Timer, auch in Tabs ohne Frames). Claude wird nie automatisch gefragt.
+- Overlay (HTML/SVG über dem Canvas, nie im Export): Bahn, Kamera-Frustum am Start mit „Start“, gestrichelter Abstandsring auf Kamerahöhe mit Griff und Label „7,9 m · 1,1 × Objektgröße“, Linie Objektmitte → Bezugspunkt, Key-Marker.
+- Abdeckungsfeld wird beim Öffnen im Hintergrund gebaut; bis dahin ohne. Punkte (`collectPoints`) werden für Abdeckung und Begehung gemeinsam gecacht.
+- Karten aus „Kamerafahrten vorschlagen“: Klick aufs Vorschaubild macht die Karte zum Entwurf (Rahmen magenta).
+- „▶ Probefahrt“ fliegt den Viewport in Echtzeit die Bahn ab (mit Wippen/Wackeln), Esc/■ stellt die Ansicht wieder her. Esc wird im Capture-Listener gefangen, weil das Panel Tasten nicht durchlässt.
+
+**3. WYSIWYG und Aufräumen** (`shot-cleanup.ts`)
+- Ring-Griff ziehen → setzt den Abstand-Regler (`aiShots.requestDistanceScale`), Key-Marker ziehen (waagerecht, Shift = Höhe) → Entwurf „Von Hand angepasst“ (Bahn orange). Abstand/Dauer wirken danach als Skalierung bzw. Retiming auf den angepassten Entwurf, andere Einstellungen rechnen neu; „Zurücksetzen“ verwirft Handänderungen.
+- „Aufräumen“: Bahn gleichmäßig nach Weglänge abtasten (nicht nach Zeit, sonst knicken die Enden), Gauß-Glättung (σ = 1/20 der Bahn, 2 Durchgänge, Enden per Punktspiegelung), aus der Geometrie schieben (Abdeckungsfeld), Ziel nur so weit zur Objektmitte drehen, dass sie in 60 % des halben Bildwinkels bleibt, dann vom Generator selbst neu keyen (`makeKeys`: Rampen, Höhen-/Abstandsgrenzen, Abstand zur Geometrie), so wenige Keys wie die Form braucht (Toleranz 5 % des Objektradius). Bewertung wie beim Generator.
+- „Von Claude bewerten“ (nur mit Key sichtbar): 3 Standbilder (bei Begehungen mit Modifier) → `rankShots` mit einem Kandidaten. **Nicht getestet** (kein API-Key in der Testumgebung).
+- „Als Kamera übernehmen“ legt den Entwurf als Shot-Kamera an (ein Undo-Schritt, wie die Karten).
+
+**4. Begehung (Fußgänger)** (`walk-path.ts`)
+- Eigener Eintrag unter „Bewegung“, kein `ShotTemplate` (Claude plant ihn nicht); Proposal mit `kind: 'walk'`, `route`, `walkLength`, `modifier`.
+- Wegpunkte: „Setzen“ → Klicks in den Viewport (Tiefen-Pick), Esc beendet. Marker ziehen (Boden-Ebene, beim Loslassen neuer Tiefen-Pick), Doppel-/Rechtsklick löscht. „Automatisch“ schlägt einen Rundgang um das Objekt durch freie Fläche vor (8 Punkte auf einem Kreis 2,5 m außerhalb, auf begehbare Stellen geschoben, Schleife geschlossen).
+- Boden: `WalkField` = Splat-Mitten in einem xz-Hash (~400 Zellen, 5 cm–1 m); pro Abfrage ein Höhenhistogramm (10 cm) in einer Scheibe. Boden = dichte, waagerechte Schicht (Bin deutlich dichter als die 30 cm darüber), „begehbar“ = in 0,5–1,8 m darüber wenig Gewicht (Summe, nicht Einzel-Bins – senkrechte Wände verteilen sich dünn). Klick auf Auto/Wand → Straße daneben; Klick auf ein Dach zwischen Straßen-Klicks → Straßenniveau (Median der Klickhöhen).
+- Weg: optional A* (8er-Nachbarschaft, Kosten meiden Hindernisnähe, max. 35° bzw. 35 cm Stufe), String-Pulling, Ecken runden nur wo frei, Bodenprofil über ~1,5 m geglättet. Kein freier Weg → gerade + Warnung; gerader Weg durch Geometrie → Warnung.
+- Kamera: Augenhöhe (Standard 1,6 m) über Boden, Gehtempo (1,3 m/s) mit ~1 s Anlauf/Auslauf, Blick „Blick voraus“ (3 m) entlang des Wegs, 4° nach unten; an Ecken wird der Blick verkürzt, bis die Sichtlinie frei ist (`WalkField.solid`). Keys: Start, Ende, Wegpunkte, Rampen, dann nur wo der Spline > 12 cm abweicht.
+
+**Kamera-Modifier: Gang-Wippen und Handkamera-Wackeln** (`camera-modifier.ts`)
+- Vier neue keybare Kamera-Kanäle in `CameraAnimTrack`: `bob` (Szeneneinheiten), `stepRate` (Hz), `shake` (°), `shakeRate` (Hz); Basiswerte 0/1,9/0/1,2 (bob = shake = 0 → aus). Gespeichert in `poseSets[i].channels` (alte Projekte: Standardwerte).
+- Wippen: −cos(Phase) · bob senkrecht, seitlich 0,8 · bob mit halber Frequenz, leichtes Nicken. Die Phase wird über die Zeit integriert (Tabelle pro Frame, 4 Unterschritte) und läuft nur, solange sich die Kamera bewegt (0,12–0,7 m/s Übergang): Stehen = kein Wippen. Wackeln: drei Sinus mit krummen Frequenzen auf Schwenk/Neigung, läuft auch im Stand.
+- `getShotPoseAt(frame)` = Bahn + Modifier. Nutzt: Kamera-Rig (Durchschauen, Schnitt, Abspielen, **Video-Export** inkl. Motion-Blur-Unterframes und Überblendung), Kamera-Icon im Viewport, Player-Export (Kamera mit Modifier geht als eine Pose pro Frame raus). `getPoseAt` bleibt die saubere Bahn (Pfad-Werkzeug, Key einfügen, Panoramen).
+- Ansicht übernehmen beim Durchschauen (Navigation, „An aktuelle Ansicht“, Key-Knopf) nimmt den Modifier vorher wieder heraus (`unmodify`), sonst würde er in die Keys gebacken.
+- UI: Kamera-Eigenschaften → „Gang & Handkamera“ (Wipp-Höhe in cm bzw. Einh., Schritte/s, Wackeln °, Wackel-Tempo) je mit Key-Knopf; Timeline-Kanalzeilen Wippen/Schritte/Wackeln/Wackel-Tempo erscheinen nur bei Kameras mit Modifier.
+
+**Geprüft**
+- `node scripts/test-shot-draft.mjs`: 2448 Prüfungen (Modifier: 3 cm Amplitude, 1,9 Hz, Stillstand ohne Wippen, apply/remove exakt, maßstabsunabhängig; Aufräumen: Tempo-Streuung 0,27 → 0,04, Objekt im Bild, kein Knick, frei von einer Wand; Begehung: Boden unter Auto-Klick, Augenhöhe ±15 cm, Tempo, Umweg durch die Lücke einer Wand, Blick nie durch die Wand, Dach-Klick bleibt unten, automatischer Rundgang um einen Kiosk, cm-Szene identisch). `test-shot-generator.mjs` weiter 131 504/131 504.
+- Klicktest per DevTools-Protokoll mit eigenem Headless-Chrome (WebGPU, echte Maus/Tastatur, Screenshots in `test-data/out/shotdraft/`), `house.ply` und `bus.ply`:
+  - Maßstab unbekannt → „5,82 Einh. · 0,8 × Objektgröße“ + Hinweis; metrisch → „5,8 m …“; Objekthöhe 8 m → 1 Einh. = 2 m, „11,6 m“.
+  - 9 eingetippt → Orbit 9,0 m; Regler gezogen → 5,7 m; Ring-Griff gezogen → 7,9 m, Regler/Zahl folgen.
+  - Key grob nach innen gezogen → „Von Hand angepasst“; „Aufräumen“ → glatte Bahn, „Aufgeräumt“; Probefahrt + Esc stellt Ansicht wieder her; „Als Kamera übernehmen“ → Kamera „Orbit“ mit Keys; Karte anklicken → Entwurf.
+  - Begehung: 5 Bodenklicks → Wegpunkte auf y = 0, Kamera durchgehend 1,6 m, 10,7 m / 9,3 s bei 1,3 m/s; Probefahrt wippt 3,1 cm bei 2,0 Hz; übernommene Kamera trägt bob 3 cm/1,9 Hz/0,35°/1,1 Hz; Wipp-Höhe gekeyt 3 → 6 cm (Frame 60 = 4,5 cm), Timeline zeigt „Wippen“ mit Keys; Abspielen durch die Kamera wippt 5,5 cm bei 2,0 Hz; MP4-Export (640×360, H.264, 5 s) – Kamerahöhe weicht im Export um ±1…6 cm von der sauberen Bahn ab (Kontaktabzug `begehung_export_sheet.jpg`).
+  - `bus.ply` (2 Mio. Splats): Abdeckungsfeld nach ~3 s, danach 22–33 ms pro Abstandsänderung.
+- `npx tsc --noEmit -p .` und `npx eslint src` sauber.
+
+**Grenzen / offen**
+- Claude-Bewertung des Entwurfs nicht getestet (kein Key).
+- Abdeckung/Begehung nutzen bei sehr großen Szenen grobe Zellen (Begehung max. ~1 m Raster); Innenräume ohne Decke im Scan gelten als begehbar.
+- Keine Undo-Schritte für Entwurfs-Änderungen (dafür „Zurücksetzen“); der übernommene Entwurf ist wie immer ein Undo-Schritt.
+- Begehung: Gehtempo ist konstant (keine Pausen an Wegpunkten); Rollen (Kippen um die Blickachse) kann das Kamera-Modell nicht.
+- Ohne bekannten Maßstab rechnen Augenhöhe/Tempo/Wippen 1 Einh. = 1 m – der Hinweis im Panel sagt das.
+
+## Ausrichten: Suchradius als Länge („Max. Versatz“) (21.11.2026)
+
+Der Suchradius beim Präzisieren war eine Rohzahl (Regler 0–2 Welteinheiten, „auto“) ohne erkennbaren Bezug. Neu (`src/align/align-tool.ts`, `src/align/icp.ts`, Styles in `ui/scss/align-panel.scss`, Locales en/de):
+- **Bedeutung im Kern geändert:** `maxError` ist jetzt die Startweite der Suche. Die Zahl der Grob-zu-fein-Stufen richtet sich danach (gröbster Voxel ≈ ⅓ davon). Vorher hat die gröbste Stufe immer mindestens 3 grobe Voxel gesucht (≈ 1/21 der Überlappungs-Diagonale), kleinere Werte hatten also kaum Wirkung. Auto ist jetzt 1/20 der Diagonale; das ergibt dieselben 4 Stufen wie vorher. Das Polieren im Auto-Ausrichten gibt `levels: 4` fest vor und bleibt dadurch unverändert.
+- **Panel:** Unterüberschrift „Feinausrichtung“. Zeile „Max. Versatz  2,3 m  ☑ Auto“. Die Länge kommt aus `formatLength` (m/cm bei bekanntem Maßstab, sonst „Einh.“). Der Regler ist logarithmisch von ⅛ bis 6 × Auto-Wert; seine Zahl ist ausgeblendet, angezeigt wird nur die Länge. Ziehen schaltet Auto aus, Klick auf „Auto“ schaltet zurück. Darunter ein Satz mit der echten Zahl: „Präzisieren überbrückt einen Versatz bis 2,3 m: sucht erst so weit, dann immer enger. Zu klein … zu groß …“.
+- **Auto-Wert vorab gemessen:** Beim Öffnen und nach jeder Bewegung (400 ms Ruhe) wird je Layer eine leichte Stichprobe gelesen (50k Punkte, Deckkraft ≥ 0,3). Daraus berechnet `autoMaxError` den Wert exakt wie der Kern. Präzisieren übergibt genau diesen Wert, angezeigt = verwendet.
+- **Kreis im Bild:** Solange der Zeiger über dem Bereich ist (und 1,8 s nach einer Änderung), zeigt ein gestrichelter Kreis am Kamera-Fokus die Größe, mit Längen-Label darüber. Er liegt unter den Panels: Verdeckt das Panel die Bildmitte (schmale Fenster), das Panel zur Seite ziehen.
+- Weitere Rohzahlen ersetzt: Ergebnis „Abstand 36 cm → 0,6 cm · Überlappung 87 %“ (statt „Median 0.36 → 0.006“), Ankerpunkte „3 Pkt · ± 1,2 cm“ mit Einzelabweichungen im Tooltip.
+- API: `align.searchRadius` liefert manuell/auto/verwendet/Text; `align.setSearchRadius(v)` nimmt Szeneneinheiten (0 = Auto).
+- **Gemessen (Node, Bus 330k Punkte, Kopie verschoben):** 0,5 Einh. Versatz + 2°: alle Radien ⅛–4 × Auto rasten ein (6 mm). 2,55 Einh. + 6°: ¼ × Auto (0,58) scheitert (Fehler bleibt 2,1), ab ½ × Auto sauber (6 mm). Auto-Ausrichten unverändert: volle und 40-%-Überlappung je 4,8 mm.
+- **Im Browser geprüft** (en/de, metrisch): Anzeige „2,3 m“, Kreis am Fokus, Regler auf 73 cm → Auto aus, Label-Klick → Auto an. Präzisieren mit Auto holt 2,5 Einh. + 6° zurück auf ~1 mm.
+
+
+## Floater finden: neue Erkennung, Strenge, Gruppenliste, optionale Claude-Prüfung (21.11.2026)
+
+**Vorher:** „Floater finden“ war `splat-transform filterFloaters` (Voxel 5 cm, Deckkraft-Schwelle 0,1, Mindestbeitrag 0,004). Das Werkzeug behielt jeden Splat, der zu einem ausreichend deckenden Voxel beiträgt. Dichte oder deckende Floater-Klumpen bilden aber selbst solche Voxel und blieben deshalb drin. Ausgewählt wurden vor allem schwache, fast unsichtbare Splats auf Oberflächen. Gerastert wurde der ganze Begrenzungsrahmen, im Hauptthread und auf der Editor-GPU. Bei Scans mit weit entfernten Splats hing das Werkzeug (Nutzerbericht: Stillstand bei ~30 % „Voxelizing“).
+
+**Neu (Bereinigen → „Floater finden“):**
+- **Kern** `src/analysis/floaters.ts` läuft im Analyse-Worker (Job `floaters`), rein auf Typed Arrays und auch in Node lauffähig:
+  - **Nachbarn:** exakte k-NN (k = 6) über ein dünnbesetztes, hierarchisches Raster. Die Splats werden einmal entlang einer Morton-Kurve sortiert, jede Zelle jeder Stufe ist ein zusammenhängender Bereich. Gesucht wird zellenweise (27, dann 125 Zellen), Rückfall auf die volle Suche. Nur besetzte Zellen, keine Rasterung des Begrenzungsrahmens.
+  - **Stücke:** Splats, die sich berühren, werden verbunden: Abstand < 2 × (σi + σj) **und** < 6 × min(σ). Ein großer Blob klebt sich so nicht über seine eigene Größe an die Wand. Schwache Splats (Deckkraft < 0,15) hängen sich an, überbrücken aber nie zwei Stücke. Die größten Stücke (mindestens 70 % der Splats, plus jedes mit ≥ max(500, 2 % des größten)) bilden die Struktur.
+  - **Abgetrennte Stücke:**
+    - *Isolation:* Lücke zur nächsten Struktur im Verhältnis zur lokalen Dichte, also zum k-NN-Abstand dort. Bezug sind nur feste Struktur-Splats normaler Größe, große Blobs in der Struktur sind kein Anker. 2× → 0, 8× → 1.
+    - *Größe:* kleine Stücke sind Floater, große eigene Objekte (100 … 10.000 Splats, skaliert mit der Szene).
+    - *In der Luft:* nichts trägt das Stück von unten oder daneben (wenige Splat-Größen). Getragene Stücke zählen 0,6×; Nebelstücke sind davon ausgenommen.
+    - *Flächentest:* Stücke aus großen Splats, die in der Ebene der Fläche daneben liegen, gehören zu ihr.
+  - **Nebel:** Ein Splat gilt als Nebel, wenn alle diese Bedingungen gelten:
+    - ≥ 3 × die normale Splat-Größe (Median der festen Splats);
+    - kein normal großer Splat in seinem Kern;
+    - die festen Splats im Ring 0,3–2 σ um ihn bilden keine Ebene durch seinen Mittelpunkt;
+    - er liegt **innerhalb der Szene**: Vom Szenenzentrum durch ihn nach außen folgt noch feine Struktur.
+
+    Der letzte Punkt verhindert, dass grob erfasste Außenwände aus großen, unscharfen Splats als Nebel gelten. Die Ausrichtung der Splats wird bewusst nicht genutzt: Auf dem Hallenboden des Bus-Scans steht ein Viertel der Splats schräg.
+  - **Ergebnis:** Wahrscheinlichkeit 0–255 pro Splat, Grund (vereinzelt / abgetrennt / Nebel) und Gruppen.
+    - Jedes abgetrennte Stück ≥ 40 Splats ist eine eigene Gruppe (`single`), der Rest wird nach Ort in Zellen gruppiert, die wachsen, bis ≤ 40 Gruppen übrig sind.
+    - Pro Gruppe kommen zwei Ansichten mit **freier Sichtlinie** dazu: Von 24 Richtungen werden die zwei gewählt, die am längsten frei von Splats bleiben.
+- **Logik** `src/floaters/floater-finder.ts` (Events `floaters.*`):
+  - Liest den ausgewählten Layer und rechnet im Worker. Abbrechen beendet den Worker sofort.
+  - Die angenommenen Gruppen ab der gewählten Strenge werden zur **Auswahl über `select.mask` → `SelectOp`** (Undo). Regler- und Klickfolgen werden zu einem Undo-Schritt zusammengefasst (250 ms).
+  - Gelöscht wird nur mit „Auswahl löschen“ (`select.delete`, Undo).
+  - Ändert sich der Layer danach (Anzahl der Instanzen), gilt das Ergebnis als veraltet.
+- **Panel** (`src/ui/cleanup-panel.ts`, Styles in `layer-anim-panel.scss`):
+  - **Strenge** 1–5 mit Klartext „Mild: nur eindeutige Floater … Streng: auch Grenzfälle“ (Schwellen 0,85 / 0,7 / 0,5 / 0,35 / 0,2). Die Strenge zu ändern braucht keine neue Suche.
+  - **Gruppenliste**: Haken = annehmen/ablehnen, Klick = zur Gruppe fliegen (entlang der freien Ansicht). Dazu „Alle“, „Keine“, „Auswahl löschen“.
+  - Die alten Zahlenfelder (Voxel/Deckkraft/Beitrag) sind weg. `cleanup.filterFloaters` gibt es noch als Event, nicht mehr im Panel.
+  - Knöpfe haben jetzt `role="button"` und Tastaturbedienung.
+- **Claude-Prüfung (optional)**, `src/floaters/floater-review.ts` + `reviewFloaters` in `src/ai-shots/claude-client.ts` (angehängt, nutzt `requestJson`):
+  - Nur sichtbar mit Key aus den Einstellungen und online.
+  - Prüft die bis zu 12 größten angenommenen **Einzelstücke**. Nur ein zusammenhängendes Stück kann ein echtes Objekt sein; verstreute Punkte über Meter lassen sich nicht sinnvoll abbilden.
+  - Gesendet werden je 2 Renderings 320 × 240 (JPEG) über `render.posePreview`, mit rotem Kreis um das Stück, **keine Splat-Daten**.
+  - Antwort als JSON-Schema: floater / object / unsure, Bezeichnung, Sicherheit. „object“ ab 0,5 wird abgelehnt und lässt sich zurückholen. Die Liste zeigt das Urteil.
+
+**Gemessen** (`node scripts/test-floaters.mjs <ply …>`; Wahrheit aus `<datei>.truth.json`; Szenen aus `python test-data/make-floater-tests.py dist/bus.ply`; „alt“ im Browser mit `cleanup.filterFloaters` und Standardwerten):
+
+| Szene | Floater | alt gefunden | neu gefunden (Stufe 3) | Fehlalarme neu |
+|---|---|---|---|---|
+| `wall-floaters.ply` (300 deckende Punkte) | 300 | 0 | **300** (auch Stufe 1) | 0 |
+| `wall-fog.ply` (300 Nebelpunkte) | 300 | 0 | **300** (auch Stufe 1) | 0 |
+| `room-floaters.ply` (135k: Raum, Lampe am Kabel, Pflanze, Geländer, Tisch; Punkte/Klumpen/Nebel/Dunst) | 1659 | 1 | **1579 (95,2 %)**; Stufe 1: 86,6 % | **0** (auch Kabel, Lampe, Äste, Geländer) |
+| `dist/bus-injected.ply` (Bus 2 Mio. + 7133 eingesetzte Floater) | 7133 | 398 (5,6 %), dazu 39.682 andere | **6498 (91,1 %)**; Stufe 5: 97 % | 6629 andere (0,33 %)¹ |
+
+¹ Der echte Bus enthält selbst Floater, „andere“ ist daher eine Obergrenze für Fehlalarme.
+- **Laufzeit:**
+  - Bus 2 Mio. Splats: Node 16 s, Browser 15,5 s im Worker; die Oberfläche bleibt bedienbar.
+  - Museum je 2,7–2,9 Mio. Splats: 24–25 s.
+  - Der alte Filter brauchte auf `bus-injected` 26,8 s im Hauptthread.
+- **Echte Scans, Stufe 3:**
+  - `bus.ply`: 6.336 ausgewählt.
+  - Museum 1/2/3: 47.204 / 36.083 / 45.128 (1,3–1,7 %).
+  - Ohne den Test „innerhalb der Szene“ waren es beim Museum 80.471: Dabei wurden die grob erfassten fernen Hallenwände mit ausgewählt.
+- **Vorher/Nachher im Bild** (`test-data/out/floaters_*.jpg`):
+  - Bus mit eingesetzten Floatern: neue Auswahl gelöscht → Fetzen vor dem Bus und an der Decke weg, Bus und Halle unversehrt.
+  - Alte Auswahl gelöscht → genau diese Fetzen bleiben. Der alte Filter markiert stattdessen Splats über die ganze Buskarosserie und den Boden.
+  - Museum: Aus der Besucherperspektive keine Löcher nach dem Löschen.
+- **Per Klick geprüft:**
+  - Ablauf: „Floater finden“ → Liste → Gruppe abwählen (300 → 245) → hinfliegen → Strenge 5 → „Auswahl löschen“ (Wand vollständig, nur die abgewählte Gruppe bleibt) → Strg+Z stellt alles wieder her.
+  - Claude-Prüfung im Museum (Flugzeughalle mit an der Decke hängenden Flugzeugen): 3 hängende Flugzeuge als „Objekt“ abgelehnt (46.698 → 42.858), 1 „unsicher (Tragfläche)“, Nebel/Schlieren als Floater bestätigt (`test-data/out/floaters_museum_claude_check.jpg`).
+  - Vor den freien Ansichten steckte die Kamera oft in anderen Splats und Claude erkannte nur 1 von 4 Flugzeugen.
+
+**Testmaterial:**
+- `test-data/make-floater-tests.py` erzeugt den Raum (`room-floaters.ply`) und mit Pfad zu einem Scan `<scan>-injected.ply` mit Wahrheit.
+- `room-lamp.ply` ist der Raum ohne Lampenkabel: Die Lampe schwebt frei und wird auf Stufe 3 gemeldet.
+- `scripts/test-floaters.mjs` mit `--paint <dir>` (eingefärbte und bereinigte Kopie zum Ansehen im Editor), `--debug-label <name>` (warum Floater eines Labels fehlen) und `--json`.
+
+**Grenzen:**
+- **Dunst direkt vor Wänden** (15–30 cm) wird nicht gefunden: Er hängt über die Verbindungsregel an der Wand. Die Größenschwelle für durchscheinende Splats zu senken, fand im Raum 39/80, wählte am Bus aber 31.000 Splats zusätzlich aus; deshalb verworfen.
+- **Echte Objekte ohne sichtbare Verbindung** (Lampe an nicht erfasstem Kabel, an der Decke hängende Flugzeuge) gelten als schwebend. Aussortieren müssen sie die Claude-Prüfung oder der Nutzer. Eine formlose synthetische „Lampe“ (gelbe Kugel) hielt Claude für einen Floater.
+- Der Test „innerhalb der Szene“ setzt voraus, dass das Szenenzentrum im erfassten Raum liegt (Raum- oder Objekt-Scan). Nebel vor einer ebenfalls nur grob erfassten Wand bleibt deshalb stehen.
+- Bei echten Scans gibt es keine Wahrheit; die Zahlen dort sind Auswahlmengen, geprüft per Vorher/Nachher-Bild.
+- Texte nur en/de, die übrigen Sprachen fallen auf Englisch zurück.
+- `rollup.config.mjs`: `src/analysis/floaters.ts` steht in der `include`-Liste des Worker-Builds. Ohne den Eintrag kann der Worker den Kern nicht übersetzen.
+
+## Scan-Komposition, Phase 1: Laden und Ausrichten an Übergangszonen (21.11.2026)
+
+Neues Werkzeug „Scan-Komposition“ (rechte Leiste, Symbol mit zwei überlappenden Rahmen) für 2–4 Scans eines Orts mit Drift, z. B. PortalCam-Durchgänge. Ein Schritt-für-Schritt-Assistent, damit nichts eine Black Box ist. Phase 1 enthält die Schritte 1 „Laden“ und 2 „Ausrichten“. Die Schritte 3–6 (Analyse, Vorschläge, Lücken, Naht & Ergebnis) sind sichtbar und als spätere Phase markiert.
+
+Dateien:
+- Kern: `src/compose/compose-core.ts` (reine Float32Array-Mathematik, im Analyse-Worker als Jobs `compose-overlap` und `compose-align`, Eintrag in der `include`-Liste des Worker-Builds in `rollup.config.mjs`).
+- Assistent: `src/compose/compose-tool.ts` (Werkzeug `compose`, Panel, Zonen-Marker, Farben).
+- Gemeinsame Korrektur-Ops: `src/align/align-ops.ts` (aus dem Ausrichten-Werkzeug herausgelöst, beide nutzen sie).
+- Farbe pro Scan: Hook `compose.tint` in `src/projected-splat-renderer.ts`, über denselben Weg wie die Vorschau des Farb-Panels (nur Anzeige, die Daten bleiben unberührt).
+- Styles `ui/scss/compose-panel.scss`, Icon `ui/svg/compose.svg`, Hilfe-Thema `compose`, Locales en/de. Die Ausrichten-Hilfe ist dabei auf Auto-Ausrichten und „Max. Versatz“ aktualisiert worden.
+- Test: `scripts/test-composition.mjs`.
+
+**Schritt 1 „Laden“:**
+- Liste aller Layer mit Haken (2–4 einbeziehen), Farbe (magenta, cyan, grün, gelb), Splat-Anzahl, Referenz-Wahl. „Scans hinzufügen …“ öffnet den Import.
+- Die Überschneidung wird automatisch gemessen: gemeinsames Voxelraster (1/120 der Gesamtgröße), Anteil pro Paar.
+- Referenz-Vorschlag: der Scan mit den meisten Gemeinsamkeiten (bei Stücken in einer Reihe das mittlere). Der Vorschlag bleibt, auch wenn die Scans später auseinanderliegen; erst eine andere Auswahl der Scans fragt neu.
+- Überschneiden sich die Scans kaum, sagt der Assistent, dass die Lage neu gesucht wird.
+
+**Schritt 2 „Ausrichten“** (ein Rückgängig-Schritt für den ganzen Lauf):
+- Reihenfolge: Jeder Scan wird an die schon platzierten angefügt (an den mit der größten Überschneidung, Referenz gegen die Vereinigung aller platzierten). Ein Scan ohne Kontakt zur Referenz richtet sich so an seinem Nachbarn aus.
+- Ausgangslage „Automatisch“: Überschneiden sich ≥ 10 % der Scan-Oberfläche schon, wird nur verfeinert (ICP über die Überschneidung). Sonst wird die Lage neu gesucht (Auto-Ausrichten aus Form und Farbe, jeder Kandidat poliert). Wählbar: „Liegt schon grob richtig“ / „Beliebig (neu suchen)“.
+- Dann ICP nur im **Kern der größten Übergangszone**: dem mittleren Teil quer zur Naht, also dort, wo die Naht hinkommt (Richtung aus den Schwerpunkten der beiden Scans neben der Zone). Übernommen wird das nur, wenn die Zone danach messbar besser sitzt und die Korrektur klein bleibt (≤ 1,5 Voxel, ≤ 3°).
+- **Versatz pro Zone:** Je Block (3×3×3 Zonen-Voxel) wird die Verschiebung auf die andere Oberfläche geschätzt (Punkt-zu-Ebene, nur Translation, gedämpft, schlechteste 30 % verworfen). Blöcke, in denen weniger als 60 % der Punkte die andere Fläche finden, liegen am Rand eines Scans und zählen nicht. Angezeigt werden der Median sowie 10.–90. Perzentil als „lokal a–b“.
+- **Ehrliche Bewertung:** Eine Lage gilt als sicher, wenn die größte Zone ≥ 20 Voxel hat und ihr Versatz ≤ 0,06 Voxel ist (≈ 3 cm in einer 60-m-Halle). Neu gefundene Lagen stehen immer orange als „bitte prüfen“ da. Findet die Neusuche nichts Sicheres, bleibt der Scan, wo er war, und steht rot mit „bitte mit Ankerpunkten korrigieren“. Er wird nicht an eine ähnlich aussehende falsche Stelle verschoben.
+- **Panel:** Pro Scan „an X angefügt · lag schon grob richtig / Lage neu gefunden / keine sichere Lage · Versatz an der Naht 4 mm“. Darunter bis zu 3 Zonen mit Anteil und Versatz (Rand grün < 1 cm, orange < 3 cm, rot darüber; ohne Maßstab relativ zum Voxel). Dazu ⌖ (hinfliegen) und „Hier ausrichten“ (richtet den Scan an dieser Zone aus, eigener Undo-Schritt). Weiter: „Mit Ankerpunkten korrigieren“ (öffnet das Ausrichten-Werkzeug mit Scan und Partner; beim Schließen geht es zurück zum Assistenten) und eine Zusammenfassung „größter Versatz an einer Naht …, n Scan(s) bitte prüfen“.
+- **Ansicht:** „Scans einfärben“ (Graustufe des Scans in seiner Farbe), „Zonen“ (Marker mit Versatz im Bild; Hover über eine Zone zeigt ihren Umriss gestrichelt), „Einzeln“ (schaltet reihum einen Scan nach dem anderen sichtbar, danach wieder alle).
+- Werden Scans danach bewegt (z. B. Rückgängig), gelten die Zonen als veraltet; ein Hinweis bittet um erneutes Ausrichten.
+- API: `compose.view`, `compose.align`, `compose.alignZone(splat, i)`, `compose.measure`, Events `compose.setStep|include|setReference|focusZone|nextSolo|anchors`.
+
+### Scan-Komposition: echte Scans (21.11.2026, Nachmittag)
+
+**L3-Museum** (`D:\daten\daten\museum_scan\align`, 3 Scans, ausgeliefert schon in einem Rahmen). Gemessen von einem Analyse-Agenten mit dem Composition-Kern, Skripte unter `<scratchpad>/drift/`:
+- Scan 1 und 3 sind **dieselbe Aufnahme, zweimal verarbeitet**, keine zwei Durchgänge (nach einer Ähnlichkeitstransformation liegen sie auf Rauschniveau).
+- Die ausgelieferten Lagen haben **Maßstabsfehler**: 1↔2 0,15 %, 1↔3 0,5 % mit 0,42°, 2↔3 0,6 % mit 0,46°. Rein starr ausgerichtet wächst der Versatz deshalb zu beiden Hallenenden. Mit „Skalierung mitrechnen“ (jetzt Standard im Assistenten) findet die Ausrichtung 1←2 genau diesen Fehler (Faktor 0,9986): gemeinsamer Versatz 9 → 2 mm, lokal 13–39 → 6–15 mm. Bei PortalCam bleibt der Faktor bei 1,0000.
+- Echte Drift zwischen zwei L3-Durchgängen nach bester Ähnlichkeit: etwa 1 cm pro 10 m, Krümmung 0,01–0,016° pro 10 m. Die Test-Drift (0,1–0,5°) ist 5–30× stärker als bei der L3; `--drift` stellt sie ein.
+- Recherche (Herstellerangaben): L3 relativ 5 mm @1σ nachbearbeitet, 1 cm in Echtzeit. PortalCam: keine Genauigkeitsangabe (XGRIDS: „keine Messgenauigkeit“), hat aber LiDAR (30 m, 180°×180°). Die Schätzung liegt beim 2–4-Fachen der L3, auf offenen Wegen deutlich mehr.
+
+**PortalCam „Steinbeis“** (zwei Durchgänge desselben Gebäudes, 3DGS-Ergebnis als PLY, 4,0 und 1,45 Mio. Splats, metrisch, z oben):
+- Die beiden Durchgänge liegen beim Ausliefern **um ~94° gegeneinander gedreht** und 2,9 m verschoben (jeder Durchgang hat seine eigene Startrichtung). Trotzdem decken sich an dieser Lage 19–26 % der Oberfläche: Boden und Decke sehen bei jeder Drehung gleich aus.
+- Die erste Fassung hielt das für „liegt schon grob richtig“, verfeinerte nur und landete falsch (4,6°). Die globale Suche fand die richtige Lage 5 von 5 Mal (6–9 mm von der an den Wänden bestätigten Lage), wurde aber von der zu strengen Schwelle verworfen. Reale PortalCam-Scans weichen auch richtig liegend um 4–6 cm voneinander ab.
+- **Umbau der Entscheidung** (`composeAlign`, Endstand nach mehreren Regressionsrunden):
+  - „Automatisch“ verfeinert die Startlage per ICP (übernommen nur, wenn es die Zone verbessert). Gesucht wird zusätzlich global, außer die Lage ist eindeutig richtig: ≥ 15 % Überlappung, gemeinsamer Versatz ≤ 0,05 Voxel, Oberflächen ≤ 0,12 Voxel.
+  - Eine gefundene Lage ersetzt die nahe Lage nur, wenn ihre **Oberflächen deutlich besser übereinstimmen** (≤ 0,7×). Ein **weiter Sprung** ist nur erlaubt, wenn die nahe Lage *messbar* falsch ist (fast keine Überlappung oder Oberflächen > 0,2 Voxel auseinander); sonst nur Verfeinerungen in der Nähe (≤ 2 Voxel, ≤ 5°). Grund: In der Museumshalle passten Doppelgänger-Stellen 16 m weiter genauso gut. Mehr Überlappung allein (erste Fassung) ließ sie gewinnen.
+  - Kandidaten der Suche brauchen ≥ 8 gemessene Blöcke (ein einzelner Block zeigt „0 mm Oberflächenabweichung“); die nahe Lage wird mit dem bewertet, was sie hat.
+  - „Passt“ (nur Beschriftung): Versatz ≤ 0,1 Voxel, Oberflächen ≤ 0,2 Voxel. Hält nichts, bleibt der Scan stehen (rot) oder behält die nahe ICP-Lage, wenn die klar besser ist als der Start.
+  - Weitere plausible Stellen der Suche werden als `alternatives` mitgegeben; im Panel „Andere Lösung (k/n)“ wechselt dorthin und verfeinert (ein Undo-Schritt). In den synthetischen Bus- und Museumsfällen war die richtige Stelle allerdings nie darunter; der Knopf hilft also nur, wenn die Suche sie überhaupt findet.
+- **Endstand der Tests** (`--scale`, wie im Assistenten):
+
+  | Satz | Ergebnis |
+  |---|---|
+  | Steinbeis (echt, 94° gedreht) | richtig, 6 mm von der Wand-Lage, ~75–150 s |
+  | Bus, grob richtig (8) | 8/8, Naht Median 4,4 mm, schlimmste 11,5 mm |
+  | Museum, grob richtig (12) | 7/12 voll, Naht Median 5,7 mm. Rest: 3 harte Endstücke bleiben rot stehen (27–32 % Überlappung + 2° + 30 cm), 1× 2 cm, 1× Sprung 17 m (divergierter ICP, orange) |
+  | Museum „beliebig“ (10 Stücke) | 6 rot stehen gelassen, 4 falsch platziert und orange |
+  | Bus „beliebig“ (10 Stücke) | alle 9,3 m daneben (eine Wiederholung der Hallenstruktur), orange |
+
+  Grenze: Liegen Scans in verschiedenen Rahmen *und* wiederholt sich der Raum, kann die Suche eine Doppelgänger-Stelle nicht von der richtigen unterscheiden. Dann helfen Farben/„Einzeln“ zum Prüfen und Ankerpunkte zum Korrigieren.
+- **Versatz-Messung neu:** Gemessen wird die gemeinsame Verschiebung der Blöcke (Median der Verschiebungsvektoren), getrennt von der Oberflächenabweichung (Länge um die gemeinsame Verschiebung). Zwei Rekonstruktionen setzen ihre Splats verschieden; das zeigte sich vorher als Schein-Versatz von ~3 cm. Blöcke werden gleichmäßig über die Zone gezogen (bis 400), statt Punkte global zu kappen (vorher zählten bei großen Zonen nur 6–17 Blöcke). Lokal = gemeinsame Verschiebung je Zelle aus 3×3×3 Blöcken, 10.–90. Perzentil.
+- **Ergebnis Steinbeis** (Node und Browser): „Lage neu gefunden – bitte prüfen“, −94,2° / 2,88 m, **7 mm** von der Wand-Lage, 66–78 s. In der Übergangszone (78–81 % der Überlappung): gemeinsamer Versatz 1,5–2 mm, lokal 2–14 mm (Browser) bzw. 4–54 mm (Node, andere Stichprobe), Oberflächen 15–19 mm.
+- Weitere Fixes: „Hier ausrichten“ nimmt jetzt wirklich die angeklickte Zone (vorher gewann die große Zone, deren Box die anderen enthält). Startet die Suche nicht erst bei < 10 % Überlappung, ist ein reiner Boden-/Decken-Treffer kein Freifahrtschein mehr.
+- Testdaten: Die Scans wurden lokal entpackt (Scratchpad) und für den Browsertest kurz nach `dist/` kopiert (git-ignoriert); die Kopien sind danach gelöscht.
+
+## Scan-Komposition, Phase 2: Analyse und Vorschläge (22.11.2026)
+
+Schritte 3 „Analyse“ und 4 „Vorschläge“ des Assistenten. Ziel: Wo ein Scan feiner ist als ein anderer, werden die gröberen Splats des anderen ausgeblendet (nur Sperre/Ausblenden, nichts wird gelöscht; ein Undo-Schritt pro Übernahme).
+
+**Dateien:**
+- Kern `src/compose/compose-detail.ts` (im Analyse-Worker): autoCell → scanCells → composeDetail → paintInputs → composePaint → applyPaint. Alle Schwellen stehen in `DETAIL` mit den Messungen im Kommentar.
+- `compose-suggest.ts` (Zustand, Übernehmen/Zurücknehmen, Vorschau), `compose-suggest-ui.ts` (Karten, Liste „Nicht vorgeschlagen“, Sonde), `compose-dom.ts`, `compose-tool.ts`, `ui/scss/compose-panel.scss`, Locales en/de (gleiche Schlüsselreihenfolge).
+- Anzeige-Hook in `src/projected-splat-renderer.ts` (Karte, Vorher/Nachher, Markieren).
+- Test: `scripts/test-compose-detail.mjs` (synthetisch aus dem Bus mit bekannter Wahrheit, `--pair` für echte Paare, `--lod`, `--unit`, `--changed-truth` für zwei zeilengleiche Dateien, `--core` für Vergleiche mit alten Ständen).
+
+**Ablauf:**
+- Gemeinsames Zellraster (auto, z. B. 0,15 m in Steinbeis). Pro Zelle und Scan-Paar: Splat-Größe (Median), Dichte, Farbdetail, Abdeckung. Eine Zelle gehört dem feineren Scan „deutlich“ (Vorsprung ≥ 1,6×) oder „etwas“; bestätigt wird pro Zelle (schlägt fehl, wenn nichts zu bestätigen ist).
+- Zusammenhängende Gewinner-Zellen werden zu Regionen; eine Region braucht genug Zellen, deutliche Zellen und Zeilen. Prüfung über die ganze Region (loserCheck): Ist der Verlierer insgesamt kaum gröber oder der Gewinner zu dünn, wird nichts vorgeschlagen.
+- Ausgeblendet wird nur, was der Gewinner nachweislich abdeckt (Ebenen-Toleranz c/5). Liegen die Scans auseinander (≥ c/5), heißt es „erst ausrichten“. **Halte-Regel:** Wo der Verlierer im Umkreis kaum gröber ist als das, was der Gewinner dort hat, bleibt er sichtbar („bleiben, wo A kaum feiner ist“), außer er ist dort selbst klar gröber.
+- Jede Karte nennt: ausgeblendet · bleiben, wo der Gewinner in der Nähe nichts hat · bleiben, wo er kaum feiner ist. Dazu ⌖ (Kamera in den Raum, auf die Region schauend), Vorher/Nachher, Auswählen, Übernehmen, Ablehnen, „Alle anhaken (n von m)“.
+- „Nicht vorgeschlagen“ zeigt die 8 größten Gründe: zu klein, zu wenige deutlich feinere Zellen, nur zu x % ab (gäbe Löcher), etwa gleich fein, dünner, weniger Farbdetail (mit „Trotzdem übernehmen“), auseinander (mit „Hier ausrichten“).
+- Doppelklick (Schritt 3) öffnet die Sonde: Werte pro Scan in der Zelle und ein Urteil, das zur Karte bzw. zur Liste passt.
+- Die Qualitäts-Heatmap und die Kompositionskarte erscheinen nicht in Renders (nur mit Debug-Overlays).
+
+**Gemessen:**
+- Steinbeis (PortalCam, 4,0 + 1,45 Mio., Browser): Ausrichten 99 s, Analyse 11,8–12,7 s (Ziel ≤ 15 s), 99 Vorschläge. Nachher auf den vier obersten Karten feiner, Plakate und Aufdrucke werden lesbar, keine Löcher. Alle 99 übernehmen: 231.521 Splats, 355 ms, ein Undo-Schritt. Schließen des Werkzeugs gibt 150 MB frei.
+- ⌖-Ansichten: Steinbeis 4/4 im Raum unter der Decke, mit und ohne lokalen Rahmen (vorher 1/4 und 2/4, Kameras teils über dem Dach). Kameras, die durch fremde Flächen schauen: 0 auf allen echten Paaren.
+- Bus synthetisch: falsch ausgeblendet 3,29 → 1,61 %, neutral 15,1 → 7,4 % der ausgeblendeten Zeilen; Überlappungs-Recall 76,9 %.
+- Museum 1↔3 (dieselbe Aufnahme zweimal): 1 Vorschlag, 0,18 % der Zeilen. Zwillinge (gleich feine Kopien): 0 Vorschläge in allen Fällen.
+
+**Grenzen und offen:**
+- „Sicher“ (Konfidenz clear) erreicht fast keine Karte: Steinbeis 0/103. Jede Regel, die mehr freigibt, gibt auch Zwillings- oder Nachbar-Fehler frei. Die zwei freigegebenen Karten (LOD-Hauptkarte, Bus-Unschärfe-Kugel) haben 15,6 % bzw. 9 % neutrale Randzeilen.
+- Unschärfe-Kugel im Bus: 87 % ausgeblendet (Ziel 90 %), außerhalb 0,095 % (Ziel ≤ 0,1 %). Der Rest liegt 3–6 cm neben der Gewinner-Fläche, jenseits des Abdeckungsnachweises; den aufzuweichen hieße Ungedecktes auszublenden.
+- Die Halte-Regel kostet Recall bei groben Splats direkt neben feinen: 38,8 % statt 40,1 %.
+- Sonde im feinen Raster: Ein Doppelklick auf eine sehr unscharfe Fläche kann „Hier hat kein Scan Fläche“ zeigen (6/30 im Bus, 0/36 in Steinbeis), weil die erste echte Zelle 2 Zellen hinter dem Treffer liegt.
+- Doppelklick in Schritt 4 bewegt die Kamera, die Sonde zeigt sich aber nur in Schritt 3.
+- Kamera der ⌖-Ansicht behält +y oben; bei z-oben-Scans wirken Ansichten um 90° gedreht (außerhalb des Compose-Codes).
+- Fokus-Bälle auf erzwungenen Rastern 13/30, Museum 1↔2 „auseinander“ nicht an den Hallenenden.
+- Testdaten: Steinbeis lag lokal im Scratchpad und für Browsertests kurz in `dist/` (git-ignoriert); die Kopien sind gelöscht.
+
+### Unschärfe-Schleier und Bedienung in Schritt 4 (22.11.2026, Abend)
+
+Anlass: Nürnberg-Brücke (zwei Scans, einer in Brückenrichtung kaum abgedeckt und dort nur grobe Blobs). Die Blobs schweben 5–40 cm vor der scharfen Fläche des anderen Scans, die Abdeckungs-Regel ließ sie deshalb stehen („bleiben, wo … nichts in der Nähe hat“), und Zellen nur mit dem groben Scan gehörten zu keiner Region.
+
+**Schleier-Regel (`compose-detail.ts`, DETAIL.haze; `haze: 0` stellt das alte Ergebnis exakt her):**
+- Nur pro Karte und Verlierer, wenn dieser über die Region deutlich gröber ist (≥ 1 Oktave, Region ≥ 50 Zellen, nicht erzwungen).
+- Geprüft werden grobe Verlierer-Splats aus der Region (vom Abdeckungsnachweis nicht gedeckt) und aus einer Schleier-Zone 2–10 Zellen um die Region (keiner anderen Region, keine Verlierer-eigenen Zellen).
+- Schleier ist ein Splat, wenn der Gewinner in seiner Reichweite (3 σ) Fläche hat, dort ≥ 1 Oktave feiner ist, die Fläche ihn umgibt (nicht nur seitlich), und er auf ihr liegt (Kopie mit Gewinner im Zentrum) oder vor ihr schwebt (mit Gegenseite). Löcher im Gewinner werden nicht gefüllt.
+- Grobe Stufe: ist der Verlierer dort ≥ 2 Oktaven (4×) gröber, gelten lockerere Rand- und Schwebe-Grenzen.
+- Schleier-Splats bekommen den Malwert der Karte (ein Undo-Schritt, Vorher/Nachher/Auswählen inklusive). Karte: „Blendet n Splats von A aus (davon m unscharfe Schleier-Splats)“. Sonde und „Nicht vorgeschlagen“ nennen Karten, die dort trotzdem ausblenden.
+- Der Floater-Finder bleibt unverändert: Im Scan allein sind die Blobs dessen eigene, verbundene Fläche; erst der Vergleich zeigt die feinere Fassung.
+
+**Bedienung:**
+- Klick auf eine Karte (Titel/Text) fliegt die Kamera zur Region; Vorher/Nachher tun das auch, wenn die Region nicht im Bild ist. Die Karte wird markiert.
+- Vorher/Nachher blenden die Auswahl-Überlagerung (Punkte, Tönung) aus; Häkchen „Auswahl ausblenden“ neben Vorher/Nachher. Die Auswahl selbst bleibt.
+- Gleichnamige Scans heißen „name (1)“, „name (2)“.
+
+**Gemessen:**
+- Nürnberg, alles übernehmen: Anteil von A in 6 Brücken-Ansichten 43,9 → 22,6 %; sichtbares Gewicht von A in der Brücken-Box 77,7 → 50,9 %. Brüstung und Deck sehen fast wie B allein aus. Analyse 9,7 → ~16 s (Browser 18,6 s), 29 Karten.
+- Bus: falsch 1,61 → 1,59 %, neutral 7,43 → 7,22 %; Schleier-Zeilen selbst 0,9 % falsch. Bus-Unschärfe 87,1 → 89,6 %, außerhalb 0,095 %. LOD 83,0/72,0 %, Zwillinge 0 Vorschläge, Swap identisch, Steinbeis 12,6 s (Ziel ≤ 13 s).
+
+**Offen:** Riesen-Blobs über dem Wasser und unter dem Deck bleiben, weil B dort gar nichts hat (Ausblenden ergäbe Leere). Einzelne Schlieren an Deck-/Brüstungskanten. Eine Aktion „ganze unscharfe Ansicht von A verwerfen“ gibt es nicht.

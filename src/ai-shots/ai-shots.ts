@@ -1,9 +1,12 @@
+import { Container } from '@playcanvas/pcui';
 import { createChunkDataPool } from '@playcanvas/splat-transform';
 import { BoundingBox, Mat4, Vec3 } from 'playcanvas';
 
 import { aiAvailable, ClaudeError, planShots, rankShots } from './claude-client';
 import { buildCoverageField } from './coverage';
+import { registerShotDraft, type DraftCore } from './shot-draft';
 import { generateShots } from './shot-generator';
+import { ShotPreview } from './shot-preview';
 import type { AnchorPose, CoverageField, GeneratedKey, ShotObject, ShotParams, ShotProposal, ShotStyle, ShotTemplate } from './shot-types';
 import { BoxShape } from '../box-shape';
 import { ElementType } from '../element';
@@ -187,7 +190,9 @@ const collectPoints = async (splats: Splat[], signal: AbortSignal) => {
 
 const toVec3 = (v: { x: number, y: number, z: number }) => new Vec3(v.x, v.y, v.z);
 
-const registerAiShotsEvents = (events: Events, scene: Scene) => {
+type PointCloud = { points: Float32Array, weights: Float32Array, bounds: { min: Vec3, max: Vec3 } };
+
+const registerAiShotsEvents = (events: Events, scene: Scene, canvasContainer?: Container) => {
     let anchors: AnchorPose[] = [];
     // the object taken over with captureObject; generate captures anew when
     // there is none
@@ -198,8 +203,15 @@ const registerAiShotsEvents = (events: Events, scene: Scene) => {
     // cancelled); done: built, kept for later runs whatever happens to it
     type CoverageEntry = { promise: Promise<CoverageField | null>, signal: AbortSignal, done: boolean };
     let coverage: CoverageEntry | null = null;
+    // the splat centres behind it, kept for the walk field (shot-draft.ts)
+    type PointsEntry = { promise: Promise<PointCloud | null>, signal: AbortSignal, done: boolean };
+    let pointsEntry: PointsEntry | null = null;
+    let coverageField: CoverageField | null = null;
     const invalidateCoverage = () => {
         coverage = null;
+        pointsEntry = null;
+        coverageField = null;
+        events.fire('aiShots.sceneDataChanged');
     };
     ['splat.stateChanged', 'splat.positionsChanged', 'splat.moved', 'splat.visibility'].forEach((name) => {
         events.on(name, invalidateCoverage);
@@ -313,20 +325,44 @@ const registerAiShotsEvents = (events: Events, scene: Scene) => {
     // builds it stops the build (it can take seconds on large scenes and
     // would only burn time in the background); the next run starts a fresh
     // one. A failed or stopped build is not kept
-    const getCoverage = (signal: AbortSignal) => {
-        if (coverage && (coverage.done || !coverage.signal.aborted)) return coverage.promise;
+    // the visible splat centres, collected once (in slices) and shared by
+    // the coverage field and the walk field
+    const getPoints = (signal: AbortSignal) => {
+        if (pointsEntry && (pointsEntry.done || !pointsEntry.signal.aborted)) return pointsEntry.promise;
         const splats = visibleSplats(scene);
         const bound = unionBound(splats.map(s => s.worldBound));
-        const build = async (): Promise<CoverageField | null> => {
+        const build = async (): Promise<PointCloud | null> => {
             if (!bound) return null;
             const { points, weights } = await collectPoints(splats, signal);
             if (signal.aborted) throw new Cancelled();
             if (points.length === 0) return null;
-            return buildCoverageField(points, weights, { min: bound.getMin().clone(), max: bound.getMax().clone() });
+            return { points, weights, bounds: { min: bound.getMin().clone(), max: bound.getMax().clone() } };
+        };
+        const entry: PointsEntry = { promise: null, signal, done: false };
+        entry.promise = build().then((cloud) => {
+            entry.done = true;
+            return cloud;
+        }, (error): null => {
+            if (!(error instanceof Cancelled)) console.warn('shot suggestions: collecting points failed', error);
+            if (pointsEntry === entry) pointsEntry = null;
+            return null;
+        });
+        pointsEntry = entry;
+        return entry.promise;
+    };
+
+    const getCoverage = (signal: AbortSignal) => {
+        if (coverage && (coverage.done || !coverage.signal.aborted)) return coverage.promise;
+        const build = async (): Promise<CoverageField | null> => {
+            const cloud = await getPoints(signal);
+            if (signal.aborted) throw new Cancelled();
+            if (!cloud) return null;
+            return buildCoverageField(cloud.points, cloud.weights, cloud.bounds);
         };
         const entry: CoverageEntry = { promise: null, signal, done: false };
         entry.promise = build().then((field) => {
             entry.done = true;
+            if (coverage === entry) coverageField = field;
             return field;
         }, (error): null => {
             if (!(error instanceof Cancelled)) console.warn('shot suggestions: coverage failed', error);
@@ -559,7 +595,9 @@ const registerAiShotsEvents = (events: Events, scene: Scene) => {
                 base: {
                     position: first.position.clone(),
                     target: first.target.clone(),
-                    ...(first.fov !== undefined ? { fov: first.fov } : {})
+                    ...(first.fov !== undefined ? { fov: first.fov } : {}),
+                    // walks: gait bob and handheld shake (src/camera-modifier.ts)
+                    ...(p.modifier ? { bob: p.modifier.bob, stepRate: p.modifier.stepRate, shake: p.modifier.shake, shakeRate: p.modifier.shakeRate } : {})
                 }
             };
         });
@@ -580,6 +618,39 @@ const registerAiShotsEvents = (events: Events, scene: Scene) => {
         if (compressed && ids.length > 0) events.fire('aiShots.warning', 'sm.aishots.warn.compressed');
         return ids;
     });
+
+    // live draft in the viewport (shot-draft.ts, shot-preview.ts)
+
+    const core: DraftCore = {
+        object: () => captured ?? captureObject(),
+        anchors: () => anchors.slice(),
+        coverage: (signal: AbortSignal) => getCoverage(signal),
+        coverageNow: () => coverageField,
+        points: (signal: AbortSignal) => getPoints(signal),
+        stills: async (proposal: ShotProposal, signal: AbortSignal) => {
+            const fov = events.invoke('camera.fov') ?? 60;
+            const frames: string[] = [];
+            let thumbnail: string | undefined;
+            for (const key of sampleKeys(proposal)) {
+                const canvas = await renderKey(key, fov, RANK_WIDTH, RANK_HEIGHT, signal);
+                if (signal.aborted) throw new Cancelled();
+                if (!canvas) continue;
+                thumbnail ??= thumbnailOf(canvas);
+                frames.push(jpegBase64(canvas));
+            }
+            return { frames, thumbnail };
+        },
+        rank: (proposal: ShotProposal, frames: string[], wish: string | undefined, signal: AbortSignal) => rankShots({
+            wish,
+            language: i18n.locale,
+            candidates: [{ id: proposal.id, title: displayTitle(proposal), jpegBase64: frames }]
+        }, signal),
+        errorCode,
+        isCancel: (error: unknown) => error instanceof Cancelled
+    };
+    registerShotDraft(events, scene, core);
+    const preview = canvasContainer ? new ShotPreview(events, scene, canvasContainer) : null;
+    events.function('aiShots.preview', () => preview);
 };
 
 export { registerAiShotsEvents, type AiShotsStatus, type GenerateOptions, type ApplyOptions };

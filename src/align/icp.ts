@@ -21,9 +21,11 @@ type IcpOptions = {
     // finest voxel size in world units (default: overlap diagonal / 500)
     voxel?: number,
     // largest misplacement expected after the coarse alignment, in world
-    // units; bounds the correspondence search (default: overlap diagonal / 50)
+    // units: the search starts at this distance and narrows level by level
+    // (default: overlap diagonal / 20; at least 3 fine voxels)
     maxError?: number,
-    // number of coarse-to-fine levels, each doubling the voxel size (default 4)
+    // number of coarse-to-fine levels, each doubling the voxel size (default:
+    // from maxError, so that the coarsest voxel is about a third of it)
     levels?: number,
     // iterations per level (default 30)
     iterations?: number,
@@ -84,6 +86,26 @@ const boundsOf = (p: Float32Array): Box => {
         max[k] = s[Math.min(s.length - 1, Math.floor(s.length * 0.99))];
     }
     return { min, max };
+};
+
+// overlap of two clouds: the intersection of their robust bounds, or null
+// when they do not overlap (or one is empty)
+const overlapOf = (moving: Float32Array, reference: Float32Array) => {
+    if (moving.length < 3 || reference.length < 3) return null;
+    const bm = boundsOf(moving);
+    const br = boundsOf(reference);
+    const lo = [0, 1, 2].map(k => Math.max(bm.min[k], br.min[k]));
+    const hi = [0, 1, 2].map(k => Math.min(bm.max[k], br.max[k]));
+    if (lo.some((v, k) => v > hi[k])) return null;
+    return { lo, hi, diag: Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) };
+};
+
+// the search radius refineAlignment picks when none is given: 1/20 of the
+// overlap diagonal (null: no overlap). The align panel shows it upfront.
+const AUTO_MAX_ERROR = 1 / 20;
+const autoMaxError = (moving: Float32Array, reference: Float32Array) => {
+    const overlap = overlapOf(moving, reference);
+    return overlap ? overlap.diag * AUTO_MAX_ERROR : null;
 };
 
 const filterBox = (p: Float32Array, box: Box) => {
@@ -354,20 +376,19 @@ const measure = (src: Float32Array, grid: Grid, normals: Float32Array, radius: n
  */
 const refineAlignment = (moving: Float32Array, reference: Float32Array, options: IcpOptions = {}): IcpResult => {
     const useScale = options.scale ?? false;
-    const levels = Math.max(1, options.levels ?? 4);
     const iterations = options.iterations ?? 30;
     const trim = options.trim ?? 0.25;
     const maxPoints = options.maxPoints ?? 80000;
 
     // overlap region: bounding box intersection plus margin
-    const bm = boundsOf(moving);
-    const br = boundsOf(reference);
-    const lo = [0, 1, 2].map(k => Math.max(bm.min[k], br.min[k]));
-    const hi = [0, 1, 2].map(k => Math.min(bm.max[k], br.max[k]));
-    if (lo.some((v, k) => v > hi[k])) {
+    if (moving.length < 90 || reference.length < 90) {
+        throw new Error('refineAlignment: too few points in the overlap');
+    }
+    const overlap = overlapOf(moving, reference);
+    if (!overlap) {
         throw new Error('refineAlignment: the layers do not overlap');
     }
-    const diag = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+    const { lo, hi, diag } = overlap;
     const margin = diag * (options.margin ?? 0.02);
     const box: Box = { min: lo.map(v => v - margin), max: hi.map(v => v + margin) };
 
@@ -378,7 +399,11 @@ const refineAlignment = (moving: Float32Array, reference: Float32Array, options:
     }
 
     const fineVoxel = options.voxel ?? diag / 500;
-    const maxError = options.maxError ?? diag / 50;
+    // the search starts at maxError and narrows level by level: the coarsest
+    // voxel is about a third of it, every finer level halves the voxel
+    // (automatic: 4 levels, as before the levels followed maxError)
+    const maxError = Math.max(options.maxError ?? diag * AUTO_MAX_ERROR, fineVoxel * 3);
+    const levels = Math.max(1, options.levels ?? 1 + Math.max(0, Math.round(Math.log2(maxError / (3 * fineVoxel)))));
 
     // per level: downsampled clouds, grid, normals. Coarsest first.
     type Level = { voxel: number, src: Float32Array, grid: Grid, normals: Float32Array, radius: number };
@@ -523,4 +548,4 @@ const refineAlignment = (moving: Float32Array, reference: Float32Array, options:
     };
 };
 
-export { refineAlignment, IcpOptions, IcpResult, IcpStats };
+export { refineAlignment, autoMaxError, IcpOptions, IcpResult, IcpStats, Grid, downsample, estimateNormals, smallestEigenvector };

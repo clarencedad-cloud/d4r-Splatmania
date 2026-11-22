@@ -3,6 +3,7 @@ import { Vec3 } from 'playcanvas';
 
 import type { CameraChannel, CameraProjection, CameraViewMode, CutTrack, ShotCamera } from '../camera-poses';
 import { Events } from '../events';
+import type { SceneScale } from '../scene-scale';
 import { CollapsibleSection } from './collapsible';
 import { helpButton } from './help';
 import { createKeyButton, KeyState } from './key-button';
@@ -442,6 +443,32 @@ class CameraList extends Container {
         const apertureInput = slider('sm.dof.aperture', 'sm.dof.aperture-tip', 0, 0.5, 3, v => events.fire('shotCameras.setValue', 'aperture', v), 'aperture');
         const maxBlurInput = slider('sm.dof.max-blur', 'sm.dof.max-blur-tip', 2, 64, 0, v => events.fire('dof.set', { maxBlur: v }));
 
+        // gait bob and handheld shake (src/camera-modifier.ts): procedural,
+        // on top of the keyed path, every value keyable. The bob height is
+        // shown in cm when the scene scale is known, else in scene units
+        const scale = (): SceneScale => (events.functions.has('sceneScale.get') ? events.invoke('sceneScale.get') : { mode: 'auto', metersPerUnit: 1, known: false, source: 'unknown' });
+        const bobFactor = () => (scale().known ? 100 * scale().metersPerUnit : 1);
+        const gaitHead = new Container({ class: ['camera-list-option', 'camera-gait-head'] });
+        const gaitLabel = new Label({ class: 'camera-list-label' });
+        i18n.bindText(gaitLabel, 'sm.gait.title');
+        i18n.bindDom(gaitLabel.dom, 'sm.gait.title-tip', 'title');
+        gaitHead.append(gaitLabel);
+        propBody.append(gaitHead);
+        const bobInput = slider('sm.gait.bob', 'sm.gait.bob-tip', 0, 15, 1, v => events.fire('shotCameras.setValue', 'bob', Math.max(0, v) / bobFactor()), 'bob');
+        const bobUnit = new Label({ class: ['camera-list-label', 'camera-gait-unit'] });
+        bobInput.parent?.dom.insertBefore(bobUnit.dom, bobInput.dom.nextSibling);
+        const stepInput = slider('sm.gait.step-rate', 'sm.gait.step-rate-tip', 0.5, 3.5, 2, v => events.fire('shotCameras.setValue', 'stepRate', v), 'stepRate');
+        const shakeInput = slider('sm.gait.shake', 'sm.gait.shake-tip', 0, 3, 2, v => events.fire('shotCameras.setValue', 'shake', v), 'shake');
+        const shakeRateInput = slider('sm.gait.shake-rate', 'sm.gait.shake-rate-tip', 0.1, 4, 2, v => events.fire('shotCameras.setValue', 'shakeRate', v), 'shakeRate');
+        const syncGaitUnit = () => {
+            const known = scale().known;
+            bobUnit.text = known ? 'cm' : i18n.t('sm.scale.unit-short');
+            // in scene units the same slider covers 0..0.15
+            bobInput.max = known ? 15 : 0.15;
+            bobInput.sliderMax = known ? 15 : 0.15;
+            bobInput.precision = known ? 1 : 3;
+        };
+
         const syncProps = () => {
             const camera = events.invoke('shotCameras.selected') as ShotCamera;
             props.setInfo(camera?.name ?? '');
@@ -465,6 +492,11 @@ class CameraList extends Container {
             if (!editing(mmInput.dom)) mmInput.value = mmFromFov(fov);
             if (!editing(focusInput.dom)) focusInput.value = cameraValue('focus') as number;
             if (!editing(apertureInput.dom)) apertureInput.value = cameraValue('aperture') as number;
+            syncGaitUnit();
+            if (!editing(bobInput.dom)) bobInput.value = (cameraValue('bob') as number ?? 0) * bobFactor();
+            if (!editing(stepInput.dom)) stepInput.value = cameraValue('stepRate') as number;
+            if (!editing(shakeInput.dom)) shakeInput.value = cameraValue('shake') as number;
+            if (!editing(shakeRateInput.dom)) shakeRateInput.value = cameraValue('shakeRate') as number;
             syncing = false;
         };
         let syncQueued = false;
@@ -476,7 +508,7 @@ class CameraList extends Container {
                 syncProps();
             });
         };
-        ['shotCameras.changed', 'camera.valuesChanged', 'timeline.frame', 'track.changed', 'track.keysLoaded'].forEach(name => events.on(name, queueSync));
+        ['shotCameras.changed', 'camera.valuesChanged', 'timeline.frame', 'track.changed', 'track.keysLoaded', 'sceneScale.changed'].forEach(name => events.on(name, queueSync));
         i18n.onChange(queueSync);
         queueSync();
 

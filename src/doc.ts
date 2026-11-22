@@ -105,6 +105,7 @@ const registerDocEvents = (scene: Scene, events: Events) => {
         if (events.functions.has('docDeserialize.titles')) events.invoke('docDeserialize.titles', null);
         if (events.functions.has('docDeserialize.light')) events.invoke('docDeserialize.light', null);
         if (events.functions.has('docDeserialize.background')) events.invoke('docDeserialize.background', null);
+        if (events.functions.has('docDeserialize.sceneScale')) events.invoke('docDeserialize.sceneScale', null);
         events.fire('doc.setName', null);
         documentFileHandle = null;
         documentFs?.close();
@@ -215,6 +216,7 @@ const registerDocEvents = (scene: Scene, events: Events) => {
             if (events.functions.has('docDeserialize.titles')) events.invoke('docDeserialize.titles', document.titles);
             if (events.functions.has('docDeserialize.light')) events.invoke('docDeserialize.light', document.light);
             if (events.functions.has('docDeserialize.background')) events.invoke('docDeserialize.background', document.background);
+            if (events.functions.has('docDeserialize.sceneScale')) events.invoke('docDeserialize.sceneScale', document.sceneScale);
             events.invoke('docDeserialize.view', document.view);
             scene.camera.docDeserialize(document.camera);
 
@@ -331,6 +333,7 @@ const registerDocEvents = (scene: Scene, events: Events) => {
                 titles: events.invoke('docSerialize.titles'),
                 light: events.invoke('docSerialize.light'),
                 background: events.functions.has('docSerialize.background') ? events.invoke('docSerialize.background') : undefined,
+                sceneScale: events.functions.has('docSerialize.sceneScale') ? events.invoke('docSerialize.sceneScale') : undefined,
                 timeline: events.invoke('docSerialize.timeline'),
                 resources: groups.map((group, i) => ({
                     filename: `resource_${i}.ply`,

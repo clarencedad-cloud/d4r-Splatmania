@@ -23,6 +23,42 @@
         pointer-events: auto;
         user-select: none;
     }
+
+    // size of the fine alignment's search radius at the camera focus
+    > .align-radius-circle {
+        position: absolute;
+        box-sizing: border-box;
+        border: 2px dashed $clr-icon-hilight;
+        border-radius: 50%;
+        background-color: rgba(194, 14, 126, 0.1);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+
+        // centre
+        &::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 4px;
+            height: 4px;
+            margin: -2px 0 0 -2px;
+            border-radius: 50%;
+            background-color: $clr-icon-hilight;
+        }
+
+        > span {
+            position: absolute;
+            left: 50%;
+            bottom: 100%;
+            transform: translate(-50%, -4px);
+            padding: 1px 6px;
+            border-radius: 3px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: $clr-active;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+    }
 }
 
 #align-panel {
@@ -117,21 +153,83 @@
         background-color: $bcg-lighter;
         color: $clr-default;
 
-        &:first-child {
-            background-color: $clr-hilight;
-            color: $clr-active;
-        }
-
         &:hover {
             filter: brightness(1.15);
         }
     }
 
+    // the one-click path is the primary action
+    .align-auto-row .align-button.align-auto {
+        flex: 2;
+        background-color: $clr-hilight;
+        color: $clr-active;
+        font-weight: bold;
+    }
+
+    .align-subheading {
+        margin: 6px 0 0;
+        padding-top: 6px;
+        border-top: 1px solid $bcg-lighter;
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: $text-secondary;
+    }
+
+    .align-info.uncertain {
+        color: #ffb347;
+    }
+
+    // search radius of the fine alignment, as a length
+    .align-radius {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .align-radius-value {
+        margin: 0;
+        color: $clr-active;
+        font-weight: bold;
+        white-space: nowrap;
+    }
+
+    .align-radius-auto {
+        margin: 0 0 0 -4px;
+        color: $text-secondary;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .align-radius-slider {
+        margin: 0;
+
+        // the number would be the slider position, not the length
+        > .pcui-numeric-input {
+            display: none;
+        }
+
+        // the default bar has the panel's own colour
+        .pcui-slider-bar {
+            background-color: $bcg-lighter;
+        }
+
+        .pcui-slider-handle {
+            background-color: $clr-icon-hilight;
+        }
+
+        // automatic: the handle shows where the value sits, dimmed
+        &.auto .pcui-slider-handle {
+            opacity: 0.45;
+        }
+    }
+
     .align-radius-hint {
         margin: 0;
-        width: 30px;
-        color: $clr-icon-hilight;
+        white-space: normal;
         font-size: 11px;
+        color: $text-secondary;
     }
 
     .align-message {

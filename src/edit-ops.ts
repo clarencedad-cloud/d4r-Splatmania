@@ -169,6 +169,26 @@ class UnhideAllOp extends StateOp {
     }
 }
 
+// Hide or unhide an explicit set of instances: the scan composition's
+// accepted suggestions (src/compose). Callers pass only instances that are
+// currently unlocked (HideRangesOp) or locked (UnhideRangesOp), so undo
+// restores exactly the previous state. Several layers go into one MultiOp.
+class HideRangesOp extends StateOp {
+    name = 'composeHide';
+
+    constructor(splat: Splat, ranges: IndexRanges) {
+        super(splat, ranges, State.locked, BitOp.SET);
+    }
+}
+
+class UnhideRangesOp extends StateOp {
+    name = 'composeUnhide';
+
+    constructor(splat: Splat, ranges: IndexRanges) {
+        super(splat, ranges, State.locked, BitOp.CLEAR);
+    }
+}
+
 // Deleting removes the selected instances from the live list, order-preserving,
 // and retains their records so undo can put them back exactly where they were.
 // The recorded ranges stay meaningful for older ops because the edit history is
@@ -645,6 +665,8 @@ export {
     SelectOp,
     HideSelectionOp,
     UnhideAllOp,
+    HideRangesOp,
+    UnhideRangesOp,
     RemoveInstancesOp,
     RestoreMissingInstancesOp,
     EntityTransformOp,

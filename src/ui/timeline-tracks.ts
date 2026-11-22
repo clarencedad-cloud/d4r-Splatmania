@@ -19,8 +19,14 @@ const CAMERA_ROWS: [CameraChannel, string][] = [
     ['target', 'sm.channel.rotation'],
     ['fov', 'sm.channel.lens'],
     ['focus', 'sm.channel.focus'],
-    ['aperture', 'sm.channel.aperture']
+    ['aperture', 'sm.channel.aperture'],
+    // gait bob and handheld shake: only listed for a camera that has them
+    ['bob', 'sm.channel.bob'],
+    ['stepRate', 'sm.channel.stepRate'],
+    ['shake', 'sm.channel.shake'],
+    ['shakeRate', 'sm.channel.shakeRate']
 ];
+const MODIFIER_ROWS = new Set<CameraChannel>(['bob', 'stepRate', 'shake', 'shakeRate']);
 
 const LAYER_ROWS: [LayerChannel, string][] = [
     ['position', 'sm.channel.position'],
@@ -269,6 +275,7 @@ class TimelineTracks extends Container {
 
                 if (expanded) {
                     for (const [channel, text] of CAMERA_ROWS) {
+                        if (MODIFIER_ROWS.has(channel) && !camera.track.hasModifier) continue;
                         const button = createKeyButton(events,
                             () => events.invoke('shotCameras.channelState', channel, camera.id) as KeyState,
                             () => events.fire('shotCameras.keyChannel', channel, camera.id));

@@ -97,13 +97,14 @@ const lookPostEffects = (events: Events) => {
 };
 
 // a camera's keys for the viewer. Bezier handles (src/tools/camera-path-tool.ts)
-// shape the editor's curve, which the viewer's own spline can't reproduce:
-// such a camera goes out as one pose per frame
+// shape the editor's curve, and the gait bob / handheld shake
+// (src/camera-modifier.ts) sit on top of it - neither can the viewer's own
+// spline reproduce: such a camera goes out as one pose per frame
 const viewerPoses = (camera: ShotCamera, frames: number): Pose[] => {
-    if (!camera.track.hasHandles) return camera.track.getPoses() as Pose[];
+    if (!camera.track.hasHandles && !camera.track.hasModifier) return camera.track.getPoses() as Pose[];
     const poses: Pose[] = [];
     for (let frame = 0; frame < frames; frame++) {
-        const pose = camera.track.getPoseAt(frame);
+        const pose = camera.track.getShotPoseAt(frame);
         if (pose) poses.push({ name: `camera_${frame}`, frame, position: pose.position.clone(), target: pose.target.clone(), fov: pose.fov } as Pose);
     }
     return poses;

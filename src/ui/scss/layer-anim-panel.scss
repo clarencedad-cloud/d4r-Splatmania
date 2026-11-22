@@ -220,6 +220,95 @@
         color: $clr-icon-hilight;
         white-space: normal;
     }
+
+    .layer-anim-button.disabled {
+        pointer-events: none;
+        color: $clr-disabled;
+    }
+
+    // floater search (src/floaters): strictness name and the group list
+    .floater-level {
+        margin: 0 0 2px 80px;
+        color: $text-secondary;
+        font-size: 11px;
+    }
+
+    .floater-list {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        max-height: 220px;
+        overflow-y: auto;
+        margin: 4px 0;
+    }
+
+    .floater-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 4px;
+        border-radius: 3px;
+        background-color: $bcg-darker;
+
+        &.rejected .floater-text {
+            color: $clr-disabled;
+            text-decoration: line-through;
+        }
+    }
+
+    .floater-check {
+        flex-shrink: 0;
+        width: 16px;
+        height: 16px;
+        line-height: 16px;
+        text-align: center;
+        border-radius: 3px;
+        border: 1px solid $bcg-light;
+        color: $clr-icon-hilight;
+        cursor: pointer;
+    }
+
+    .floater-text {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: $clr-default;
+        cursor: pointer;
+
+        &:hover {
+            color: $clr-active;
+        }
+    }
+
+    .floater-verdict {
+        flex-shrink: 0;
+        max-width: 45%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 11px;
+        color: $text-secondary;
+
+        &.object {
+            color: #8fd18f;
+        }
+
+        &.floater {
+            color: $clr-icon-hilight;
+        }
+    }
+
+    .floater-focus {
+        flex-shrink: 0;
+        cursor: pointer;
+        color: $text-secondary;
+
+        &:hover {
+            color: $clr-active;
+        }
+    }
 }
 
 // containers in these panels set their own display (flex), which outranks

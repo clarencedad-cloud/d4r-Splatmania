@@ -29,9 +29,11 @@ type LayerQuality = {
     count: number,
     scores: Uint8Array | null,
     worse: Uint8Array | null,
-    // one gpu buffer per layer, rewritten when the data or the mode changes:
-    // the projector's bind group keeps the buffer it was first given, so
-    // swapping buffers between modes would not reach the shader
+    // one gpu buffer per layer, rewritten in place when the data or the mode
+    // changes (recreated only when its size changes). A different buffer
+    // would reach the shader as well: BindGroup.setStorageBufferAt marks the
+    // group dirty on a new buffer (engine 2.23), and the renderer already
+    // swaps this buffer with the dummy and the scan composition's per frame
     displayBuffer: StorageBuffer | null,
     // what the display buffer currently holds
     displays: 'scores' | 'worse' | null

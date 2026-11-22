@@ -49,7 +49,9 @@ const getWorker = () => {
     return worker;
 };
 
-const runAnalysis = <T>(type: 'icp' | 'score' | 'compare', payload: any, transfer: ArrayBuffer[] = [], onProgress?: (p: number) => void): Promise<T> => {
+type AnalysisJob = 'icp' | 'auto' | 'score' | 'compare' | 'floaters' | 'compose-overlap' | 'compose-align' | 'compose-cells' | 'compose-detail' | 'compose-paint' | 'compose-blur';
+
+const runAnalysis = <T>(type: AnalysisJob, payload: any, transfer: ArrayBuffer[] = [], onProgress?: (p: number) => void): Promise<T> => {
     return new Promise<T>((resolve, reject) => {
         const id = nextId++;
         jobs.set(id, { resolve, reject, onProgress });

@@ -1,9 +1,10 @@
-import { BooleanInput, Container, Label, NumericInput } from '@playcanvas/pcui';
+import { BooleanInput, Container, Label, NumericInput, SliderInput } from '@playcanvas/pcui';
 
 import { Events } from '../events';
 import { CollapsibleSection } from './collapsible';
 import { helpButton } from './help';
 import { i18n } from './localization';
+import type { FinderView, GroupState } from '../floaters/floater-finder';
 
 const row = (parent: Container, text: string, title?: string) => {
     const r = new Container({ class: 'layer-anim-row' });
@@ -18,9 +19,17 @@ const row = (parent: Container, text: string, title?: string) => {
 const button = (parent: Container, text: string, title: string, onClick: () => void) => {
     const b = document.createElement('span');
     b.classList.add('layer-anim-button');
+    b.setAttribute('role', 'button');
+    b.tabIndex = 0;
     i18n.bindDom(b, text);
     i18n.bindDom(b, title, 'title');
     b.addEventListener('click', onClick);
+    b.addEventListener('keydown', (event: KeyboardEvent) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onClick();
+        }
+    });
     parent.dom.appendChild(b);
     return b;
 };
@@ -37,7 +46,10 @@ const section = (parent: Container, text: string) => {
     parent.append(label);
 };
 
-// splat-transform cleanup on the active layer (src/cleanup.ts)
+const formatCount = (n: number) => n.toLocaleString(i18n.locale);
+
+// cleanup on the active layer: the floater search (src/floaters) and the
+// splat-transform filters and decimation (src/cleanup.ts)
 class CleanupPanel extends Container {
     constructor(events: Events, args = {}) {
         args = {
@@ -48,11 +60,133 @@ class CleanupPanel extends Container {
 
         super(args);
 
-        const panelSection = new CollapsibleSection({ key: 'cleanup', title: 'sm.cleanup.title', icon: '', bodyClass: 'layer-anim-body', actions: [helpButton(events, 'cleanup')] });
-        panelSection.setInfo('splat-transform');
+        const panelSection = new CollapsibleSection({ key: 'cleanup', title: 'sm.cleanup.title', icon: '', bodyClass: 'layer-anim-body', actions: [helpButton(events, 'cleanup')] });
         this.append(panelSection);
         const body = panelSection.body;
 
+        // floaters: strictness, search, optional Claude check, group list
+        section(body, 'sm.floaters.title');
+        const levelRow = row(body, 'sm.floaters.strictness', 'sm.floaters.strictness-tip');
+        const levelSlider = new SliderInput({ min: 1, max: 5, sliderMin: 1, sliderMax: 5, precision: 0, step: 1, value: 3 });
+        levelRow.append(levelSlider);
+        const levelName = new Label({ class: 'floater-level' });
+        body.append(levelName);
+        const syncLevelName = () => {
+            levelName.text = i18n.t(`sm.floaters.level.${Math.round(levelSlider.value)}`);
+        };
+        i18n.onChange(syncLevelName);
+        levelSlider.on('change', (v: number) => {
+            syncLevelName();
+            events.fire('floaters.setLevel', Math.round(v) - 1);
+        });
+
+        const fButtons = new Container({ class: 'layer-anim-buttons' });
+        body.append(fButtons);
+        const findButton = button(fButtons, 'sm.floaters.find', 'sm.floaters.find-tip', async () => {
+            await events.invoke('floaters.find');
+        });
+        const reviewButton = button(fButtons, 'sm.floaters.review', 'sm.floaters.review-tip', async () => {
+            const v = events.invoke('floaters.view') as FinderView;
+            if (v.reviewing) {
+                events.fire('floaters.cancelReview');
+            } else {
+                await events.invoke('floaters.review');
+            }
+        });
+
+        const floaterResult = new Label({ class: 'cleanup-result' });
+        body.append(floaterResult);
+
+        const list = document.createElement('div');
+        list.classList.add('floater-list');
+        body.dom.appendChild(list);
+
+        const listButtons = new Container({ class: 'layer-anim-buttons' });
+        body.append(listButtons);
+        button(listButtons, 'sm.floaters.all', 'sm.floaters.all-tip', () => events.fire('floaters.acceptAll', true));
+        button(listButtons, 'sm.floaters.none', 'sm.floaters.none-tip', () => events.fire('floaters.acceptAll', false));
+        const deleteButton = button(listButtons, 'sm.floaters.delete', 'sm.floaters.delete-tip', () => events.invoke('floaters.delete'));
+
+        const kindText = (g: GroupState) => {
+            const parts = [i18n.t(`sm.floaters.kind.${g.kind}`)];
+            if (g.airborne) parts.push(i18n.t('sm.floaters.airborne'));
+            return parts.join(' · ');
+        };
+
+        const verdictText = (g: GroupState) => {
+            if (!g.verdict) return '';
+            const label = g.verdict.label ? ` (${g.verdict.label})` : '';
+            return i18n.t(`sm.floaters.verdict.${g.verdict.verdict}`) + label;
+        };
+
+        const renderList = (v: FinderView) => {
+            list.textContent = '';
+            const groups = v.groups.slice().sort((a, b) => b.countAt - a.countAt);
+            list.classList.toggle('pcui-hidden', groups.length === 0);
+            groups.forEach((g) => {
+                const item = document.createElement('div');
+                item.classList.add('floater-item');
+                item.classList.toggle('rejected', !g.accepted);
+
+                const check = document.createElement('span');
+                check.classList.add('floater-check');
+                check.setAttribute('role', 'checkbox');
+                check.setAttribute('aria-checked', String(g.accepted));
+                check.textContent = g.accepted ? '✓' : '';
+                check.title = i18n.t(g.accepted ? 'sm.floaters.reject-tip' : 'sm.floaters.accept-tip');
+                check.addEventListener('click', () => events.fire('floaters.setAccepted', g.id, !g.accepted));
+
+                const text = document.createElement('span');
+                text.classList.add('floater-text');
+                text.setAttribute('role', 'button');
+                text.textContent = `${kindText(g)} · ${formatCount(g.countAt)}`;
+                text.title = i18n.t('sm.floaters.item-tip');
+                text.addEventListener('click', () => events.fire('floaters.focus', g.id));
+
+                item.appendChild(check);
+                item.appendChild(text);
+
+                const verdict = verdictText(g);
+                if (verdict) {
+                    const badge = document.createElement('span');
+                    badge.classList.add('floater-verdict', g.verdict.verdict);
+                    badge.textContent = verdict;
+                    item.appendChild(badge);
+                }
+
+                const focus = document.createElement('span');
+                focus.classList.add('floater-focus');
+                focus.setAttribute('role', 'button');
+                focus.textContent = '⌖';
+                focus.title = i18n.t('sm.floaters.item-tip');
+                focus.addEventListener('click', () => events.fire('floaters.focus', g.id));
+                item.appendChild(focus);
+
+                list.appendChild(item);
+            });
+        };
+
+        let lastView: FinderView | null = null;
+        const sync = (v: FinderView = events.invoke('floaters.view')) => {
+            if (!v) return;
+            lastView = v;
+            findButton.classList.toggle('disabled', v.running);
+            reviewButton.classList.toggle('pcui-hidden', !v.aiAvailable);
+            reviewButton.classList.toggle('disabled', v.running || v.stale);
+            reviewButton.textContent = i18n.t(v.reviewing ? 'sm.floaters.review-cancel' : 'sm.floaters.review');
+            deleteButton.classList.toggle('disabled', v.stale || v.selected === 0);
+            listButtons.hidden = v.stale;
+            floaterResult.text = v.message || i18n.t('sm.floaters.hint');
+            renderList(v);
+        };
+        events.on('floaters.changed', (v: FinderView) => sync(v));
+        i18n.onChange(() => {
+            if (lastView) sync(lastView);
+        });
+        // at startup the floater events register after the ui and sync it then
+        if (events.functions.has('floaters.view')) sync();
+
+        // the remaining splat-transform tools
         const deleteRow = row(body, 'sm.cleanup.delete-now', 'sm.cleanup.delete-now-tip');
         const deleteNow = new BooleanInput({ value: false });
         deleteRow.append(deleteNow);
@@ -76,18 +210,11 @@ class CleanupPanel extends Container {
             if (deleteNow.value && r.dropped > 0) events.fire('select.delete');
         };
 
-        // floaters
-        section(body, 'sm.cleanup.floaters');
-        const fRow = row(body, 'sm.cleanup.voxel', 'sm.cleanup.floaters-voxel-tip');
-        const fRes = numeric(fRow, 0.05, 0.001, 100, 3);
-        const fOpacity = numeric(fRow, 0.1, 0, 1, 3);
-        const fMin = numeric(fRow, 0.004, 0, 1, 4);
-        const fButtons = new Container({ class: 'layer-anim-buttons' });
-        body.append(fButtons);
-        button(fButtons, 'sm.cleanup.find-floaters', 'sm.cleanup.find-floaters-tip', async () => {
-            finish(await events.invoke('cleanup.filterFloaters', { voxelResolution: fRes.value, opacityCutoff: fOpacity.value, minContribution: fMin.value }));
-        });
-        button(fButtons, 'sm.cleanup.nan', 'sm.cleanup.nan-tip', async () => finish(await events.invoke('cleanup.filterNaN')));
+        // invalid splats
+        section(body, 'sm.cleanup.nan-title');
+        const nButtons = new Container({ class: 'layer-anim-buttons' });
+        body.append(nButtons);
+        button(nButtons, 'sm.cleanup.nan', 'sm.cleanup.nan-tip', async () => finish(await events.invoke('cleanup.filterNaN')));
 
         // cluster
         section(body, 'sm.cleanup.cluster');

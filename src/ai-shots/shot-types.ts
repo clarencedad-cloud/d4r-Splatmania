@@ -96,6 +96,15 @@ type GeneratedKey = {
     aperture?: number;
 };
 
+// the procedural camera modifier a proposal brings along (walks): gait bob
+// (scene units) and steps per second, handheld shake (degrees) and its speed
+type ShotModifier = {
+    bob: number;
+    stepRate: number;
+    shake: number;
+    shakeRate: number;
+};
+
 type ShotProposal = {
     // stable, e.g. `${template}-${index}`
     id: string;
@@ -114,6 +123,17 @@ type ShotProposal = {
     aiComment?: string;
     // dataURL for the panel
     thumbnail?: string;
+    // walk (src/ai-shots/walk-path.ts): the camera modifier for the new
+    // camera, the route on the ground and its length (scene units). A walk
+    // is no ShotTemplate (Claude does not plan it); params.template is only
+    // a placeholder there
+    kind?: 'walk';
+    modifier?: ShotModifier;
+    route?: Vec3[];
+    walkLength?: number;
+    // the keys were moved by hand / tidied by the clean-up step
+    edited?: boolean;
+    cleaned?: boolean;
 };
 
 interface CoverageField {
@@ -141,5 +161,6 @@ export {
     type AnchorPose,
     type GeneratedKey,
     type ShotProposal,
+    type ShotModifier,
     type CoverageField
 };

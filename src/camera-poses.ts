@@ -2,6 +2,7 @@ import { Vec3 } from 'playcanvas';
 
 import { CubicSpline } from './anim/spline';
 import { AnimTrack } from './anim-track';
+import { applyModifierOffset, buildModifierTables, MODIFIER_DEFAULTS, modifierOffset, removeModifierOffset, type ModifierOffset, type ModifierTables, type ModifierValues } from './camera-modifier';
 import { AnimTrackEditOp } from './edit-ops';
 import { Events } from './events';
 import { i18n } from './ui/localization';
@@ -26,9 +27,11 @@ type PoseValue = {
 
 // the animatable properties of a shot camera. Position and target (the
 // look-at point, shown as rotation) place the camera, fov is the lens, focus
-// and aperture drive the depth of field
-type CameraChannel = 'position' | 'target' | 'fov' | 'focus' | 'aperture';
-const CAMERA_CHANNELS: CameraChannel[] = ['position', 'target', 'fov', 'focus', 'aperture'];
+// and aperture drive the depth of field. bob / stepRate / shake / shakeRate
+// drive the procedural gait bob and handheld shake (src/camera-modifier.ts)
+type CameraChannel = 'position' | 'target' | 'fov' | 'focus' | 'aperture' | 'bob' | 'stepRate' | 'shake' | 'shakeRate';
+const CAMERA_CHANNELS: CameraChannel[] = ['position', 'target', 'fov', 'focus', 'aperture', 'bob', 'stepRate', 'shake', 'shakeRate'];
+const MODIFIER_CHANNELS: CameraChannel[] = ['bob', 'stepRate', 'shake', 'shakeRate'];
 
 // one key; like layer keys, a key only animates the channels it carries
 type CameraKey = {
@@ -38,6 +41,10 @@ type CameraKey = {
     fov?: number,
     focus?: number,
     aperture?: number,
+    bob?: number,
+    stepRate?: number,
+    shake?: number,
+    shakeRate?: number,
     // bezier handles of the position path at this key (offsets from the key
     // position, world units): the curve leaves along handleOut and arrives
     // against handleIn. Absent = automatic tangent (timeline smoothness)
@@ -51,7 +58,11 @@ type CameraBase = {
     target: Vec3 | null,
     fov: number,
     focus: number,
-    aperture: number
+    aperture: number,
+    bob: number,
+    stepRate: number,
+    shake: number,
+    shakeRate: number
 };
 
 // what a key button shows for a channel at a frame
@@ -80,7 +91,11 @@ const cloneBase = (b: CameraBase): CameraBase => ({
     target: b.target?.clone() ?? null,
     fov: b.fov,
     focus: b.focus,
-    aperture: b.aperture
+    aperture: b.aperture,
+    bob: b.bob ?? MODIFIER_DEFAULTS.bob,
+    stepRate: b.stepRate ?? MODIFIER_DEFAULTS.stepRate,
+    shake: b.shake ?? MODIFIER_DEFAULTS.shake,
+    shakeRate: b.shakeRate ?? MODIFIER_DEFAULTS.shakeRate
 });
 
 const toArray = (v: ChannelValue) => (typeof v === 'number' ? [v] : [v.x, v.y, v.z]);
@@ -111,13 +126,19 @@ class CameraAnimTrack implements AnimTrack {
     constructor(events: Events) {
         this.events = events;
         const fov = events.functions.has('camera.fov') ? events.invoke('camera.fov') : 60;
-        this.base = { position: null, target: null, fov: fov ?? 60, focus: 5, aperture: 0.05 };
+        this.base = { position: null, target: null, fov: fov ?? 60, focus: 5, aperture: 0.05, ...MODIFIER_DEFAULTS };
 
         // rebuild the splines when timeline parameters change
         const rebuild = () => this.rebuildSpline();
         this.handles.push(events.on('timeline.frames', rebuild));
         this.handles.push(events.on('timeline.smoothness', rebuild));
         this.handles.push(events.on('timeline.loop', rebuild));
+        // the modifier's phase is integrated over seconds and metres
+        const invalidate = () => {
+            this.modifierTables = null;
+        };
+        this.handles.push(events.on('timeline.frameRate', invalidate));
+        this.handles.push(events.on('sceneScale.changed', invalidate));
     }
 
     destroy() {
@@ -193,6 +214,7 @@ class CameraAnimTrack implements AnimTrack {
             pending = true;
         } else {
             (this.base as any)[channel] = cloneValue(value);
+            this.modifierTables = null;
         }
         this.events.fire('track.changed', this);
         this.events.fire('camera.valuesChanged', this);
@@ -209,10 +231,19 @@ class CameraAnimTrack implements AnimTrack {
 
     private viewTransform() {
         const pose = this.events.invoke('camera.getPose');
-        return pose ? {
+        if (!pose) return null;
+        const view = {
             position: new Vec3(pose.position.x, pose.position.y, pose.position.z),
             target: new Vec3(pose.target.x, pose.target.y, pose.target.z)
-        } : null;
+        };
+        // looking through this camera, the view carries its gait bob and
+        // shake: keys hold the path without them
+        const followed = this.events.functions.has('shotCameras.followed') ? this.events.invoke('shotCameras.followed') : null;
+        if (followed?.track === this) {
+            const frame = this.events.invoke('timeline.frame') ?? 0;
+            this.unmodify(frame, view.position, view.target);
+        }
+        return view;
     }
 
     // merge channels into the key at frame
@@ -300,7 +331,7 @@ class CameraAnimTrack implements AnimTrack {
         const view = this.viewTransform();
         if (!view) return false;
         const values: Partial<Record<CameraChannel, ChannelValue>> = { position: view.position, target: view.target };
-        for (const c of ['fov', 'focus', 'aperture'] as CameraChannel[]) {
+        for (const c of CAMERA_CHANNELS.filter(c => c !== 'position' && c !== 'target')) {
             if (this.isAnimated(c) || this.overrideAt(c, frame) !== undefined) {
                 values[c] = this.value(c, frame);
             }
@@ -373,6 +404,71 @@ class CameraAnimTrack implements AnimTrack {
         this.override = {};
         this.rebuildSpline();
         this.events.fire('track.keysCleared');
+    }
+
+    // procedural gait bob / handheld shake (src/camera-modifier.ts)
+
+    private modifierTables: ModifierTables | null = null;
+
+    private modifierScratch: ModifierOffset = { offset: new Vec3(), yaw: 0, pitch: 0 };
+
+    // the camera has a gait bob or a handheld shake somewhere
+    get hasModifier() {
+        const on = (c: 'bob' | 'shake') => this.base[c] > 0 || this.keyList.some(k => (k[c] ?? 0) > 0) || ((this.override[c] as number) ?? 0) > 0;
+        return on('bob') || on('shake');
+    }
+
+    private modifierValues(frame: number): ModifierValues {
+        return {
+            bob: this.value('bob', frame) as number,
+            stepRate: this.value('stepRate', frame) as number,
+            shake: this.value('shake', frame) as number,
+            shakeRate: this.value('shakeRate', frame) as number
+        };
+    }
+
+    private tables(): ModifierTables {
+        const frames = Math.max(1, Math.floor(this.events.invoke('timeline.frames') ?? 1));
+        if (this.modifierTables && this.modifierTables.frames === frames) return this.modifierTables;
+        const fps = this.events.invoke('timeline.frameRate') ?? 30;
+        const mpu = this.events.functions.has('sceneScale.metersPerUnit') ? this.events.invoke('sceneScale.metersPerUnit') : 1;
+        this.modifierTables = buildModifierTables({
+            value: (channel, f) => this.evaluated(channel, f) as number,
+            position: (f, out) => {
+                const p = this.evaluated('position', f) as Vec3 | null;
+                if (!p) return false;
+                out.copy(p);
+                return true;
+            }
+        }, frames, fps, mpu);
+        return this.modifierTables;
+    }
+
+    // the modifier at frame for the pose, null when it is off there
+    private modifierAt(frame: number, position: Vec3, target: Vec3): ModifierOffset | null {
+        const values = this.modifierValues(frame);
+        if (!(values.bob > 0) && !(values.shake > 0)) return null;
+        const forward = new Vec3().sub2(target, position);
+        return modifierOffset(values, this.tables(), frame, forward, this.modifierScratch);
+    }
+
+    /**
+     * The final pose at frame: the keyed path plus the gait bob and handheld
+     * shake. Used wherever the camera is seen (viewport following, playback,
+     * video and player export); getPoseAt stays the clean path for editing.
+     */
+    getShotPoseAt(frame: number, out?: PoseValue): PoseValue | null {
+        const pose = this.getPoseAt(frame, out);
+        if (!pose) return null;
+        const m = this.modifierAt(frame, pose.position, pose.target);
+        if (m) applyModifierOffset(pose.position, pose.target, m);
+        return pose;
+    }
+
+    // take the modifier at frame back out of a view (in place)
+    unmodify(frame: number, position: Vec3, target: Vec3) {
+        const m = this.modifierAt(frame, position, target);
+        if (m) removeModifierOffset(position, target, m);
     }
 
     // move the position and/or target of the key at frame (viewport path
@@ -490,7 +586,11 @@ class CameraAnimTrack implements AnimTrack {
                 target: this.base.target ? toArray(this.base.target) : null,
                 fov: this.base.fov,
                 focus: this.base.focus,
-                aperture: this.base.aperture
+                aperture: this.base.aperture,
+                bob: this.base.bob,
+                stepRate: this.base.stepRate,
+                shake: this.base.shake,
+                shakeRate: this.base.shakeRate
             },
             keys: this.keyList.map((k) => {
                 const out: any = { frame: k.frame };
@@ -517,6 +617,7 @@ class CameraAnimTrack implements AnimTrack {
 
         this.evaluators.clear();
         this.positionTangents.clear();
+        this.modifierTables = null;
         for (const channel of CAMERA_CHANNELS) {
             const keys = this.keyList.filter(k => k[channel] !== undefined && k.frame < duration);
             if (keys.length === 0) continue;
@@ -873,7 +974,7 @@ const registerCameraPosesEvents = (events: Events) => {
             events.fire('camera.valuesChanged', camera.track);
             events.fire('shotCameras.changed', cameras);
         }
-        if (camera && camera.track.getPoseAt(currentFrame, tmpPose)) {
+        if (camera && camera.track.getShotPoseAt(currentFrame, tmpPose)) {
             if (freeFov === null) freeFov = events.invoke('camera.fov');
             events.fire('camera.setPose', tmpPose, 0);
         } else if (!camera && freeFov !== null) {
@@ -1103,6 +1204,14 @@ const registerCameraPosesEvents = (events: Events) => {
         };
     };
 
+    // the view as a pose of this camera: looking through it, the view
+    // carries its gait bob and shake, which the keys must not
+    const viewValuesFor = (camera: ShotCamera) => {
+        const view = viewValues();
+        if (followedCamera(currentFrame) === camera) camera.track.unmodify(currentFrame, view.position, view.target);
+        return view;
+    };
+
     events.function('shotCameras.value', (channel: CameraChannel, id?: number) => {
         return byId(id ?? selectedId)?.track.value(channel, frameNow()) ?? null;
     });
@@ -1141,7 +1250,7 @@ const registerCameraPosesEvents = (events: Events) => {
     // put the camera where the viewport looks
     events.on('shotCameras.setToView', (id?: number) => {
         const camera = byId(id ?? selectedId);
-        if (camera) setValues(camera, viewValues());
+        if (camera) setValues(camera, viewValuesFor(camera));
     });
 
     // navigating the viewport while it looks through a camera moves that
@@ -1155,7 +1264,7 @@ const registerCameraPosesEvents = (events: Events) => {
             if (override || viewMode === 'free') return;
             const camera = followedCamera(currentFrame);
             if (!camera || !camera.track.placed) return;
-            setValues(camera, viewValues());
+            setValues(camera, viewValuesFor(camera));
         }, 450);
     });
 
@@ -1420,7 +1529,7 @@ const registerCameraPosesEvents = (events: Events) => {
                         key.handleIn = vec(k.handleIn);
                         key.handleOut = vec(k.handleOut);
                     }
-                    ['fov', 'focus', 'aperture'].forEach((c) => {
+                    ['fov', 'focus', 'aperture', ...MODIFIER_CHANNELS].forEach((c) => {
                         if (typeof k[c] === 'number') key[c] = k[c];
                     });
                     return key;
@@ -1429,7 +1538,11 @@ const registerCameraPosesEvents = (events: Events) => {
                     target: vec(b.target) ?? null,
                     fov: b.fov ?? defaultFov,
                     focus: b.focus ?? 5,
-                    aperture: b.aperture ?? 0.05
+                    aperture: b.aperture ?? 0.05,
+                    bob: typeof b.bob === 'number' ? b.bob : MODIFIER_DEFAULTS.bob,
+                    stepRate: typeof b.stepRate === 'number' ? b.stepRate : MODIFIER_DEFAULTS.stepRate,
+                    shake: typeof b.shake === 'number' ? b.shake : MODIFIER_DEFAULTS.shake,
+                    shakeRate: typeof b.shakeRate === 'number' ? b.shakeRate : MODIFIER_DEFAULTS.shakeRate
                 });
                 return;
             }
@@ -1468,4 +1581,4 @@ const registerCameraPosesEvents = (events: Events) => {
     });
 };
 
-export { registerCameraPosesEvents, CameraAnimTrack, CutTrack, Pose, PoseValue, ShotCamera, CutSegment, CutFade, CameraViewMode, CameraChannel, ChannelState, CAMERA_CHANNELS, CameraProjection };
+export { registerCameraPosesEvents, CameraAnimTrack, CutTrack, Pose, PoseValue, ShotCamera, CutSegment, CutFade, CameraViewMode, CameraChannel, ChannelState, CAMERA_CHANNELS, MODIFIER_CHANNELS, CameraProjection, CameraKey, CameraBase };

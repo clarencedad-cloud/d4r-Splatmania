@@ -172,8 +172,10 @@ struct ProjectorUniforms {
     // H point tint toward the glow colour, noise share of the threshold
     transG: vec4f,
     transH: vec4f,
-    // quality heatmap: x mode (0 off, 1 heatmap, 2 below threshold red,
-    // 3 worse than another scan), y threshold
+    // per-instance display bytes (instanceScore): x mode (0 off, 1 quality
+    // heatmap, 2 below threshold red - also the scan comparison's flags,
+    // 3 scan-composition classes, see composeColor0..3, 4 scan-composition
+    // blur: octaves per splat, tint from y to z octaves), y threshold
     quality: vec4f,
     // section cut (src/section/section-tool.ts): xyz world up axis, w cut
     // height along it; sectionEdge x enabled, y soft edge width (0 = hard)
@@ -209,7 +211,13 @@ struct ProjectorUniforms {
     lightC2: vec4f,
     lightA3: vec4f,
     lightB3: vec4f,
-    lightC3: vec4f
+    lightC3: vec4f,
+    // scan composition (src/compose, quality mode 3): the scan colours a class
+    // byte's colour index picks, rgb (w unused)
+    composeColor0: vec4f,
+    composeColor1: vec4f,
+    composeColor2: vec4f,
+    composeColor3: vec4f
 }
 
 // compaction output: surviving splats are appended to a dense list, so the sort
@@ -231,7 +239,8 @@ struct ProjectorUniforms {
 @group(0) @binding(7) var<storage, read> instancePalette: array<u32>;
 // max depth per block of the previous stochastic frame (projected-splat-depth-reduce-shader)
 @group(0) @binding(8) var<storage, read> prevDepthMax: array<f32>;
-// quality score per instance (src/quality), packed 4 bytes to a word
+// quality score per instance (src/quality), or the scan composition's class
+// byte (mode 3, src/compose), packed 4 bytes to a word
 @group(0) @binding(9) var<storage, read> instanceScore: array<u32>;
 @group(0) @binding(10) var transformA: texture_2d<u32>;
 @group(0) @binding(11) var transformB: texture_2d<f32>;
@@ -513,6 +522,20 @@ fn instanceFlagByte(instance: u32) -> u32 {
     return (instanceFlags[instance >> 2u] >> ((instance & 3u) * 8u)) & 0xffu;
 }
 
+// the scan composition's colour for a class byte's colour index (0..3)
+fn composeColor(i: u32) -> vec3f {
+    if (i == 1u) {
+        return uniforms.composeColor1.rgb;
+    }
+    if (i == 2u) {
+        return uniforms.composeColor2.rgb;
+    }
+    if (i == 3u) {
+        return uniforms.composeColor3.rgb;
+    }
+    return uniforms.composeColor0.rgb;
+}
+
 @compute @workgroup_size(256)
 fn main(
     @builtin(global_invocation_id) gid: vec3u,
@@ -539,6 +562,18 @@ fn main(
         || (uniforms.pickOp == 1 && state != 1u)
         || (uniforms.pickOp == 2 && (state & 2u) != 0u)) {
         return;
+    }
+
+    // scan composition (quality mode 3, src/compose): one class byte per
+    // instance in instanceScore - class in bits 0-2, colour index in bits
+    // 3-4, pale in bit 5. Class 7 is not drawn (the before / after previews
+    // leave one version out); the colour classes apply further down
+    var composeCode = 0u;
+    if (uniforms.quality.x > 2.5 && uniforms.quality.x < 3.5) {
+        composeCode = (instanceScore[instance >> 2u] >> ((instance & 3u) * 8u)) & 0xffu;
+        if ((composeCode & 7u) == 7u) {
+            return;
+        }
     }
 
     // a fully faded-out layer draws nothing
@@ -857,10 +892,34 @@ fn main(
         light += shadeLight(uniforms.lightA3, uniforms.lightB3, uniforms.lightC3, p, normal, wrap, soft);
         graded = graded * (uniforms.lightParams.y + light);
     }
-    // quality heatmap (display only): score ramp red -> yellow -> green, or
-    // red where the score is under the threshold / the splat is flagged
-    // worse than another scan (score byte 0 in mode 3)
-    if (uniforms.quality.x > 0.5) {
+    // per-instance display bytes, display only. Mode 3, the scan composition:
+    // class 1 the owner scan's colour shaded by the splat's brightness
+    // (paler where it is only somewhat finer), 2 grey (about equally fine),
+    // 3 red (will be hidden), 4 green (takes over), 0 keeps the colour.
+    // Modes 1-2, the quality heatmap: score ramp red -> yellow -> green, or
+    // red where the score is under the threshold (the scan comparison stores
+    // the splats flagged worse than another scan as score byte 0). Mode 4,
+    // the scan composition's sharpness view: the byte is the splat's size in
+    // octaves above its scan's median (1/32 steps); from y (no tint) to z
+    // octaves (full) it turns magenta over its own colour, sharp ones keep it
+    if (uniforms.quality.x > 3.5) {
+        let octaves = f32((instanceScore[instance >> 2u] >> ((instance & 3u) * 8u)) & 0xffu) / 32.0;
+        let blur = clamp((octaves - uniforms.quality.y) / max(uniforms.quality.z - uniforms.quality.y, 0.01), 0.0, 1.0);
+        graded = mix(graded, vec3f(1.0, 0.0, 0.6), 0.92 * blur);
+    } else if (uniforms.quality.x > 2.5) {
+        let composeClass = composeCode & 7u;
+        if (composeClass == 1u) {
+            let luma = clamp(dot(graded, vec3f(0.299, 0.587, 0.114)), 0.0, 1.0);
+            let strength = select(0.8, 0.45, (composeCode & 32u) != 0u);
+            graded = mix(graded, composeColor((composeCode >> 3u) & 3u) * (0.35 + 0.8 * luma), strength);
+        } else if (composeClass == 2u) {
+            graded = mix(graded, vec3f(0.62), 0.75);
+        } else if (composeClass == 3u) {
+            graded = mix(graded, vec3f(1.0, 0.05, 0.05), 0.9);
+        } else if (composeClass == 4u) {
+            graded = mix(graded, vec3f(0.0, 0.9, 0.2), 0.85);
+        }
+    } else if (uniforms.quality.x > 0.5) {
         let q = f32((instanceScore[instance >> 2u] >> ((instance & 3u) * 8u)) & 0xffu) / 255.0;
         if (uniforms.quality.x < 1.5) {
             let heat = select(mix(vec3f(1.0, 0.0, 0.0), vec3f(1.0, 0.9, 0.0), q * 2.0),

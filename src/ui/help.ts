@@ -21,6 +21,7 @@ const HELP_TOPICS = [
     'cleanup',
     'depthFilter',
     'align',
+    'compose',
     'quality',
     'section'
 ] as const;

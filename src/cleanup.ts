@@ -13,15 +13,19 @@ import {
 import { Vec3 } from 'playcanvas';
 
 import { Events } from './events';
+import { registerFloaterEvents } from './floaters/floater-finder';
 import type { Scene } from './scene';
 import type { Splat } from './splat';
 import { createExportSource } from './splat-serialize';
 import { i18n } from './ui/localization';
 
-// splat-transform cleanup on the active layer. Filters (floaters, cluster,
-// NaN) don't touch the data: the gaussians they would remove are selected,
-// and deleting goes through the normal, undoable editor path. Decimate makes
-// new gaussians, so its result becomes a new layer and the original is hidden.
+// Cleanup on the active layer. The floater search lives in src/floaters (its
+// own core runs in the analysis worker) and is registered from here. The
+// splat-transform filters (cluster, NaN, and the old voxel floater filter,
+// no longer in the panel) don't touch the data: the gaussians they would
+// remove are selected, and deleting goes through the normal, undoable editor
+// path. Decimate makes new gaussians, so its result becomes a new layer and
+// the original is hidden.
 
 type FloaterOptions = { voxelResolution: number, opacityCutoff: number, minContribution: number };
 type ClusterOptions = { voxelResolution: number, opacityCutoff: number, minContribution: number, seed: [number, number, number] };
@@ -193,6 +197,8 @@ const registerCleanupEvents = (events: Events, scene: Scene) => {
     });
 
     events.function('cleanup.running', () => running);
+
+    registerFloaterEvents(events, scene);
 };
 
 export { registerCleanupEvents };

@@ -1,0 +1,805 @@
+@use 'colors.scss' as *;
+
+// scan composition wizard (src/compose/compose-tool.ts)
+#compose-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    // pills and markers are positioned at their projected points: clipped
+    // here, they never widen the scroll area of #canvas-container (overflow
+    // hidden, so a scroll there could not be undone by the user)
+    overflow: clip;
+
+    > .compose-zone-box {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+
+        path {
+            fill: none;
+            stroke-width: 1.5;
+            stroke-dasharray: 5 4;
+        }
+    }
+
+    > .compose-marker {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        padding: 1px 7px;
+        border: 2px solid;
+        border-radius: 10px;
+        background-color: rgba(0, 0, 0, 0.7);
+        color: $clr-active;
+        font-size: 11px;
+        line-height: 16px;
+        white-space: nowrap;
+        cursor: pointer;
+        pointer-events: auto;
+        user-select: none;
+
+        &.used {
+            font-weight: bold;
+        }
+
+        &.q-good {
+            background-color: rgba(30, 110, 40, 0.85);
+        }
+
+        &.q-warn {
+            background-color: rgba(150, 100, 10, 0.85);
+        }
+
+        &.q-bad {
+            background-color: rgba(150, 30, 30, 0.85);
+        }
+    }
+
+    // step 4: one pill per suggestion "n · f×", border in the winner colour
+    > .compose-pill {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        padding: 1px 7px;
+        border: 2px solid;
+        border-radius: 10px;
+        background-color: rgba(0, 0, 0, 0.7);
+        color: $clr-active;
+        font-size: 11px;
+        line-height: 16px;
+        white-space: nowrap;
+        cursor: pointer;
+        pointer-events: auto;
+        user-select: none;
+
+        &.clear {
+            background-color: rgba(30, 110, 40, 0.85);
+        }
+
+        &.check {
+            background-color: rgba(150, 100, 10, 0.85);
+        }
+
+        &.accepted {
+            background-color: rgba(70, 70, 70, 0.85);
+            color: $clr-default;
+        }
+
+        &:hover {
+            filter: brightness(1.2);
+        }
+    }
+}
+
+#compose-panel {
+    position: absolute;
+    top: 150px;
+    right: 80px;
+    width: 360px;
+    max-height: calc(100% - 200px);
+    overflow-y: auto;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background-color: $bcg-dark;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    &.pcui-hidden {
+        display: none;
+    }
+
+    // the panel takes the focus only when a rebuild removed the focused
+    // control (compose-tool refocus): no ring around the whole panel
+    &:focus {
+        outline: none;
+    }
+
+    // a step taller than the panel scrolls it; its parts keep their height
+    // (pcui elements have min-height 0 and would be squashed instead)
+    > * {
+        flex-shrink: 0;
+    }
+
+    .compose-steps {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
+    }
+
+    .compose-step {
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        color: $clr-default;
+        background-color: $bcg-lighter;
+        cursor: pointer;
+
+        &.active {
+            background-color: $clr-hilight;
+            color: $clr-active;
+            font-weight: bold;
+        }
+
+        &.later {
+            opacity: 0.45;
+            cursor: default;
+        }
+    }
+
+    .compose-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .compose-hint,
+    .compose-note {
+        white-space: normal;
+        font-size: 11px;
+        color: $text-secondary;
+
+        &.warn {
+            color: #ffb347;
+        }
+    }
+
+    .compose-subheading {
+        margin-top: 2px;
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: $text-secondary;
+    }
+
+    .compose-scans,
+    .compose-results {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .compose-scan,
+    .compose-result-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: $clr-default;
+
+        &.excluded {
+            opacity: 0.55;
+        }
+    }
+
+    .compose-result {
+        padding: 4px 6px;
+        border-radius: 4px;
+        background-color: $bcg-primary;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .compose-swatch,
+    .compose-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        flex-shrink: 0;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+
+    .compose-dot {
+        border-radius: 50%;
+    }
+
+    .compose-name {
+        flex-grow: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .compose-info,
+    .compose-ref-label {
+        font-size: 10px;
+        color: $text-secondary;
+        white-space: normal;
+
+        &.bad {
+            color: #ff7a7a;
+        }
+
+        &.warn {
+            color: #ffb347;
+        }
+
+        &.stale {
+            opacity: 0.6;
+        }
+    }
+
+    .compose-ref-label {
+        white-space: nowrap;
+        color: $clr-icon-hilight;
+    }
+
+    .compose-pair {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: $clr-default;
+        white-space: normal;
+    }
+
+    .compose-zone {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 4px;
+        border-left: 3px solid $bcg-lighter;
+        font-size: 11px;
+        color: $clr-default;
+
+        &.q-good {
+            border-left-color: #3fb950;
+        }
+
+        &.q-warn {
+            border-left-color: #ffb347;
+        }
+
+        &.q-bad {
+            border-left-color: #ff6b6b;
+        }
+
+        &:hover {
+            background-color: $bcg-light;
+        }
+    }
+
+    .compose-zone-text {
+        flex-grow: 1;
+        white-space: normal;
+    }
+
+    .compose-zone-used {
+        font-size: 10px;
+        color: $clr-icon-hilight;
+        white-space: nowrap;
+    }
+
+    .compose-row,
+    .compose-view {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .compose-view {
+        padding-top: 6px;
+        border-top: 1px solid $bcg-lighter;
+    }
+
+    // a checkbox with its label: the row wraps between such pairs only
+    .compose-view-item {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        flex: 0 0 auto;
+
+        &.pcui-hidden {
+            display: none;
+        }
+    }
+
+    // an unticked pcui box has the panel's own background colour and would
+    // vanish (a ticked one next to it then read as the wrong label's)
+    .pcui-boolean-input:not(.pcui-boolean-input-ticked, :hover, :focus) {
+        background-color: $bcg-darkest;
+        box-shadow: inset 0 0 0 1px $bcg-light;
+    }
+
+    .compose-view-label {
+        margin: 0 6px 0 -4px;
+        font-size: 11px;
+        color: $text-secondary;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .compose-label {
+        margin: 0;
+        flex-grow: 1;
+        color: $text-secondary;
+    }
+
+    .compose-select {
+        flex: 2;
+        margin: 0;
+    }
+
+    .compose-options {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .compose-button {
+        flex: 1;
+        text-align: center;
+        padding: 5px 6px;
+        cursor: pointer;
+        border-radius: 3px;
+        background-color: $bcg-lighter;
+        color: $clr-default;
+        white-space: nowrap;
+
+        &:hover {
+            filter: brightness(1.15);
+        }
+
+        &.primary {
+            background-color: $clr-hilight;
+            color: $clr-active;
+            font-weight: bold;
+        }
+
+        &.small {
+            flex: 0 0 auto;
+            padding: 1px 6px;
+            font-size: 11px;
+        }
+
+        &.disabled {
+            opacity: 0.4;
+            cursor: default;
+            filter: none;
+        }
+
+        &.active {
+            outline: 1px solid $clr-icon-hilight;
+        }
+    }
+
+    // the quick switch between the scans: ◀ name ▶ and the key hint
+    .compose-switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        flex: 0 1 auto;
+        min-width: 0;
+        margin-left: auto;
+        font-size: 11px;
+
+        &.active > .compose-switch-text {
+            outline: 1px solid $clr-icon-hilight;
+        }
+
+        &.disabled {
+            opacity: 0.4;
+            pointer-events: none;
+        }
+    }
+
+    .compose-switch-text {
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: 1px 6px;
+        border-radius: 3px;
+        background-color: $bcg-lighter;
+        color: $clr-default;
+        cursor: pointer;
+    }
+
+    .compose-switch-keys {
+        color: $text-secondary;
+        white-space: nowrap;
+    }
+
+    // what the sharpness view shows
+    .compose-sharp-legend {
+        margin-top: -2px;
+        font-size: 11px;
+        color: $text-secondary;
+        white-space: normal;
+
+        &::before {
+            content: '';
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            margin-right: 5px;
+            vertical-align: -1px;
+            border-radius: 2px;
+            background-color: #ff0099;
+        }
+
+        &[hidden] {
+            display: none;
+        }
+    }
+
+    // status line (cancelled, failed, nothing made of a forced cluster):
+    // stays in sight at the panel's bottom edge while a long step scrolls,
+    // over the panel's bottom padding (8px) so nothing shows below it
+    .compose-message {
+        position: sticky;
+        bottom: -8px;
+        margin: 0 0 -8px;
+        padding: 4px 0 10px;
+        white-space: normal;
+        color: $clr-icon-hilight;
+        background-color: $bcg-dark;
+        border-top: 1px solid $bcg-lighter;
+    }
+
+    // ---------------------------------------------------- steps 3-4
+
+    // segmented control (like the quality tool's display mode)
+    .compose-seg {
+        display: inline-flex;
+        flex: 0 0 auto;
+
+        > .compose-button {
+            flex: 0 0 auto;
+            padding: 1px 8px;
+            font-size: 11px;
+            border-radius: 0;
+
+            &:first-child {
+                border-radius: 3px 0 0 3px;
+            }
+
+            &:last-child {
+                border-radius: 0 3px 3px 0;
+            }
+
+            & + .compose-button {
+                border-left: 1px solid $bcg-dark;
+            }
+
+            &.active {
+                outline: none;
+                background-color: $clr-hilight;
+                color: $clr-active;
+            }
+        }
+    }
+
+    // map legend
+    .compose-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px 8px;
+        padding: 4px 6px;
+        border-radius: 4px;
+        background-color: $bcg-primary;
+
+        > .compose-note {
+            flex-basis: 100%;
+        }
+    }
+
+    .compose-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: $clr-default;
+
+        &.pale .compose-chip-dot {
+            opacity: 0.45;
+        }
+    }
+
+    .compose-chip-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        flex-shrink: 0;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+
+    // probe: the numbers at a double-clicked spot
+    .compose-probe {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 4px 6px;
+        border-radius: 4px;
+        border: 1px solid $bcg-light;
+        background-color: $bcg-primary;
+        font-size: 11px;
+        color: $clr-default;
+
+        .verdict {
+            margin-top: 2px;
+            font-weight: bold;
+            color: $clr-active;
+            white-space: normal;
+        }
+    }
+
+    .compose-probe-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .compose-probe-title {
+        flex-grow: 1;
+        font-size: 11px;
+        font-weight: bold;
+        color: $text-secondary;
+        white-space: normal;
+    }
+
+    .compose-probe-row {
+        display: grid;
+        grid-template-columns: 12px 1fr;
+        align-items: start;
+        gap: 4px;
+
+        > .compose-swatch {
+            margin-top: 2px;
+        }
+    }
+
+    .compose-probe-text {
+        white-space: normal;
+    }
+
+    .compose-link {
+        color: $clr-icon-hilight;
+        text-decoration: underline;
+        cursor: pointer;
+    }
+
+    // suggestion cards: the left border carries the winner colour
+    .compose-card {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 4px 6px;
+        border-left: 4px solid $bcg-lighter;
+        border-radius: 4px;
+        background-color: $bcg-primary;
+        font-size: 11px;
+        color: $clr-default;
+
+        &:hover {
+            background-color: $bcg-light;
+        }
+
+        &.accepted,
+        &.hand {
+            opacity: 0.8;
+        }
+
+        &.partial {
+            outline: 1px dashed #ffb347;
+        }
+
+        &.rejected {
+            opacity: 0.5;
+            filter: grayscale(1);
+        }
+
+        // the card picked last (a click on it, ⌖, Vorher/Nachher): the one
+        // the camera shows; a click on its text flies there
+        &.picked {
+            box-shadow: inset 0 0 0 1px $clr-hilight;
+        }
+
+        .compose-card-title {
+            cursor: pointer;
+        }
+    }
+
+    // "Auswahl ausblenden" next to Vorher/Nachher of the previewed card
+    .compose-hide-selection {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 11px;
+        color: $clr-default;
+        cursor: pointer;
+        user-select: none;
+
+        input {
+            margin: 0;
+        }
+    }
+
+    .compose-card-head,
+    .compose-card-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex-wrap: wrap;
+    }
+
+    .compose-card-title {
+        flex-grow: 1;
+        min-width: 0;
+        color: $clr-active;
+        white-space: normal;
+    }
+
+    // "Alle anhaken" above the local cards, its box in line with theirs (the
+    // cards' 4px border and 6px padding)
+    .compose-tick-all {
+        flex-wrap: nowrap;
+        gap: 5px;
+        padding: 0 6px 0 10px;
+        font-size: 11px;
+        color: $clr-default;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .compose-card-status {
+        color: $clr-icon-hilight;
+    }
+
+    .compose-effect {
+        white-space: normal;
+        color: $clr-active;
+    }
+
+    .compose-badge {
+        padding: 0 5px;
+        border-radius: 8px;
+        font-size: 10px;
+        line-height: 15px;
+        white-space: nowrap;
+        background-color: $bcg-lighter;
+        color: $clr-default;
+
+        &.num {
+            min-width: 10px;
+            text-align: center;
+            font-weight: bold;
+            color: $clr-active;
+        }
+
+        &.clear {
+            background-color: rgba(30, 110, 40, 0.85);
+            color: $clr-active;
+        }
+
+        &.check {
+            background-color: rgba(150, 100, 10, 0.85);
+            color: $clr-active;
+        }
+
+        &.base {
+            background-color: $clr-hilight;
+            color: $clr-active;
+        }
+    }
+
+    // checklist: ✓ pass, ✗ fail, · info
+    .compose-checks {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+    }
+
+    .compose-check {
+        display: grid;
+        grid-template-columns: 12px 1fr;
+        gap: 3px;
+        white-space: normal;
+
+        &.pass .compose-check-mark {
+            color: #3fb950;
+        }
+
+        &.fail .compose-check-mark {
+            color: #ff6b6b;
+        }
+
+        &.info {
+            color: $text-secondary;
+        }
+    }
+
+    .compose-check-mark {
+        text-align: center;
+        font-weight: bold;
+    }
+
+    // "Nicht vorgeschlagen" rows
+    .compose-skip {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 4px;
+        border-left: 3px solid $bcg-lighter;
+        font-size: 11px;
+        color: $clr-default;
+
+        &.r-partial,
+        &.r-apart {
+            border-left-color: #ff6b6b;
+        }
+
+        &.r-sparse,
+        &.r-texture {
+            border-left-color: #ffb347;
+        }
+
+        // the map's grey for 'about equally fine' (its cells are ties)
+        &.r-equal {
+            border-left-color: #9e9e9e;
+        }
+
+        &:hover {
+            background-color: $bcg-light;
+        }
+    }
+}
+
+// the quick switch's label over the view ("Nur scan.ply (1/2)" / "Alle
+// Scans"): at the bottom centre, above the toolbar (panels open at the top)
+.compose-switch-label {
+    position: absolute;
+    bottom: 96px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 12px;
+    background-color: rgba(0, 0, 0, 0.72);
+    color: $clr-active;
+    font-size: 13px;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 6;
+    opacity: 0;
+    transition: opacity 0.15s;
+
+    &.shown {
+        opacity: 1;
+    }
+
+    > .compose-swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+}

@@ -150,7 +150,7 @@ const application = {
     cache: false
 };
 
-// analysis worker (ICP fine alignment, quality scores): a separate bundle so
+// analysis worker (ICP fine alignment, quality scores, floater search): a separate bundle so
 // the pure cores run off the main thread (src/analysis/analysis-client.ts)
 const analysisWorker = {
     input: 'src/analysis/analysis-worker.ts',
@@ -163,7 +163,7 @@ const analysisWorker = {
         typescript({
             tsconfig: './tsconfig.json',
             // the worker bundle only needs its own sources
-            include: ['src/analysis/analysis-worker.ts', 'src/align/icp.ts', 'src/quality/quality-score.ts'],
+            include: ['src/analysis/analysis-worker.ts', 'src/align/icp.ts', 'src/align/global-align.ts', 'src/align/point-align.ts', 'src/quality/quality-score.ts', 'src/analysis/floaters.ts', 'src/compose/compose-core.ts', 'src/compose/compose-detail.ts', 'src/compose/compose-blur.ts'],
             outputToFilesystem: false
         }),
         resolve(),

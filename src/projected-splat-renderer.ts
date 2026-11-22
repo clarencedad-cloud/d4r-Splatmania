@@ -114,6 +114,29 @@ type Placement = {
     bands: number;
 };
 
+// what the scan composition's 'compose.renderParams' hook (src/compose)
+// returns for a layer, or null: nothing to show for it
+type ComposeRenderParams = {
+    // one class byte per instance, 4 to a u32 word like the quality scores
+    // (bits 0-2 class: 0 unchanged, 1 scan colour, 2 grey, 3 red, 4 green,
+    // 7 not drawn; bits 3-4 colour index; bit 5 pale). null = no classes,
+    // the quality heatmap path then applies as usual
+    buffer: StorageBuffer | null,
+    // 3 = scan-composition classes (with a buffer), 4 = blur bytes of the
+    // sharpness view (octaves above the scan's median footprint in 1/32,
+    // with a buffer), 0 = off
+    mode: number,
+    // mode 4: the octaves where the tint starts (threshold) and is full (range)
+    threshold: number,
+    range?: number,
+    // the colour per index 0..3, [r, g, b, 1] each in 0..1 (hex / 255, the
+    // space the splat colours are in)
+    palette: (number[] | Float32Array)[] | null,
+    // leave locked (hidden) splats out entirely instead of drawing them in
+    // the faint locked colour
+    hideLocked: boolean
+};
+
 type ProjectedRendererStats = {
     placements: number;
     projectedSplats: number;
@@ -531,7 +554,8 @@ class ProjectedSplatRenderer {
             new UniformFormat('fogColor', UNIFORMTYPE_VEC4),
             new UniformFormat('lightParams', UNIFORMTYPE_VEC4),
             new UniformFormat('lightAmbient', UNIFORMTYPE_VEC4),
-            ...[0, 1, 2, 3].flatMap(i => ['A', 'B', 'C'].map(k => new UniformFormat(`light${k}${i}`, UNIFORMTYPE_VEC4)))
+            ...[0, 1, 2, 3].flatMap(i => ['A', 'B', 'C'].map(k => new UniformFormat(`light${k}${i}`, UNIFORMTYPE_VEC4))),
+            ...[0, 1, 2, 3].map(i => new UniformFormat(`composeColor${i}`, UNIFORMTYPE_VEC4))
         ]);
         const bindGroupFormat = new BindGroupFormat(this.device, [
             new BindStorageBufferFormat('sortKeys', SHADERSTAGE_COMPUTE),
@@ -884,7 +908,14 @@ class ProjectedSplatRenderer {
             Math.abs(projection[0]) * targetSize.width * 0.5,
             Math.abs(projection[5]) * targetSize.height * 0.5
         ];
-        const selectedSplat = events.invoke('selection') as Splat;
+        const pickedSplat = events.invoke('selection') as Splat;
+        // the scan composition's Vorher/Nachher preview shows the scene as
+        // the result will look: the selection's tint, centres, rings and
+        // outline step back while it is up (src/compose 'compose.hideSelection';
+        // the selection itself is untouched). Viewport frames only: selection
+        // passes keep the selection
+        const hideSelection = !forPick && events.functions.has('compose.hideSelection') && !!events.invoke('compose.hideSelection');
+        const selectedSplat = hideSelection ? null : pickedSplat;
         const selectedColor = events.invoke('selectedClr');
         const unselectedColor = events.invoke('unselectedClr');
         const lockedColor = events.invoke('lockedClr');
@@ -951,6 +982,15 @@ class ProjectedSplatRenderer {
         let ringsBase = 0;
         let ringsCount = 0;
 
+        // display aids of the editing tools - the scan composition's colour
+        // per scan, map, previews and "hidden splats gone" switch, and the
+        // quality heatmap - belong to the viewport like the other overlays:
+        // renders with the overlays off (image, video and 360 exports, pose
+        // and panorama previews, flood selection's offscreen frame) show the
+        // scene as it is, the same as with the tool closed. Never in
+        // selection passes either: they keep seeing every splat
+        const toolDisplay = !forPick && camera.renderOverlays;
+
         // the projector appends survivors, so the counts start each frame at zero.
         // The clear is recorded on the shared command encoder, which orders it
         // ahead of the dispatches below
@@ -965,8 +1005,20 @@ class ProjectedSplatRenderer {
             const selectionEnabled = selectedSplat === splat && camera.renderOverlays;
             // only the layer the panel is editing previews, and an empty selection
             // means the whole layer - the rule SplatsColorOp applies
-            const previewMode = (pending && selectedSplat === splat) ?
+            const previewMode = (pending && pickedSplat === splat) ?
                 (instances.numSelected === 0 ? 2 : 1) : 0;
+            // the scan composition's colour per scan (src/compose/compose-tool.ts):
+            // a display-only grade over the whole layer, through the same path
+            // as the colour preview, which wins when both apply
+            const tint: Float32Array | null = (!toolDisplay || previewMode || !events.functions.has('compose.tint')) ?
+                null : events.invoke('compose.tint', splat);
+            const extraRows = tint ?? this.previewRows;
+            // the scan composition's map and previews (class bytes for the
+            // projector's mode 3) and its "hidden splats gone" switch, asked
+            // ahead of the quality heatmap (the tools are exclusive); viewport
+            // only (toolDisplay)
+            const compose: ComposeRenderParams | null = (!toolDisplay || !events.functions.has('compose.renderParams')) ?
+                null : events.invoke('compose.renderParams', splat) ?? null;
 
             if (selectionEnabled) {
                 ringsBase = placement.entryBase;
@@ -1010,15 +1062,24 @@ class ProjectedSplatRenderer {
             compute.setParameter('view', view.data);
             compute.setParameter('viewProj', this.viewProjection.data);
             compute.setParameter('cameraPosition', [cameraPosition.x, cameraPosition.y, cameraPosition.z]);
-            compute.setParameter('previewMode', previewMode);
+            compute.setParameter('previewMode', previewMode || (tint ? 2 : 0));
             compute.setParameter('colorAlpha', previewMode ? this.previewTerms.transparency : 1);
-            compute.setParameter('colorRow0', this.previewRows.subarray(0, 4));
-            compute.setParameter('colorRow1', this.previewRows.subarray(4, 8));
-            compute.setParameter('colorRow2', this.previewRows.subarray(8, 12));
+            compute.setParameter('colorRow0', extraRows.subarray(0, 4));
+            compute.setParameter('colorRow1', extraRows.subarray(4, 8));
+            compute.setParameter('colorRow2', extraRows.subarray(8, 12));
             compute.setParameter('lockedColor', [lockedColor.r, lockedColor.g, lockedColor.b, lockedColor.a]);
-            compute.setParameter('visible', splat.visible ? 1 : 0);
+            // the scan composition's quick switch between its scans
+            // (PageUp/PageDown, src/compose/compose-tool.ts) leaves the other
+            // scans out of the view and of selection passes, display only:
+            // no visibility change, no undo step, and renders with the
+            // overlays off (exports) show every layer as it is
+            const composeShown = (forPick || camera.renderOverlays) && events.functions.has('compose.layerShown') ?
+                events.invoke('compose.layerShown', splat) !== false : true;
+            compute.setParameter('visible', splat.visible && composeShown ? 1 : 0);
             compute.setParameter('selectionEnabled', selectionEnabled ? 1 : 0);
-            compute.setParameter('pickOp', -1);
+            // -1 projects every state; 2 skips locked splats, so hidden ones
+            // vanish instead of drawing as the faint locked colour
+            compute.setParameter('pickOp', compose?.hideLocked ? 2 : -1);
             compute.setParameter('minPixelSize', minPixelSize);
             compute.setParameter('near', cameraComponent.nearClip);
             compute.setParameter('far', cameraComponent.farClip);
@@ -1064,10 +1125,15 @@ class ProjectedSplatRenderer {
             compute.setParameter('transF', trans.transF);
             compute.setParameter('transG', trans.transG);
             compute.setParameter('transH', trans.transH);
-            // quality heatmap (src/quality/quality-tool.ts); off in selection passes
-            const quality = forPick ? null : events.invoke('quality.renderParams', splat);
+            // per-instance display bytes: the scan composition's classes when
+            // it brings a buffer, otherwise the quality heatmap
+            // (src/quality/quality-tool.ts); viewport only (toolDisplay)
+            const quality = compose?.buffer ? compose : !toolDisplay ? null : events.invoke('quality.renderParams', splat);
             compute.setParameter('instanceScore', quality?.buffer ?? this.getDummyScore());
-            compute.setParameter('quality', quality ? [quality.mode, quality.threshold, 0, 0] : [0, 0, 0, 0]);
+            compute.setParameter('quality', quality ? [quality.mode, quality.threshold, (quality as ComposeRenderParams).range ?? 0, 0] : [0, 0, 0, 0]);
+            for (let i = 0; i < 4; i++) {
+                compute.setParameter(`composeColor${i}`, compose?.palette?.[i] ?? [0, 0, 0, 0]);
+            }
             // section cut (src/section/section-tool.ts): applies to selection
             // passes too, so cut-away splats can't be picked
             const section = events.functions.has('section.params') ? events.invoke('section.params', splat) : null;
@@ -1307,4 +1373,4 @@ class ProjectedSplatRenderer {
 }
 
 export { ProjectedSplatRenderer };
-export type { ProjectedRendererStats };
+export type { ProjectedRendererStats, ComposeRenderParams };

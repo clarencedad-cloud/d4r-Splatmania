@@ -310,12 +310,310 @@
         }
     }
 
+    // explanation lines under the controls (distance in metres, camera
+    // height, the move, the draft)
+    > .ai-shots-line {
+        margin: 0 10px 4px;
+        font-size: 11px;
+        white-space: normal;
+        line-height: 1.35;
+
+        &.ai-shots-hint {
+            opacity: 0.7;
+        }
+
+        &.ai-shots-warn-text {
+            color: #ffb840;
+        }
+
+        &.ai-shots-ai-score {
+            color: $clr-icon-hilight;
+            user-select: text;
+        }
+    }
+
+    // distance: log slider + number in metres / units
+    > .settings-panel-row.ai-shots-distance-row > .ai-shots-distance {
+        flex: 0 0 187px;
+        width: 187px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+
+        > input[type=range] {
+            flex: 1 1 auto;
+            min-width: 0;
+            accent-color: $clr-hilight;
+        }
+    }
+
+    .ai-shots-number {
+        flex: 0 0 52px;
+        width: 52px;
+        height: 22px;
+        box-sizing: border-box;
+        padding: 0 4px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 3px;
+        background-color: rgba(0, 0, 0, 0.25);
+        color: inherit;
+        font: inherit;
+        font-size: 11px;
+        user-select: text;
+
+        &:focus {
+            outline: none;
+            border-color: $clr-hilight;
+        }
+
+        &:disabled {
+            opacity: 0.45;
+        }
+    }
+
+    .ai-shots-unit {
+        flex: 0 0 auto;
+        margin: 0;
+        font-size: 11px;
+        opacity: 0.8;
+    }
+
+    > .settings-panel-row.ai-shots-scale-custom {
+        gap: 4px;
+
+        > .settings-panel-row-label {
+            flex: 0 0 auto;
+        }
+
+        > .ai-shots-or {
+            margin-left: 6px;
+        }
+    }
+
+    .ai-shots-small.active {
+        background-color: $clr-hilight;
+        border-color: $clr-hilight;
+        color: $clr-active;
+    }
+
+    .ai-shots-small.ai-shots-primary {
+        background-color: $clr-hilight;
+        border-color: $clr-hilight;
+        color: $clr-active;
+
+        &.pcui-disabled {
+            opacity: 0.5;
+        }
+    }
+
+    .ai-shots-actions {
+        flex-wrap: wrap;
+    }
+
+    .ai-shots-card.previewed {
+        outline: 1px solid $clr-hilight;
+    }
+
+    .ai-shots-thumb {
+        cursor: pointer;
+    }
+
     // the flex rules above outrank pcui's own hidden rule; some of them are
     // more specific than this one (e.g. '.ai-shots-footer > .settings-panel-row',
     // the focus-pull toggle row), so hidden has to win regardless
     .pcui-hidden {
         display: none !important;
     }
+}
+
+// the draft in the viewport (src/ai-shots/shot-preview.ts)
+#ai-shots-preview {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 4;
+
+    &[hidden] {
+        display: none;
+    }
+
+    > svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        fill: none;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+    }
+
+    .aisp-path-shadow {
+        stroke: rgba(0, 0, 0, 0.55);
+        stroke-width: 5;
+    }
+
+    .aisp-path {
+        stroke: #ff2f9a;
+        stroke-width: 2.5;
+
+        &.edited {
+            stroke: #ffb840;
+        }
+
+        &.walk {
+            stroke: #48e0ff;
+        }
+    }
+
+    .aisp-route {
+        stroke: rgba(255, 210, 63, 0.85);
+        stroke-width: 2;
+        stroke-dasharray: 6 5;
+    }
+
+    .aisp-ring {
+        stroke: rgba(255, 255, 255, 0.7);
+        stroke-width: 1.5;
+        stroke-dasharray: 5 4;
+    }
+
+    .aisp-distance,
+    .aisp-center {
+        stroke: rgba(255, 255, 255, 0.45);
+        stroke-width: 1;
+        stroke-dasharray: 3 3;
+    }
+
+    .aisp-target {
+        stroke: rgba(255, 47, 154, 0.5);
+        stroke-width: 1;
+        stroke-dasharray: 2 3;
+    }
+
+    .aisp-frustum {
+        stroke: white;
+        stroke-width: 1.5;
+    }
+
+    .aisp-handle,
+    .aisp-key,
+    .aisp-waypoint,
+    .aisp-label {
+        position: absolute;
+        left: 0;
+        top: 0;
+        user-select: none;
+
+        &[hidden] {
+            display: none;
+        }
+    }
+
+    .aisp-handle {
+        width: 16px;
+        height: 16px;
+        margin: -8px 0 0 -8px;
+        box-sizing: border-box;
+        border: 2px solid white;
+        border-radius: 50%;
+        background-color: #c20e7e;
+        pointer-events: auto;
+        cursor: ew-resize;
+        box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45);
+
+        &:hover,
+        &.dragging {
+            background-color: #ff2f9a;
+            transform-origin: center;
+        }
+    }
+
+    .aisp-key {
+        width: 12px;
+        height: 12px;
+        margin: -6px 0 0 -6px;
+        box-sizing: border-box;
+        border: 2px solid #ff2f9a;
+        border-radius: 50%;
+        background-color: rgba(21, 18, 30, 0.8);
+        pointer-events: auto;
+        cursor: grab;
+
+        &:hover,
+        &.dragging {
+            background-color: #ff2f9a;
+            cursor: grabbing;
+        }
+    }
+
+    .aisp-waypoint {
+        width: 20px;
+        height: 20px;
+        margin: -10px 0 0 -10px;
+        box-sizing: border-box;
+        border: 2px solid rgba(21, 18, 30, 0.9);
+        border-radius: 50%;
+        background-color: #ffd23f;
+        color: #15121e;
+        font: bold 11px/16px sans-serif;
+        text-align: center;
+        pointer-events: auto;
+        cursor: grab;
+
+        &:hover,
+        &.dragging {
+            background-color: #fff2a8;
+            cursor: grabbing;
+        }
+    }
+
+    .aisp-label {
+        padding: 1px 6px;
+        border-radius: 3px;
+        background-color: rgba(21, 18, 30, 0.82);
+        color: #f4eefc;
+        font-size: 11px;
+        white-space: nowrap;
+        pointer-events: none;
+    }
+
+    .aisp-start-label {
+        color: #ffd6ec;
+    }
+
+    .aisp-hint {
+        position: absolute;
+        left: 50%;
+        top: 12px;
+        transform: translateX(-50%);
+        padding: 4px 10px;
+        border-radius: 4px;
+        background-color: rgba(194, 14, 126, 0.9);
+        color: white;
+        font-size: 12px;
+        pointer-events: none;
+
+        &[hidden] {
+            display: none;
+        }
+    }
+}
+
+// clicking waypoints: crosshair over the viewport
+#canvas-container.ai-shots-picking canvas {
+    cursor: crosshair;
+}
+
+// gait bob / handheld shake in the camera properties (src/ui/camera-list.ts)
+.camera-gait-head > .camera-list-label {
+    font-weight: bold;
+    opacity: 0.9;
+}
+
+.camera-gait-unit {
+    flex: 0 0 auto;
+    margin: 0 2px;
 }
 
 // AI section of the settings panel (src/ui/settings-panel.ts)

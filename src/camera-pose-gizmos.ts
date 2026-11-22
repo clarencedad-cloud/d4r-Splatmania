@@ -297,9 +297,12 @@ class CameraPoseGizmos extends Element {
             // current pose: the camera icon; the selected camera also shows
             // where it looks: its target, a dashed line to it and, when the
             // target is animated, the target's own path and keys
+            // the icon sits at the final pose (gait bob, shake), the path
+            // and target stay the clean, editable curve
             const current = camera.track.getPoseAt(this.frame);
-            if (current && camera !== followed) {
-                pushCameraIcon(current.position, current.target, size * (isSelected ? 2.2 : 1.6), full);
+            const shown = camera.track.hasModifier ? camera.track.getShotPoseAt(this.frame) : current;
+            if (shown && camera !== followed) {
+                pushCameraIcon(shown.position, shown.target, size * (isSelected ? 2.2 : 1.6), full);
             }
             if (current && isSelected) {
                 const targetColor = targetPicked ? [255, 255, 255] : full;

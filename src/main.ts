@@ -7,6 +7,7 @@ import { registerBackgroundEvents } from './background';
 import { registerCameraPosesEvents } from './camera-poses';
 import { registerCleanupEvents } from './cleanup';
 import { CommandQueue } from './command-queue';
+import { ComposeTool } from './compose/compose-tool';
 import { registerDepthFilterEvents } from './depth-filter';
 import { registerDocEvents } from './doc';
 import { registerDofEvents } from './dof/dof';
@@ -25,6 +26,7 @@ import { QualityTool } from './quality/quality-tool';
 import { registerRenderEvents } from './render';
 import { Scene } from './scene';
 import { getSceneConfig } from './scene-config';
+import { registerSceneScaleEvents } from './scene-scale';
 import { SectionTool } from './section/section-tool';
 import { registerSelectionEvents } from './selection';
 import { registerSequenceEvents } from './sequence';
@@ -283,6 +285,7 @@ const main = async () => {
     toolManager.register('scale', new ScaleTool(events, scene));
     toolManager.register('measure', new MeasureTool(events, scene, editorUI.canvasContainer, editorUI.annotationContainer.dom));
     toolManager.register('align', new AlignTool(events, scene, editorUI.canvasContainer));
+    toolManager.register('compose', new ComposeTool(events, scene, editorUI.canvasContainer));
     toolManager.register('quality', new QualityTool(events, scene, editorUI.canvasContainer));
     toolManager.register('section', new SectionTool(events, scene, editorUI.canvasContainer));
     toolManager.register('cameraPath', new CameraPathTool(events, scene, editorUI.canvasContainer));
@@ -293,7 +296,8 @@ const main = async () => {
     registerBackgroundEvents(events, scene);
     editorUI.canvasContainer.append(new LightPanel(events, editorUI.tooltips));
     registerTitleEvents(events);
-    registerAiShotsEvents(events, scene);
+    registerSceneScaleEvents(events, scene);
+    registerAiShotsEvents(events, scene, editorUI.canvasContainer);
     toolManager.register('orient', new OrientTool(events, scene, editorUI.toolsContainer.dom, editorUI.canvasContainer, editorUI.annotationContainer.dom));
 
     const boundDimensionsOverlay = new BoundDimensionsOverlay(events, scene, editorUI.canvasContainer, editorUI.annotationContainer.dom);

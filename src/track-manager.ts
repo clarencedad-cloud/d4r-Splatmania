@@ -14,6 +14,10 @@ const CHANNEL_NAMES: Record<string, string> = {
     fov: 'sm.channel.lens',
     focus: 'sm.channel.focus',
     aperture: 'sm.channel.aperture',
+    bob: 'sm.channel.bob',
+    stepRate: 'sm.channel.stepRate',
+    shake: 'sm.channel.shake',
+    shakeRate: 'sm.channel.shakeRate',
     opacity: 'sm.channel.opacity',
     mix: 'sm.channel.mix'
 };

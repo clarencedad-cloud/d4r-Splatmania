@@ -504,6 +504,99 @@ const rankShots = async (input: RankInput, signal?: AbortSignal): Promise<RankRe
     return rankings;
 };
 
+// Optional check of the floater search (cleanup panel): Claude looks at small
+// rendered views of each candidate group, circled in red, and sorts out real
+// objects. Only these images and the group ids are sent, never splat data.
+
+type FloaterCandidate = {
+    id: string;
+    // 1-3 JPEG views (data URL or bare base64), each at most 512px wide, the
+    // candidate circled in red
+    jpegBase64: string[];
+};
+
+type FloaterReviewInput = {
+    language: string;
+    candidates: FloaterCandidate[];
+};
+
+type FloaterVerdict = {
+    id: string;
+    // floater: reconstruction artefact; object: part of the real scene
+    verdict: 'floater' | 'object' | 'unsure';
+    // what is circled, a few words in the requested language
+    label: string;
+    // 0..1
+    confidence: number;
+};
+
+const floaterSystem = [
+    'You check the candidates of an automatic floater search in 3D Gaussian splat scans. Floaters are reconstruction artefacts: stray specks, blurry blobs, haze or fog hanging in the air where nothing real is, typically in front of the former camera positions or around the scanned object.',
+    'Each candidate is one connected piece that hangs free in the air, detached from the surfaces of the scan. It comes with small rendered views; a red circle marks it in every view, at the centre of the image. Judge only that piece. Walls, floors, ceilings and other surfaces behind or around it are context and never the candidate.',
+    'Answer "object" when the piece is (part of) something real, even if it is thin, sparse, small or blurry: cables and wires, branches and twigs, leaves and plants, lamps and light fittings, railings and fences, poles, signs, ropes, chains, edges of glass. Answer "floater" for artefacts, also when the piece is faint or hard to make out. Answer "unsure" when the views do not allow a decision.',
+    'label: two or three words naming the piece. confidence: 0 to 1.'
+].join('\n');
+
+const reviewFloaters = async (input: FloaterReviewInput, signal?: AbortSignal): Promise<FloaterVerdict[]> => {
+    const candidates = (input.candidates ?? []).filter(c => c && c.id && c.jpegBase64?.length);
+    if (candidates.length === 0) {
+        return [];
+    }
+    const ids = candidates.map(c => c.id);
+
+    const schema = {
+        type: 'object',
+        additionalProperties: false,
+        required: ['verdicts'],
+        properties: {
+            verdicts: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['id', 'verdict', 'label', 'confidence'],
+                    properties: {
+                        id: { type: 'string', enum: ids },
+                        verdict: { type: 'string', enum: ['floater', 'object', 'unsure'] },
+                        label: { type: 'string' },
+                        confidence: { type: 'number' }
+                    }
+                }
+            }
+        }
+    };
+
+    const content: BetaContentBlockParam[] = [];
+    candidates.forEach((c) => {
+        content.push({ type: 'text', text: `Candidate ${c.id}:` });
+        c.jpegBase64.slice(0, 3).forEach((data) => {
+            content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: stripDataUrl(data) } });
+        });
+    });
+    content.push({
+        type: 'text',
+        text: `Judge all ${candidates.length} candidates. Write the labels in this language: ${input.language || 'en'}.`
+    });
+
+    const result: any = await requestJson('medium', schema, floaterSystem, content, signal);
+    const seen = new Set<string>();
+    const verdicts: FloaterVerdict[] = [];
+    (Array.isArray(result?.verdicts) ? result.verdicts : []).forEach((v: any) => {
+        if (!v || !ids.includes(v.id) || seen.has(v.id)) {
+            return;
+        }
+        const verdict = v.verdict === 'floater' || v.verdict === 'object' ? v.verdict : 'unsure';
+        seen.add(v.id);
+        verdicts.push({
+            id: v.id,
+            verdict,
+            label: text(v.label, 40),
+            confidence: isNumber(v.confidence) ? clamp(v.confidence, [0, 1]) : 0.5
+        });
+    });
+    return verdicts;
+};
+
 export {
     CLAUDE_MODEL,
     ClaudeError,
@@ -512,9 +605,13 @@ export {
     testKey,
     planShots,
     rankShots,
+    reviewFloaters,
     type KeyStore,
     type PlanInput,
     type RankInput,
     type RankCandidate,
-    type RankResult
+    type RankResult,
+    type FloaterCandidate,
+    type FloaterReviewInput,
+    type FloaterVerdict
 };

@@ -8,6 +8,7 @@ import alignSvg from './svg/align.svg';
 import appearanceSvg from './svg/appearance.svg';
 import cameraFrameSelectionSvg from './svg/camera-frame-selection.svg';
 import cameraResetSvg from './svg/camera-reset.svg';
+import composeSvg from './svg/compose.svg';
 import flyCameraSvg from './svg/fly-camera.svg';
 import lightSvg from './svg/light.svg';
 import lookSvg from './svg/look.svg';
@@ -114,6 +115,13 @@ class RightToolbar extends Container {
         overlays.dom.appendChild(createSvg(overlaysSvg));
         align.dom.appendChild(createSvg(alignSvg));
 
+        // scan composition wizard (src/compose/compose-tool.ts)
+        const compose = new Button({
+            id: 'right-toolbar-compose',
+            class: 'right-toolbar-tool'
+        });
+        compose.dom.appendChild(createSvg(composeSvg));
+
         // quality heatmap / scan comparison tool (src/quality/quality-tool.ts)
         const quality = new Button({
             id: 'right-toolbar-quality',
@@ -136,6 +144,7 @@ class RightToolbar extends Container {
             [light, 'sm.light.title'],
             [titles, 'sm.titles.title'],
             [aiShots, 'sm.aishots.title'],
+            [compose, 'sm.compose.title'],
             [orbitMode, 'tooltip.right-toolbar.orbit-camera'],
             [flyMode, 'tooltip.right-toolbar.fly-camera'],
             [cameraFrameSelection, 'tooltip.right-toolbar.frame-selection'],
@@ -160,6 +169,7 @@ class RightToolbar extends Container {
         this.append(cameraReset);
         this.append(new Element({ class: 'right-toolbar-separator' }));
         this.append(align);
+        this.append(compose);
         this.append(quality);
         this.append(section);
         this.append(new Element({ class: 'right-toolbar-separator' }));
@@ -190,6 +200,7 @@ class RightToolbar extends Container {
         tooltips.register(aiShots, tooltip('sm.aishots.title'), 'left');
         tooltips.register(settings, tooltip('panel.settings'), 'left');
         tooltips.register(align, tooltip('tooltip.right-toolbar.align', 'tool.align'), 'left');
+        tooltips.register(compose, tooltip('sm.compose.tooltip'), 'left');
         tooltips.register(quality, tooltip('tooltip.right-toolbar.quality', 'tool.quality'), 'left');
         tooltips.register(section, tooltip('tooltip.right-toolbar.section', 'tool.section'), 'left');
 
@@ -207,11 +218,13 @@ class RightToolbar extends Container {
         aiShots.on('click', () => events.fire('aiShotsPanel.toggleVisible'));
         settings.on('click', () => events.fire('settingsPanel.toggleVisible'));
         align.on('click', () => events.fire('tool.align'));
+        compose.on('click', () => events.fire('tool.compose'));
         quality.on('click', () => events.fire('tool.quality'));
         section.on('click', () => events.fire('tool.section'));
 
         events.on('tool.activated', (toolName: string) => {
             align.class[toolName === 'align' ? 'add' : 'remove']('active');
+            compose.class[toolName === 'compose' ? 'add' : 'remove']('active');
             quality.class[toolName === 'quality' ? 'add' : 'remove']('active');
             section.class[toolName === 'section' ? 'add' : 'remove']('active');
         });

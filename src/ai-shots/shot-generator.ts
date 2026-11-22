@@ -833,11 +833,11 @@ const inspect = (ctx: Context, keys: DraftKey[], trackElev: number): Violation |
     return hard ?? soft;
 };
 
-const makeKeys = (ctx: Context, p: ShotParams, path: ShotPath, frames: number) => {
+const makeKeys = (ctx: Context, p: ShotParams, path: ShotPath, frames: number, keyLimit?: number) => {
     const maxElev = p.template === 'flyover' ? FLYOVER_ELEV : MAX_ELEV;
     // checked a little inside the hard limit, the track may sample anywhere
     const trackElev = (p.template === 'flyover' ? FLYOVER_TRACK_ELEV : TRACK_ELEV) - 0.5;
-    const maxKeys = p.template === 'orbit' ? MAX_ORBIT_KEYS : MAX_KEYS;
+    const maxKeys = keyLimit ?? (p.template === 'orbit' ? MAX_ORBIT_KEYS : MAX_KEYS);
     const last = frames - 1;
     const ramp = p.easing === 'smooth' ? path.ramp : 0;
     let moved = false;
@@ -980,6 +980,23 @@ const buildProposal = (ctx: Context, fps: number, params: ShotParams, explicit: 
     };
 };
 
+// the camera distance (scene units, from the object centre) a template uses
+// at distanceScale 1: the template's share of the distance that frames the
+// whole object. Without a template: that framing distance itself
+const framingDistance = (object: ShotObject, fov: number, template?: ShotTemplate) => {
+    const ctx = createContext(object, finite(fov) && fov > 0 ? fov : 60, [], undefined);
+    return (template ? DEFAULT_FIT[template] : 1) * ctx.fit * ctx.radius;
+};
+
+// largest extent of the object's bounds (scene units)
+const objectSize = (object: ShotObject) => {
+    const h = object.halfExtents;
+    return 2 * Math.max(h.x, h.y, h.z, 1e-6);
+};
+
+// ground and eye level of a style (world y), as the generator uses them
+const groundLevels = (object: ShotObject) => styleHeights(createContext(object, 60, [], undefined));
+
 const keysEndAzimuth = (ctx: Context, proposal: ShotProposal) => {
     return azimuthOf(ctx.center, proposal.keys[proposal.keys.length - 1].position);
 };
@@ -1058,4 +1075,27 @@ const generateShots = (object: ShotObject, opts: GenerateOptions): ShotProposal[
     return list.slice(0, count);
 };
 
-export { generateShots, type GenerateOptions, ease, easeInverse, elevationOf, azimuthOf };
+export {
+    generateShots,
+    type GenerateOptions,
+    ease,
+    easeInverse,
+    elevationOf,
+    azimuthOf,
+    framingDistance,
+    objectSize,
+    groundLevels,
+    // the clean-up step (shot-cleanup.ts) re-keys paths with these
+    createContext,
+    makeKeys,
+    evaluate,
+    trackSplines,
+    blocked,
+    pushClear,
+    uniform,
+    RAMP,
+    DISTANCE_SCALE,
+    type Context,
+    type ShotPath,
+    type PathPose
+};
